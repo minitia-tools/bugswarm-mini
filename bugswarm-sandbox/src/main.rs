@@ -302,11 +302,7 @@ async fn run_command(cli: Cli) -> SandboxResult<()> {
 
         Commands::RunServer { socket } => {
             info!("Starting sandbox daemon on {}", socket.display());
-            // TODO: Unix socket server implementation
-            // For Phase 1, the execute command is sufficient.
-            // Phase 13 (CI/CD) will add the full daemon mode.
-            eprintln!("Daemon mode not yet implemented. Use individual commands for testing.");
-            std::process::exit(1);
+            bugswarm_sandbox::daemon::run_daemon(socket, config).await?;
         }
 
         Commands::DefaultConfig => {

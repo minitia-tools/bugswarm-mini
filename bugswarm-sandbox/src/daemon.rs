@@ -1,0 +1,145 @@
+/// Daemon mode — Unix socket server for the Execution Sandbox.
+///
+/// Listens on /var/run/bugswarm/sandbox.sock (configurable).
+/// Accepts JSON request lines, returns JSON receipt lines.
+/// Supports concurrent connections via tokio.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+use tracing::{error, info, warn};
+
+use crate::config::{ExecutionReceipt, SandboxConfig};
+use crate::container::ContainerManager;
+use crate::error::SandboxResult;
+
+#[derive(Debug, Deserialize)]
+struct DaemonRequest {
+    method: String,
+    #[serde(default)]
+    poc_code: String,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default)]
+    flaky: bool,
+    #[serde(default)]
+    count: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct DaemonResponse {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt: Option<ExecutionReceipt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Start the sandbox daemon on a Unix socket.
+pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig) -> SandboxResult<()> {
+    // Remove stale socket file if it exists
+    if socket_path.exists() {
+        std::fs::remove_file(&socket_path).ok();
+    }
+
+    // Ensure parent directory exists
+    if let Some(parent) = socket_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    let listener = UnixListener::bind(&socket_path)
+        .map_err(|e| crate::error::SandboxError::Other(format!("Failed to bind socket: {}", e)))?;
+
+    // Restrict socket permissions
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).ok();
+    }
+
+    info!("Sandbox daemon listening on {}", socket_path.display());
+
+    let manager = std::sync::Arc::new(ContainerManager::connect(config).await?);
+    manager.ensure_image().await?;
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                let mgr = manager.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_connection(stream, mgr).await {
+                        error!("Connection error: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                error!("Accept error: {}", e);
+            }
+        }
+    }
+}
+
+async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<ContainerManager>) -> SandboxResult<()> {
+    let (reader, mut writer) = stream.into_split();
+    let mut buf_reader = BufReader::new(reader);
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let n = buf_reader.read_line(&mut line).await?;
+        if n == 0 {
+            break; // EOF
+        }
+
+        let request: DaemonRequest = match serde_json::from_str(line.trim()) {
+            Ok(req) => req,
+            Err(e) => {
+                let resp = DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) };
+                let json = serde_json::to_string(&resp).unwrap_or_default();
+                writer.write_all(json.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                continue;
+            }
+        };
+
+        let response = match request.method.as_str() {
+            "execute" => {
+                match manager.execute(&request.poc_code, &request.env, request.flaky).await {
+                    Ok(receipt) => DaemonResponse { success: true, receipt: Some(receipt), error: None },
+                    Err(e) => DaemonResponse { success: false, receipt: None, error: Some(e.to_string()) },
+                }
+            }
+            "execute_statistical" => {
+                let count = if request.count > 0 { request.count } else { manager.config.rerun_count };
+                match manager.execute_statistical(&request.poc_code, &request.env).await {
+                    Ok(result) => {
+                        let json = serde_json::to_value(&result).unwrap_or_default();
+                        // Wrap statistical result as a receipt-like response
+                        DaemonResponse {
+                            success: true,
+                            receipt: None,
+                            error: Some(format!("STATISTICAL: {}", json)),
+                        }
+                    }
+                    Err(e) => DaemonResponse { success: false, receipt: None, error: Some(e.to_string()) },
+                }
+            }
+            "health" => {
+                DaemonResponse { success: true, receipt: None, error: None }
+            }
+            _ => {
+                DaemonResponse { success: false, receipt: None, error: Some(format!("Unknown method: {}", request.method)) }
+            }
+        };
+
+        let json = serde_json::to_string(&response).unwrap_or_default();
+        writer.write_all(json.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await?;
+    }
+
+    Ok(())
+}

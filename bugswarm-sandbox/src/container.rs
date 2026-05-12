@@ -41,7 +41,7 @@ pub struct ContainerOutput {
 /// The container manager handles all Docker interactions.
 pub struct ContainerManager {
     docker: Docker,
-    config: SandboxConfig,
+    pub(crate) config: SandboxConfig,
     scanner: OutputScanner,
 }
 

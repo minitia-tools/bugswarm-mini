@@ -77,9 +77,17 @@ enum Commands {
         #[arg(short, long)]
         file: PathBuf,
     },
+
+    /// Run as a daemon listening on a Unix socket.
+    RunServer {
+        /// Unix socket path.
+        #[arg(short, long, default_value = "/var/run/bugswarm/cpg.sock")]
+        socket: PathBuf,
+    },
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .json()
@@ -168,6 +176,11 @@ fn main() -> anyhow::Result<()> {
             parser::parse_file(&mut cpg, &file)?;
             let stats = cpg.stats();
             println!("{}", serde_json::to_string_pretty(&stats)?);
+        }
+
+        Commands::RunServer { socket } => {
+            info!("Starting CPG daemon on {}", socket.display());
+            bugswarm_cpg::daemon::run_daemon(socket).await?;
         }
     }
 
