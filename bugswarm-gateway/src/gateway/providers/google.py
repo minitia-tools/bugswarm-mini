@@ -1,6 +1,9 @@
-"""Google Gemini provider adapter."""
+"""Google Gemini provider adapter — enterprise grade."""
 
 from __future__ import annotations
+
+import asyncio
+import time
 
 import structlog
 
@@ -8,7 +11,7 @@ from ..types import (
     ChatRequest, ChatResponse, ChatMessage, MessageRole,
     ProviderConfig, ProviderType, TokenUsage,
 )
-from .base import BaseProviderAdapter
+from .base import BaseProviderAdapter, RetryableError, FatalError
 
 logger = structlog.get_logger(__name__)
 
@@ -18,7 +21,6 @@ class GoogleAdapter(BaseProviderAdapter):
 
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
-        # Lazily import to avoid dependency error if google-genai not installed
         self._client = None
 
     def _get_client(self):
@@ -34,10 +36,7 @@ class GoogleAdapter(BaseProviderAdapter):
         client = self._get_client()
         model = request.model or self.config.default_model
 
-        # Convert messages to Gemini format
         contents = self._convert_messages(request.messages)
-
-        # Extract system instruction
         system_instruction = None
         filtered_contents = []
         for c in contents:
@@ -46,35 +45,38 @@ class GoogleAdapter(BaseProviderAdapter):
             else:
                 filtered_contents.append(c)
 
-        config_kwargs = {
-            "temperature": request.temperature,
-            "top_p": request.top_p,
-            "max_output_tokens": request.max_tokens,
-        }
-
-        generate_config = None
         try:
             from google.genai.types import GenerateContentConfig
-            generate_config = GenerateContentConfig(**config_kwargs)
+            config = GenerateContentConfig(
+                temperature=request.temperature,
+                top_p=request.top_p,
+                max_output_tokens=request.max_tokens,
+            )
+            if system_instruction:
+                config.system_instruction = system_instruction
         except ImportError:
-            pass
+            config = None
 
-        kwargs = {
-            "model": model,
-            "contents": filtered_contents,
-        }
-        if system_instruction:
-            kwargs["config"] = generate_config
-            if generate_config:
-                generate_config.system_instruction = system_instruction
+        t0 = time.monotonic()
+        try:
+            response = await asyncio.to_thread(
+                lambda: client.models.generate_content(
+                    model=model,
+                    contents=filtered_contents,
+                    config=config,
+                )
+            )
+        except Exception as e:
+            self._track_error()
+            error_type = self.classify_error(e)
+            if error_type is FatalError:
+                raise FatalError(str(e)) from e
+            raise RetryableError(str(e)) from e
 
-        # Use the sync client in a thread (google-genai doesn't have great async support)
-        import asyncio
-        response = await asyncio.to_thread(
-            lambda: client.models.generate_content(**{k: v for k, v in kwargs.items() if v is not None})
-        )
+        elapsed = (time.monotonic() - t0) * 1000
+        self._track_request(elapsed)
 
-        content = response.text if response.text else ""
+        content = response.text or ""
 
         usage = TokenUsage(
             input_tokens=response.usage_metadata.prompt_token_count if response.usage_metadata else 0,
@@ -85,12 +87,8 @@ class GoogleAdapter(BaseProviderAdapter):
         cost = self.estimate_cost(usage.input_tokens, usage.output_tokens)
 
         return ChatResponse(
-            content=content,
-            model=model,
-            provider=ProviderType.GOOGLE,
-            usage=usage,
-            cost=cost,
-            finish_reason="stop",
+            content=content, model=model, provider=ProviderType.GOOGLE,
+            usage=usage, cost=cost, finish_reason="stop", latency_ms=elapsed,
         )
 
     def _convert_messages(self, messages: list[ChatMessage]) -> list[dict]:
@@ -101,16 +99,13 @@ class GoogleAdapter(BaseProviderAdapter):
                 role = "system"
             elif msg.role == MessageRole.ASSISTANT:
                 role = "model"
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg.content}],
-            })
+            contents.append({"role": role, "parts": [{"text": msg.content}]})
         return contents
 
     async def count_tokens(self, messages: list[ChatMessage]) -> int:
+        """Use Gemini's native token counting when available."""
         try:
             client = self._get_client()
-            import asyncio
             total = 0
             for msg in messages:
                 result = await asyncio.to_thread(
@@ -122,4 +117,4 @@ class GoogleAdapter(BaseProviderAdapter):
                 total += result.total_tokens if result else 0
             return total
         except Exception:
-            return sum(len(m.content) // 4 for m in messages)
+            return await super().count_tokens(messages)

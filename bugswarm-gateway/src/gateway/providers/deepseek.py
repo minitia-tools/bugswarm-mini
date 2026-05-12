@@ -1,22 +1,18 @@
-"""DeepSeek provider adapter — OpenAI-compatible API.
+"""DeepSeek provider adapter — OpenAI-compatible with DeepSeek-specific optimizations.
 
-DeepSeek models (deepseek-chat=V3, deepseek-reasoner=R1) use the OpenAI API format
-with base_url=https://api.deepseek.com. The OpenAI adapter handles this natively
-by setting base_url in ProviderConfig. This module exists for DeepSeek-specific
-optimizations: prompt formatting, token counting, and model-specific behavior.
+DeepSeek V4 Flash and V4 Pro use the OpenAI API format. The OpenAI adapter handles
+this natively via base_url=https://api.deepseek.com.
 """
 
 from .openai import OpenAIAdapter
 
 
 class DeepSeekAdapter(OpenAIAdapter):
-    """Adapter for DeepSeek API — identical to OpenAI adapter with DeepSeek defaults.
+    """Adapter for DeepSeek API — fully OpenAI-compatible.
 
-    DeepSeek's API is fully OpenAI-compatible. The only difference is:
-    - base_url = https://api.deepseek.com
-    - Models: deepseek-chat (V3), deepseek-reasoner (R1)
-    - Tokenizer: uses DeepSeek's tokenizer (approximated with cl100k_base)
-    - Pricing: $0.27/1M input, $1.10/1M output (deepseek-chat)
+    Models: deepseek-v4-flash (fast), deepseek-v4-pro (powerful)
+    Pricing: $0.14/1M input, $0.28/1M output (v4-flash, cache miss)
+    Context: 1M tokens, max output 384K tokens
+    Features: JSON output, tool calls, FIM completion, chat prefix completion
     """
-
     pass
