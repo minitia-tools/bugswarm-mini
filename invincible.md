@@ -154,4 +154,208 @@ Bug Swarm finds each individually but never connects them. The evidence graph ha
 | **#6: Pattern Database** | Learning from history, CVE graph matching | **Missing** |
 | **#7: Vulnerability Chaining** | Multi-step exploit synthesis | **Missing** |
 
-The current system is a strong **shallow bug hunter** — it finds bugs a human would catch in code review. To be invincible, it needs the deep layers: data flow that traces through variables, symbolic execution that computes triggering inputs, fuzzing that generates crashes at scale, sanitizers that catch undefined behavior, pattern learning that improves with every run, and exploit chaining that connects individual bugs into attack paths. These 7 layers are Phase 16–22.
+---
+
+## The Dominance Stack — 8 Techniques No Single Tool Combines
+
+These go beyond finding bugs. They provide mathematical certainty about what was found, what was missed, and what will break if you fix it. Combined with the 7 layers above, they form a complete bug-finding system with zero blind spots.
+
+---
+
+### Technique 1: Specification Mining + Invariant Detection
+
+**What**: Run the application with thousands of inputs inside the sandbox. Observe outputs. Learn implicit invariants. Flag violations.
+
+```
+Observed: function withdraw(amount) → balance always >= 0
+Invariant mined: "withdraw returns non-negative balance"
+If one input produces balance < 0 → BUG FOUND
+```
+
+This finds bugs with NO crash, NO stack trace, NO visible error. Silent data corruption. No static analyzer can find this. No fuzzer can catch this. Only runtime invariant checking.
+
+**Integration point**: Sandbox daemon (Phase 1). Property-based input generator feeds thousands of inputs. Output recorder mines invariants via pattern analysis. Violation → auto-injected into evidence graph.
+
+**Tools required**: Hypothesis (Python), QuickCheck (Haskell), Daikon (invariant detector).
+
+---
+
+### Technique 2: Mutation Testing as Bug Oracle
+
+**What**: Inject artificial bugs into the code. Run existing tests. If tests don't catch the mutation → the system flags "there is an untested assumption at this line — a real bug here would go undetected."
+
+```
+Original:  if (balance >= amount) { withdraw(); }
+Mutation:  if (balance > amount) { withdraw(); }   // >= became >
+Tests:     All pass (no test for exact balance case)
+Result:    FLAGGED — untested boundary condition at line 42
+```
+
+**Why dominant**: Finds bugs-in-waiting. Code that works today but a one-character change breaks it. The LLM explains WHY the mutation matters and what a real-world exploit would look like.
+
+**Integration point**: CPG + Sandbox. CPG identifies mutation targets (operators, conditionals). Sandbox runs test suite against mutated code. Survivors → flagged. Agents investigate and generate exploit scenario.
+
+**Tools required**: mutmut (Python), Stryker (JS), PIT (Java).
+
+---
+
+### Technique 3: Concolic Execution (Concrete + Symbolic)
+
+**What**: Runs a CONCRETE input through the code, collects symbolic constraints along the path taken, then NEGATES one constraint and solves for a new input that takes a DIFFERENT path.
+
+```
+Run 1: input = "hello" → path A (true branch of if)
+       Constraint collected: x == "hello"
+       Negate: x != "hello"
+       Solve: x = "anything_else"
+Run 2: input = "anything_else" → path B (false branch)
+       Both branches now covered
+```
+
+Systematically explores ALL paths around a suspected bug. Finds the EXACT condition that triggers it. Generates the PoC input automatically. No guessing by agents.
+
+**Integration point**: CPG + Sandbox. CPG identifies branching points near sinks. Concolic engine instruments the code. Z3 SMT solver generates path-reaching inputs. Sandbox executes. Results → evidence graph.
+
+**Tools required**: Z3 (SMT solver), angr or Triton (binary analysis with concolic), PyExZ3 (Python symbolic executor).
+
+---
+
+### Technique 4: Bug Probability Prediction (ML on Historical Bugs)
+
+**What**: Train a model on every confirmed bug the system has ever found.
+
+```
+Features extracted per function:
+  - Cyclomatic complexity
+  - Nesting depth
+  - Number of parameters
+  - Taint path presence (from CPG)
+  - Author commit frequency (from git)
+  - File churn rate (from git)
+  - Historical bug density in this file
+  - CVE pattern similarity score
+  - Lines changed in last N commits
+
+Output: auth.py:login() → 94% probability of containing a bug
+        utils.py:format_date() → 3% probability
+```
+
+Agents investigate the 94% function first. Not randomly. Not based on CPG taint alone. Based on statistical likelihood from every bug ever found across all runs.
+
+**Integration point**: Assessment module (Phase 15). Before the scout agent runs, the probability model scores every function. Top-N functions feed into the scout's investigation priority. Allocation algorithm weights agent distribution toward high-probability files.
+
+**Tools required**: scikit-learn (RandomForest or XGBoost), feature extractor from CPG + git log.
+
+---
+
+### Technique 5: Fix-Induced Bug Prediction
+
+**What**: When a fix is proposed, compute: "If we apply this fix, how many new bugs will it introduce?"
+
+```
+Fix: Change `if (x)` to `if (x is not None)`
+Impact analysis via call graph:
+  - 14 callers pass x as integer 0 → now correctly handled ✓
+  - 3 callers rely on falsy behavior → BROKEN by this fix ✗
+  - 2 new null pointer paths opened → new bug risk ⚠
+Probability: 23% chance of introducing 1-2 new bugs
+```
+
+**Why dominant**: The most dangerous action in software is fixing a bug. The fix itself introduces new ones. This system PREDICTS that before the fix is applied. No tool on the market does this.
+
+**Integration point**: Evidence Graph + Bench. When a judge confirms a bug and an agent proposes a fix, the system traces all callers of the changed function via CPG. Simulates behavior change. Flags callers whose assumptions are violated. Reports probability. The judge reviews before accepting.
+
+**Tools required**: CPG call graph (existing), behavior simulation (new), caller contract checker (new).
+
+---
+
+### Technique 6: Coverage-Guided Greybox Fuzzing + Taint Steering
+
+**What**: Fuzzer generates inputs. Coverage instrumentation tracks which code paths are hit. Inputs that discover NEW paths are kept and mutated further. BUT — inputs that reach TAINTED sinks get 10x priority mutation.
+
+```
+Random input → hits 50% coverage → kept, normal priority
+Random input → hits 50.1% coverage (new path) → kept, mutated
+Random input → reaches SQL execute() sink → HIGH PRIORITY, mutated 10x more
+Random input → reaches exec() sink → CRITICAL PRIORITY, mutated 100x more
+```
+
+Standard fuzzers explore uniformly. This one is steered by the CPG's taint analysis. It spends 10x more effort on the 5% of code that's actually dangerous.
+
+**Integration point**: Sandbox + CPG. CPG identifies sinks and generates a "danger map" of code addresses. Fuzzer running in sandbox uses danger map as reward function. Crash triage auto-injects findings into evidence graph. Agents investigate and explain.
+
+**Tools required**: AFL++ with custom LLVM pass for taint-aware coverage, libFuzzer with custom mutator.
+
+---
+
+### Technique 7: Trigger Matrix
+
+**What**: For every confirmed bug, produce a complete multi-dimensional trigger analysis:
+
+```
+Bug: NPE at auth.py:42
+┌─────────────────────┬────────────────────────────────────────┐
+│ Trigger Type        │ Condition                               │
+├─────────────────────┼────────────────────────────────────────┤
+│ Input               │ username = null (or "")                 │
+│ Environment         │ Database unreachable (network failure)  │
+│ Timing              │ Request arrives during server restart   │
+│ Data State          │ User row missing from database          │
+│ Concurrency         │ Two simultaneous login() calls          │
+│ Configuration       │ DEBUG=False (production only path)      │
+│ Dependency Version  │ sqlite3 < 3.35 (old C extension bug)    │
+│ OS / Arch           │ 32-bit only (pointer truncation)        │
+└─────────────────────┴────────────────────────────────────────┘
+```
+
+The Trigger Matrix makes bugs 100% reproducible by documenting every condition. The agent, fuzzer, and concolic executor each contribute rows to this matrix. Over time, the matrix fills until the bug is fully characterized.
+
+**Integration point**: Evidence Graph. Each confirmed bug gets a TriggerMatrix node. Every sandbox execution, fuzzer run, and agent analysis adds rows. Judges review the matrix for completeness before closing.
+
+---
+
+### Technique 8: Delta Debugging
+
+**What**: When a bug is found with a complex input, automatically minimize to the smallest reproduction.
+
+```
+Original crash input:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00\xff\x00GET / HTTP/1.1..."
+Delta debugged input:  "\x00\xff"
+                       ↑↑↑↑↑ The 3 bytes that actually matter
+```
+
+The agent finds a crash with a 500-byte input. Delta debugging reduces it to the 3 bytes that matter. The agent now knows EXACTLY what triggers it. The fix is targeted to those 3 bytes' handling. The investigation time drops from hours to seconds.
+
+**Integration point**: Sandbox post-processing. After any crash, the crash input is fed to the delta debugger. The minimized input is stored alongside the bug in the evidence graph. The agent receives both: "Your 500-byte input crashes. The essential 3 bytes are \x00\xff. Investigate null byte handling."
+
+**Tools required**: python-afl (delta debugging), custom ddmin implementation for string/binary inputs.
+
+---
+
+## Summary: All 15 Layers
+
+| # | Layer | Finds | Status |
+|---|-------|-------|--------|
+| **Base** | | | |
+| — | CPG (static) | Surface taint paths | Built (shallow) |
+| — | LLM Agents | Logic flaws, business logic | Built (DeepSeek V4) |
+| — | Sandbox (dynamic) | Runtime crashes | Built |
+| **7 Deep Layers** | | | |
+| 1 | Data Flow Analysis | Deep taint through variables | Missing |
+| 2 | Symbolic Execution | Precise triggering inputs | Missing |
+| 3 | Fuzzing | Crashes at scale (1000s/sec) | Missing |
+| 4 | Differential Testing | Regressions, deviations | Missing |
+| 5 | Sanitizer Instrumentation | Undefined behavior, races, leaks | Missing |
+| 6 | Pattern Database | Learning from history | Missing |
+| 7 | Vulnerability Chaining | Multi-step exploit synthesis | Missing |
+| **8 Dominance Techniques** | | | |
+| 8 | Specification Mining | Silent data corruption | Missing |
+| 9 | Mutation Testing | Bugs-in-waiting (untested edges) | Missing |
+| 10 | Concolic Execution | Systematic path exploration | Missing |
+| 11 | Bug Probability ML | Prioritized investigation | Missing |
+| 12 | Fix-Induced Prediction | Prevents fix regressions | Missing |
+| 13 | Taint-Guided Fuzzing | 10x efficiency on dangerous code | Missing |
+| 14 | Trigger Matrix | 100% bug reproducibility | Missing |
+| 15 | Delta Debugging | Precise trigger identification | Missing |
+
+These 15 layers together form a complete bug-finding system with no blind spots. Each layer feeds the next. Each layer finds what the previous one misses.
