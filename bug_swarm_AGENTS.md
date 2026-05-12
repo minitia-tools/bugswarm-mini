@@ -698,4 +698,66 @@ A known production bug (that Bug Swarm missed in a previous run) is fed back via
 
 ---
 
+## Remaining Production Work Items
+
+These are the 10 remaining items to reach production readiness. Ordered by impact.
+
+### 1. Rust Daemon Mode — ✅ COMPLETE
+All 3 Rust crates now listen on Unix sockets:
+- `bugswarm-sandbox run-server --socket /var/run/bugswarm/sandbox.sock` — methods: execute, execute_statistical, health
+- `bugswarm-cpg run-server --socket /var/run/bugswarm/cpg.sock` — methods: stats, taint, call_path, index, health
+- `bugswarm-evidence run-server --socket /var/run/bugswarm/evidence.sock` — methods: add_claim, add_sandbox_run, link_result, confirm_bug, stats, query, score_agent, verify, health
+
+### 2. Provider Adapter Files — PENDING
+Gateway imports adapters from `gateway/providers/openai.py`, `gateway/providers/anthropic.py`, etc. Some imports fail in certain environments. Fix: ensure all adapter files exist and are importable. The `DeepSeekAdapter` reuses `OpenAIAdapter` — verify this works for all providers.
+
+### 3. End-to-End Test — PENDING
+Full pipeline never ran: CPG → agent → sandbox → evidence → bench → SARIF. Create `tests/e2e/test_full_pipeline.py` that:
+1. Indexes a repo with known vulnerabilities via CPG
+2. Runs 1 agent against it
+3. Verifies sandbox produces receipts
+4. Verifies evidence graph records claims
+5. Verifies bench produces verdicts
+6. Verifies SARIF export is valid
+
+### 4. Rust Persistence (Evidence Graph Serialization) — PENDING
+Evidence graph is entirely in-memory. Process restart loses all data. Add:
+- `EvidenceGraph::save(path: &Path) -> Result<()>` — serialize to JSON/bincode
+- `EvidenceGraph::load(path: &Path) -> Result<EvidenceGraph>` — deserialize
+- Auto-save after every batch of changes
+- `bugswarm-evidence run-server` loads from disk on startup
+
+### 5. Rust Performance (R5 Fixes) — PENDING
+- Cache compiled regexes with `OnceLock` in `extract_stack_frames` and `classify_exception`
+- Replace polling loop with Docker wait API in container manager
+- CPG cache between commands (already partially done in daemon mode)
+- Fix O(n^4) echo chamber in evidence graph stats()
+
+### 6. Shared Types Crate — PENDING
+`ExecutionReceipt`, `MemoryProfile`, `NodeKind`, `EdgeKind` defined in multiple places. Create `bugswarm-types` crate with shared definitions. Import from single source of truth.
+
+### 7. Minitia Real Binary Downloads — PENDING
+Engine install writes a shell stub instead of downloading real binaries. Implement actual HTTP download with SHA-256 verification from `releases.bugswarm.ai`.
+
+### 8. TUI Textual Integration — PENDING
+TUI data model exists (`swarm/tui.py`) but has no terminal rendering. Integrate with Textual framework:
+- Convert `TUIState` to Textual reactive widgets
+- Implement all 7 screens with real-time updates
+- Keyboard shortcuts and command mode
+
+### 9. Prometheus HTTP Endpoint — PENDING
+Metrics registry exists (`swarm/observability.py`) but no HTTP endpoint. Add:
+- `GET /metrics` returning Prometheus text format
+- `GET /health` for liveness probe
+- `GET /ready` for readiness probe
+
+### 10. Graceful Shutdown in Rust — PENDING
+SIGTERM to Rust daemons leaves Docker containers dangling. Add:
+- Signal handler in all 3 daemons
+- Drain active connections before exit
+- Clean up Docker containers on shutdown
+- WAL checkpoint before exit
+
+---
+
 *This file is versioned. Changes require an ADR and approval from the engineering lead. The latest version is always at `AGENTS.md` in the repository root.*
