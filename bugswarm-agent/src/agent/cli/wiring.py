@@ -1,0 +1,194 @@
+"""Dependency Injection — wires all modules into a complete IEPEngine."""
+
+from __future__ import annotations
+
+import structlog
+from gateway.types import GatewayConfig, ProviderType
+from gateway.client import LLMClient
+
+from agent.loop import IEPEngine, IEPConfig
+from agent.tools import ToolRegistry, ToolDefinition, ToolResult
+from agent.parser import OutputParser
+from agent.cpg_client import CPGClient
+from agent.sandbox_client import SandboxClient
+from agent.persistence import PersistenceManager
+from agent.scanner import UnifiedScanner
+from agent.prompts import Persona
+
+from .config import CLIConfig
+
+logger = structlog.get_logger(__name__)
+
+
+def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, LLMClient]:
+    """Build the full dependency tree. Called once at startup.
+
+    Returns (engine, persistence, gateway) for lifecycle management.
+    """
+    # 1. Persistence
+    persistence = PersistenceManager(config.db_path)
+
+    # 2. Scanner (use shared config if provided)
+    scanner = UnifiedScanner(config.scanner_config if config.scanner_config else None)
+
+    # 3. Gateway
+    gw_config = GatewayConfig.from_env()
+    try:
+        gw_config.default_provider = ProviderType(config.provider)
+    except ValueError:
+        logger.warning("unknown_provider", provider=config.provider, fallback="deepseek")
+        gw_config.default_provider = ProviderType.DEEPSEEK
+    gateway = LLMClient(gw_config)
+    gateway.register_default_adapters()
+
+    # 4. Service clients
+    cpg = CPGClient(binary=config.cpg_binary)
+    sandbox = SandboxClient(binary=config.sandbox_binary)
+
+    # 5. Tools
+    tools = ToolRegistry()
+    tools.register(ToolDefinition(
+        name="read_file", description="Read lines from a file",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"}, "start_line": {"type": "integer"},
+            "end_line": {"type": "integer"}}, "required": ["path"]},
+        handler=lambda args: _read_file(config.repo, scanner, args),
+        timeout_secs=10.0, cache_ttl_secs=30.0,
+    ))
+    tools.register(ToolDefinition(
+        name="query_cpg", description="Query the Code Property Graph",
+        parameters={"type": "object", "properties": {
+            "name": {"type": "string"}, "kind": {"type": "string"}}, "required": []},
+        handler=lambda args: _query_cpg(cpg, config.repo, args),
+        timeout_secs=30.0, cache_ttl_secs=10.0,
+    ))
+    tools.register(ToolDefinition(
+        name="exec_sandbox", description="Execute PoC in isolated sandbox",
+        parameters={"type": "object", "properties": {
+            "poc_code": {"type": "string"}}, "required": ["poc_code"]},
+        handler=lambda args: _exec_sandbox(sandbox, scanner, args),
+        timeout_secs=130.0, max_retries=1, cache_ttl_secs=0.0,
+    ))
+    tools.register(ToolDefinition(
+        name="list_dir", description="List directory contents",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"}}, "required": []},
+        handler=lambda args: _list_dir(config.repo, args),
+        timeout_secs=5.0, cache_ttl_secs=30.0,
+    ))
+    tools.register(ToolDefinition(
+        name="trace_dependency", description="Trace call dependencies",
+        parameters={"type": "object", "properties": {
+            "function_name": {"type": "string"}, "radius": {"type": "integer"}},
+            "required": ["function_name"]},
+        handler=lambda args: _trace_dependency(cpg, config.repo, args),
+        timeout_secs=30.0, cache_ttl_secs=15.0,
+    ))
+
+    # 6. Parser
+    parser = OutputParser()
+
+    # 7. Engine
+    iep_config = IEPConfig(
+        repo_path=config.repo,
+        persona=config.persona,
+        model=config.model,
+        provider=ProviderType(config.provider) if config.provider in {"openai","anthropic","deepseek","google","ollama"} else ProviderType.DEEPSEEK,
+        max_rounds=config.rounds,
+        max_turns_per_round=config.turns,
+        db_path=config.db_path,
+    )
+
+    engine = IEPEngine(iep_config, tools, parser, gateway, persistence)
+    return engine, persistence, gateway
+
+
+# ─── Tool Handlers (async wrapped for sync ToolRegistry) ───
+
+import asyncio
+
+def _run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
+async def _read_file_async(repo, scanner, args):
+    try:
+        path = args.get("path", "")
+        start = int(args.get("start_line", 1))
+        end = int(args.get("end_line", start + 50))
+        full = repo / path
+        if not full.exists() and Path(path).exists():
+            full = Path(path)
+        if not full.exists():
+            return ToolResult(False, f"File not found: {path}")
+        lines = full.read_text().splitlines()
+        result_lines = [f"{i+1}: {lines[i]}" for i in range(max(0, start-1), min(len(lines), end))]
+        content = "\n".join(result_lines)
+        redacted, count = scanner.redact(content)
+        return ToolResult(True, redacted, {"lines": f"{start}-{end}", "total": len(lines)})
+    except Exception as e:
+        return ToolResult(False, str(e))
+
+def _read_file(repo, scanner, args):
+    return _run_async(_read_file_async(repo, scanner, args))
+
+
+async def _query_cpg_async(cpg, repo, args):
+    try:
+        stats = await cpg.stats(repo)
+        import json
+        data = {"files": stats.total_files, "functions": stats.total_functions,
+                "sources": stats.sources, "sinks": stats.sinks,
+                "taint_paths": stats.taint_paths}
+        return ToolResult(True, json.dumps(data, indent=2), {"source": "cpg"})
+    except Exception as e:
+        return ToolResult(False, str(e))
+
+def _query_cpg(cpg, repo, args):
+    return _run_async(_query_cpg_async(cpg, repo, args))
+
+
+async def _exec_sandbox_async(sandbox, scanner, args):
+    poc = args.get("poc_code", "")
+    if not poc:
+        return ToolResult(False, "No PoC code provided")
+    if scanner.has_escape_attempt(poc):
+        return ToolResult(False, "PoC contains sandbox escape patterns — REJECTED")
+    receipt = await sandbox.execute(poc)
+    import json
+    return ToolResult(True, json.dumps(receipt.to_summary()),
+                      {"exit_code": receipt.exit_code, "status": receipt.status})
+
+def _exec_sandbox(sandbox, scanner, args):
+    return _run_async(_exec_sandbox_async(sandbox, scanner, args))
+
+
+async def _list_dir_async(repo, args):
+    try:
+        path = args.get("path", ".")
+        target = repo / path if path != "." else repo
+        entries = [f"  [{'DIR' if e.is_dir() else 'FILE'}] {e.name}"
+                   for e in sorted(target.iterdir())]
+        return ToolResult(True, f"Contents of {target}:\n" + "\n".join(entries))
+    except Exception as e:
+        return ToolResult(False, str(e))
+
+def _list_dir(repo, args):
+    return _run_async(_list_dir_async(repo, args))
+
+
+async def _trace_dependency_async(cpg, repo, args):
+    try:
+        paths = await cpg.taint_paths(repo)
+        lines = [f"Path: {p.source} → {p.sink} (len={p.length})" for p in paths[:10]]
+        return ToolResult(True, "\n".join(lines) or "No taint paths found")
+    except Exception as e:
+        return ToolResult(False, str(e))
+
+def _trace_dependency(cpg, repo, args):
+    return _run_async(_trace_dependency_async(cpg, repo, args))
