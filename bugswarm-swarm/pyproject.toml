@@ -1,0 +1,22 @@
+[project]
+name = "bugswarm-swarm"
+version = "0.1.0"
+description = "Bug Swarm CLI — Multi-Agent Swarm Orchestrator"
+requires-python = ">=3.11"
+dependencies = [
+    "bugswarm-agent",
+    "bugswarm-gateway",
+    "numpy>=1.26",
+    "pydantic>=2.10.0",
+    "structlog>=24.4.0",
+]
+
+[project.scripts]
+bugswarm-swarm = "swarm.cli:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

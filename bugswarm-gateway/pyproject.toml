@@ -1,0 +1,27 @@
+[project]
+name = "bugswarm-gateway"
+version = "0.1.0"
+description = "Bug Swarm CLI — LLM API Gateway. Multi-provider abstraction with cost tracking, retry, and hot-swap."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.0",
+    "openai>=1.60.0",
+    "anthropic>=0.40.0",
+    "google-genai>=1.5.0",
+    "jinja2>=3.1.4",
+    "pydantic>=2.10.0",
+    "tenacity>=9.0.0",
+    "structlog>=24.4.0",
+    "pyyaml>=6.0.2",
+    "tiktoken>=0.8.0",
+]
+
+[project.scripts]
+bugswarm-gateway = "gateway.cli:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

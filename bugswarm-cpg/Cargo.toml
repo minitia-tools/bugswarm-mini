@@ -1,0 +1,27 @@
+[package]
+name = "bugswarm-cpg"
+version = "0.1.0"
+edition = "2021"
+description = "Bug Swarm CLI — Code Property Graph Builder. Static analysis graph for multi-language codebases."
+
+[dependencies]
+tree-sitter = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+petgraph = "0.7"
+regex = "1.11"
+sha2 = "0.10"
+hex = "0.4"
+walkdir = "2.5"
+log = "0.4"
+
+[dev-dependencies]
+tempfile = "3.14"
+rstest = "0.23"

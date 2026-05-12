@@ -1,0 +1,46 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": [
+    "SCMP_ARCH_X86_64",
+    "SCMP_ARCH_AARCH64"
+  ],
+  "syscalls": [
+    {
+      "names": [
+        "read", "write", "openat", "close", "fstat", "lseek",
+        "mmap", "mprotect", "munmap", "brk", "rt_sigaction",
+        "rt_sigprocmask", "rt_sigreturn", "ioctl", "pread64",
+        "pwrite64", "readv", "writev", "access", "pipe2",
+        "dup", "dup2", "dup3", "fcntl", "clock_gettime",
+        "exit", "exit_group", "getpid", "gettid", "getuid",
+        "geteuid", "getgid", "getegid", "arch_prctl",
+        "futex", "set_tid_address", "set_robust_list",
+        "rseq", "madvise", "sched_yield", "sched_getaffinity",
+        "nanosleep", "epoll_create1", "epoll_ctl", "epoll_wait",
+        "eventfd2", "prlimit64", "getrandom", "tgkill",
+        "stat", "lstat", "readlink", "getcwd", "sysinfo",
+        "getrusage", "times", "uname", "getrlimit",
+        "clock_getres", "clock_nanosleep", "restart_syscall",
+        "faccessat", "faccessat2", "newfstatat", "getdents64"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "names": [
+        "ptrace", "mount", "umount2", "kexec_load", "kexec_file_load",
+        "bpf", "perf_event_open", "create_module", "init_module",
+        "delete_module", "finit_module", "pivot_root", "chroot",
+        "setns", "unshare", "personality", "process_vm_readv",
+        "process_vm_writev", "uselib", "syslog", "vhangup",
+        "swapoff", "swapon", "reboot", "iopl", "ioperm",
+        "add_key", "request_key", "keyctl", "acct",
+        "nfsservctl", "_sysctl", "lookup_dcookie",
+        "quotactl", "move_pages", "mbind", "set_mempolicy",
+        "migrate_pages", "kcmp", "finit_module",
+        "userfaultfd", "fanotify_init", "name_to_handle_at",
+        "open_by_handle_at"
+      ],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}

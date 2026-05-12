@@ -1,0 +1,10 @@
+target/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.cargo/
+*.wal
+*.db
+node_modules/
+dist/

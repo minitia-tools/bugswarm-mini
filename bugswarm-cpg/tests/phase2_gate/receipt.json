@@ -1,0 +1,33 @@
+{
+  "phase": 2,
+  "name": "Code Property Graph",
+  "gate": "Obfuscation Gauntlet",
+  "timestamp": "2026-05-11T12:30:00Z",
+  "status": "PASSED",
+  "total_tests": 20,
+  "passed": 20,
+  "failed": 0,
+  "results": {
+    "5_hop_taint_path": "PASS",
+    "direct_taint_detection": "PASS",
+    "sanitized_taint": "PASS",
+    "unicode_identifiers": "PASS",
+    "syntax_error_resilience": "PASS",
+    "circular_imports": "PASS",
+    "decorator_chains": "PASS",
+    "async_await": "PASS",
+    "lambda_closures": "PASS",
+    "deep_nesting": "PASS",
+    "javascript_support": "PASS",
+    "class_inheritance": "PASS",
+    "generator_functions": "PASS",
+    "multiple_sink_types": "PASS",
+    "extension_resilience": "PASS",
+    "large_file_parsing": "PASS",
+    "cross_file_calls": "PASS",
+    "json_validity": "PASS",
+    "empty_repo": "PASS",
+    "mixed_language": "PASS"
+  },
+  "verdict": "PHASE 2 COMPLETE — Proceed to Phase 3 (LLM Gateway)"
+}

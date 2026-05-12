@@ -1,0 +1,21 @@
+[project]
+name = "minitia"
+version = "0.1.0"
+description = "Minitia — Multi-Engine Agentic Tool Orchestrator"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.10.0",
+    "structlog>=24.4.0",
+    "pyyaml>=6.0.2",
+    "httpx>=0.28.0",
+]
+
+[project.scripts]
+minitia = "minitia.cli:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
