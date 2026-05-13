@@ -161,9 +161,9 @@ mod tests {
         // Build a simple CFG: entry → a → b → exit
         let cfg = ControlFlowGraph {
             blocks: vec![
-                BasicBlock { id: 0, nodes: vec![], predecessors: vec![], successors: vec![1], is_entry: true, is_exit: false },
-                BasicBlock { id: 1, nodes: vec![], predecessors: vec![0], successors: vec![2], is_entry: false, is_exit: false },
-                BasicBlock { id: 2, nodes: vec![], predecessors: vec![1], successors: vec![], is_entry: false, is_exit: true },
+                BasicBlock { id: 0, nodes: vec![], predecessors: vec![], successors: vec![1], is_entry: true, is_exit: false, true_successor: None, false_successor: None },
+                BasicBlock { id: 1, nodes: vec![], predecessors: vec![0], successors: vec![2], is_entry: false, is_exit: false, true_successor: None, false_successor: None },
+                BasicBlock { id: 2, nodes: vec![], predecessors: vec![1], successors: vec![], is_entry: false, is_exit: true, true_successor: None, false_successor: None },
             ],
             entry_block: 0, exit_block: 2,
             node_to_block: HashMap::new(),
@@ -180,8 +180,8 @@ mod tests {
     fn test_dominators_branch() {
         // With simplified CFG, branches are sequential — dominator tree should still be valid
         let cfg = ControlFlowGraph { blocks: vec![
-            BasicBlock { id: 0, nodes: vec![], predecessors: vec![], successors: vec![1], is_entry: true, is_exit: false },
-            BasicBlock { id: 1, nodes: vec![], predecessors: vec![0], successors: vec![], is_entry: false, is_exit: true },
+            BasicBlock { id: 0, nodes: vec![], predecessors: vec![], successors: vec![1], is_entry: true, is_exit: false, true_successor: None, false_successor: None },
+            BasicBlock { id: 1, nodes: vec![], predecessors: vec![0], successors: vec![], is_entry: false, is_exit: true, true_successor: None, false_successor: None },
         ], entry_block: 0, exit_block: 1, node_to_block: HashMap::new() };
         let dt = DominatorTree::build(&cfg);
         assert!(dt.idom.contains_key(&1));
