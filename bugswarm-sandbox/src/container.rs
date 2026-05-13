@@ -102,6 +102,24 @@ impl ContainerManager {
             .ok_or_else(|| SandboxError::ContainerExecution("Image has no ID".into()))
     }
 
+    /// Select the appropriate image based on sanitizer config.
+    fn select_image(&self, poc_content: &str) -> String {
+        if !self.config.sanitizer_enabled {
+            return self.config.image.clone();
+        }
+        if let Some(ref custom) = self.config.sanitizer_image {
+            return custom.clone();
+        }
+        // Auto-detect language from PoC content
+        let lower = poc_content.to_lowercase();
+        if lower.contains("import ctypes") || lower.contains("#include <") || lower.contains("malloc") {
+            "bugswarm/sandbox-cpp-asan:latest".into()
+        } else {
+            // Default: Python ASAN image
+            "bugswarm/sandbox-python-asan:latest".into()
+        }
+    }
+
     /// Validate environment variables requested by an agent.
     pub fn validate_env_vars(&self, env_vars: &HashMap<String, String>) -> SandboxResult<HashMap<String, String>> {
         let mut validated = HashMap::new();
@@ -129,7 +147,14 @@ impl ContainerManager {
         flaky_detection: bool,
     ) -> SandboxResult<ExecutionReceipt> {
         let execution_id = Uuid::new_v4().to_string();
-        let image_sha256 = self.get_image_sha256().await?;
+        let selected_image = self.select_image(poc_content);
+
+        // Get SHA of the selected image (not the default config image)
+        let image_sha256 = self.docker.inspect_image(&selected_image).await
+            .map_err(|e| SandboxError::ContainerExecution(format!("Image inspect failed: {}", e)))?
+            .id
+            .ok_or_else(|| SandboxError::ContainerExecution("Image has no ID".into()))?;
+
         let started_at = chrono::Utc::now();
         let poc_sha256 = hex::encode(Sha256::digest(poc_content.as_bytes()));
 
@@ -146,7 +171,7 @@ impl ContainerManager {
         }
 
         let health_before = self.daemon_healthy().await;
-        let output = self.run_container(&execution_id, poc_content, &validated_env, flaky_detection).await?;
+        let output = self.run_container(&execution_id, poc_content, &validated_env, flaky_detection, &selected_image).await?;
         let health_after = self.daemon_healthy().await;
 
         let ended_at = chrono::Utc::now();
@@ -162,6 +187,14 @@ impl ContainerManager {
         } else {
             (output.stderr.clone(), 0)
         };
+
+        // Parse sanitizer output if enabled
+        let sanitizer_report = if self.config.sanitizer_enabled {
+            crate::sanitizer_report::parse_sanitizer_output(&stderr_clean)
+        } else {
+            None
+        };
+        let finding_source = sanitizer_report.as_ref().map(|_| "sanitizer".to_string());
 
         let stack_frames = Self::extract_stack_frames(&output.stderr);
         let (exception_type, exception_message, exception_handling) =
@@ -198,6 +231,8 @@ impl ContainerManager {
                 docker_daemon_ok: true,
             },
             pii_redactions: pii_count + stderr_pii,
+            sanitizer_report,
+            finding_source,
             env_vars: validated_env.clone(),
             started_at,
             ended_at,
@@ -217,6 +252,7 @@ impl ContainerManager {
         poc_content: &str,
         env_vars: &HashMap<String, String>,
         _flaky_detection: bool,
+        image: &str,
     ) -> SandboxResult<ContainerOutput> {
         let container_name = format!("bugswarm-sandbox-{}", execution_id);
 
@@ -231,7 +267,7 @@ impl ContainerManager {
         );
 
         let container_config = ContainerConfig {
-            image: Some(self.config.image.clone()),
+            image: Some(image.to_string()),
             env: Some(env_list),
             cmd: Some(vec!["sh".into(), "-c".into(), script]),
             working_dir: Some(self.config.workdir.clone()),

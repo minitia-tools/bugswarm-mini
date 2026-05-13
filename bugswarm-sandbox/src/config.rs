@@ -107,6 +107,14 @@ pub struct SandboxConfig {
     /// Path to seccomp profile JSON. If None, uses built-in.
     #[serde(default)]
     pub seccomp_profile_path: Option<String>,
+
+    /// Whether to enable sanitizer-compiled images.
+    #[serde(default = "default_true")]
+    pub sanitizer_enabled: bool,
+
+    /// Custom sanitizer image. If None, auto-selects based on language.
+    #[serde(default)]
+    pub sanitizer_image: Option<String>,
 }
 
 fn default_wall_timeout() -> u64 { DEFAULT_WALL_CLOCK_TIMEOUT_SECS }
@@ -147,6 +155,8 @@ impl Default for SandboxConfig {
             pii_scanning: default_true(),
             escape_detection: default_true(),
             seccomp_profile_path: None,
+            sanitizer_enabled: default_true(),
+            sanitizer_image: None,
         }
     }
 }
@@ -389,6 +399,14 @@ pub struct ExecutionReceipt {
 
     /// Reason for taint if tainted.
     pub taint_reason: Option<String>,
+
+    /// Sanitizer report if the execution was run with sanitizer instrumentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sanitizer_report: Option<crate::sanitizer_report::SanitizerReport>,
+
+    /// Source of the finding: "agent", "sanitizer", "fuzzer", "differential", etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
