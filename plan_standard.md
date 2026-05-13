@@ -105,16 +105,49 @@ CPU, memory, latency, throughput. With p50/p95/p99 targets.
 
 ---
 
-## Section D: Verification (5 questions)
+## Section D: Verification — AGGRESSIVE TESTING MANDATORY
 
-### D1. What are the unit tests?
-Every function. Every error path. Every edge case. Listed by test name.
+**Rule**: Every component must be attacked with inputs explicitly engineered to break it. If a test doesn't try to BREAK the implementation, it's not a test. Per AGENTS.md invariant #11: "Each component must be tested until it breaks or is proven unbreakable."
 
-### D2. What are the integration tests?
-How this module interacts with every other module it touches.
+### D1. What are the aggressive unit tests?
+Every function. Every error path. Every edge case. Every boundary condition. Listed by test name.
 
-### D3. What is the gate test?
-The extreme aggressive test designed to break this. Must pass at 100%.
+Each test must include:
+- **Happy path**: Expected input → expected output
+- **Null/empty/boundary**: null, zero, empty string, max value, min value
+- **Malformed**: Invalid JSON, wrong types, missing fields, corrupted data
+- **Concurrent**: Race conditions, simultaneous access, deadlock scenarios
+- **Resource exhaustion**: Memory limits, timeout, disk full, FD exhaustion
+- **Deliberate attack**: Input specifically crafted to break the parser/handler/algorithm
+
+**Format per test**:
+```
+test_name: "test_parse_asan_corrupted_input"
+attack_vector: "Stderr with null bytes, invalid UTF-8, and truncated ASAN output"
+expected_behavior: "Parser returns error_type='unknown', raw_output preserved. No panic."
+```
+
+### D2. What are the aggressive integration tests?
+Every module × module interaction under load, under failure, under attack.
+
+Each integration test must include:
+- **Happy path**: Module A calls Module B with valid data → correct response
+- **Module B down**: Module B returns error/unreachable → Module A handles gracefully
+- **Module B slow**: Module B takes 10x normal time → Module A times out cleanly
+- **Concurrent storm**: 50 simultaneous calls from Module A to Module B → no corruption
+- **Data corruption**: Module B returns malformed data → Module A detects and rejects
+
+### D3. What is the extreme gate test?
+**MANDATORY**: This test is explicitly designed to BREAK the implementation. It must exercise every failure mode, every edge case, every boundary condition simultaneously. The phase is NOT complete until this test passes at 100% with zero failures, zero warnings, and zero unexplained anomalies.
+
+The gate test is NOT a verification test. It is an ATTACK on the implementation. Write it as if you are trying to prove the implementation wrong.
+
+**Gate test requirements**:
+- Must test ≥10 distinct attack vectors
+- Each attack vector must have a documented expected behavior
+- Must run in <5 minutes (for fast feedback)
+- Must produce a JSON gate receipt with pass/fail per attack vector
+- Must check host integrity after all attacks (no side effects, no resource leaks)
 
 ### D4. How is it verified against the golden dataset?
 If applicable: 200 pre-adjudicated bugs. Before/after comparison.
@@ -276,8 +309,10 @@ After: [list]
 
 ## Review Checklist
 - [ ] All 25 questions answered
+- [ ] Aggressive testing mandate met — D1 unit tests include attack vectors, D2 integration tests include failure modes, D3 gate test designed to BREAK implementation
+- [ ] Every component individually stress-tested (parser, handler, algorithm, config — each with null/empty/corrupt/concurrent/maximum inputs)
 - [ ] Dependency tree verified
-- [ ] Gate test passes at 100%
+- [ ] Gate test passes at 100% — zero failures, zero warnings, zero anomalies
 - [ ] No downstream phase blocked
 - [ ] Documentation updated
 

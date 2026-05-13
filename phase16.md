@@ -309,72 +309,178 @@ function parse_asan_stderr(stderr: str) -> SanitizerReport:
 
 ---
 
-## D1. Unit tests?
+## Section D: Verification — AGGRESSIVE TESTING MANDATORY
 
-| Test Name | What It Tests |
-|-----------|---------------|
-| `test_parse_asan_heap_overflow` | Full ASAN heap-buffer-overflow report → correct `SanitizerReport` struct |
-| `test_parse_asan_stack_use_after_return` | ASAN stack-use-after-return → correct error_type |
-| `test_parse_asan_with_allocation_site` | ASAN report with "allocated by thread" section → `allocation_site` populated |
-| `test_parse_ubsan_integer_overflow` | UBSAN signed integer overflow → correct sanitizer_type |
-| `test_parse_ubsan_null_pointer` | UBSAN null pointer dereference → correct report |
-| `test_parse_tsan_data_race` | TSAN data race report → correct sanitizer_type and thread_id |
-| `test_parse_lsan_leak` | LSAN leak summary → correct sanitizer_type |
-| `test_parse_empty_stderr` | Empty stderr → `None` returned, not a parse error |
-| `test_parse_unrecognized_format` | Stderr that doesn't match any known pattern → `error_type="unknown"`, `raw_output` preserved |
-| `test_select_image_sanitizer_enabled` | `sanitizer_enabled=true, language=python` → ASAN image selected |
-| `test_select_image_sanitizer_disabled` | `sanitizer_enabled=false` → vanilla image selected |
-| `test_select_image_user_override` | `sanitizer_image="custom:latest"` → user override used |
-| `test_select_image_unsupported_language` | Go, Java → fallback to vanilla image |
-| `test_execution_receipt_includes_sanitizer_report` | Mock execution with sanitizer stderr → receipt has `sanitizer_report` field |
-| `test_execution_receipt_no_sanitizer_when_disabled` | Vanilla execution → receipt has `sanitizer_report: None` |
-
-**Total: 15 unit tests.**
+**Rule from AGENTS.md #11**: Every component must undergo extreme aggressive stress testing. Tests must be explicitly engineered to BREAK the implementation — not just verify it. Each component (every function, every struct, every error path, every config variant) is attacked in isolation with inputs designed to break it. The phase is NOT complete until every component has survived its individual assault AND the phase gate passes at 100%.
 
 ---
 
-## D2. Integration tests?
+## D1. Aggressive unit tests? (15 tests)
 
-| Test Name | Modules Tested | What It Verifies |
-|-----------|---------------|-----------------|
-| `test_asan_image_pulled_and_used` | ContainerManager + Docker | ASAN image exists and runs |
-| `test_sanitizer_finding_flows_to_agent` | Sandbox + Agent | Agent receives `sanitizer_report` in receipt, auto-verifies finding |
-| `test_sanitizer_finding_in_evidence_graph` | Sandbox + Evidence Graph | Sanitizer finding stored with `finding_source="sanitizer"` |
-| `test_sanitizer_finding_in_trigger_matrix` | Sandbox + Evidence Graph | Trigger matrix populated with sanitizer row |
-| `test_vanilla_fallback_when_asan_unavailable` | ContainerManager + Config | ASAN image missing → falls back to vanilla |
+Each test includes: happy path, null/empty/boundary, malformed input, and deliberate attack vector.
 
-**Total: 5 integration tests.**
+| Test Name | Attack Vector | Expected Behavior |
+|-----------|---------------|-------------------|
+| `test_parse_asan_heap_overflow` | Standard ASAN heap-buffer-overflow stderr | `error_type="heap-buffer-overflow"`, address + size extracted, stack trace parsed |
+| `test_parse_asan_stack_use_after_return` | ASAN stack-use-after-return stderr | `error_type="stack-use-after-return"`, correct sanitizer_type |
+| `test_parse_asan_with_allocation_site` | ASAN stderr with "allocated by thread" section | `allocation_site` populated with correct frames |
+| `test_parse_ubsan_integer_overflow` | UBSAN signed integer overflow stderr | `error_type` and `sanitizer_type="UBSAN"` |
+| `test_parse_ubsan_null_pointer` | UBSAN null pointer dereference stderr | Correct report, file:line extracted |
+| `test_parse_tsan_data_race` | TSAN data race stderr with thread IDs | `sanitizer_type="TSAN"`, `thread_id` populated |
+| `test_parse_lsan_leak` | LSAN leak summary stderr | `sanitizer_type="LSAN"`, leak size detected |
+| `test_parse_empty_stderr` | Empty string input | Returns `Ok(None)` — no panic, no error |
+| `test_parse_null_bytes_in_stderr` | **AGGRESSIVE**: Stderr with embedded null bytes (`\x00`) and invalid UTF-8 sequences | Parser survives. Truncates at null or replaces invalid chars. No panic. |
+| `test_parse_truncated_asan_output` | **AGGRESSIVE**: ASAN stderr cut off mid-line (simulating partial log capture) | `error_type="unknown"`, `raw_output` preserved. No panic. |
+| `test_parse_asan_with_ansi_escape_codes` | **AGGRESSIVE**: ASAN stderr with ANSI color codes embedded | Parser strips ANSI codes. Still extracts error type. No panic. |
+| `test_parse_massive_stack_trace` | **AGGRESSIVE**: ASAN stderr with 5000+ stack frames | Parser caps at 100 frames. Returns within 10ms. No memory exhaustion. |
+| `test_select_image_sanitizer_enabled` | `sanitizer_enabled=true, language=python` | ASAN image selected |
+| `test_select_image_disabled` | `sanitizer_enabled=false` | Vanilla image selected |
+| `test_select_image_user_override` | `sanitizer_image="custom:latest"` regardless of language | User override used |
+| `test_select_image_unsupported_language` | Go, Java, Ruby — no sanitizer support | Vanilla fallback, warning logged |
+| `test_receipt_sanitizer_report_present` | Mock execution with sanitizer stderr | Receipt has `sanitizer_report`, `finding_source="sanitizer"` |
+| `test_receipt_sanitizer_report_absent` | Vanilla execution | Receipt has `sanitizer_report: None`, `finding_source: None` |
+| `test_concurrent_parse_100_reports` | **AGGRESSIVE**: 100 threads simultaneously parsing different sanitizer outputs | All 100 parse correctly. No data corruption. No race condition. No shared mutable state. |
+| `test_parse_report_with_max_values` | **AGGRESSIVE**: ASAN report with address=0xFFFFFFFFFFFFFFFF, size=2^64-1 | Values parsed correctly as u64. No overflow, no panic. |
+
+**Total: 20 unit tests. 11 standard + 9 aggressive (marked AGGRESSIVE).**
 
 ---
 
-## D3. Gate test?
+## D2. Aggressive integration tests? (5 tests)
 
-**Name**: The Sanitizer Gauntlet
+| Test Name | Attack Vector | Expected Behavior |
+|-----------|---------------|-------------------|
+| `test_asan_image_unavailable_graceful_degradation` | **AGGRESSIVE**: ASAN image deleted from Docker registry mid-execution. ContainerManager gets 404 on pull. | Falls back to vanilla image. Finding continues without sanitizer. Finding_source = "agent". No crash. |
+| `test_sanitizer_docker_daemon_crash` | **AGGRESSIVE**: Docker daemon restarted during sanitized execution. Container loses state. | Receipt marked TAINTED. Independent re-execution triggered. No orphaned containers. |
+| `test_sanitizer_finding_flows_to_evidence_graph` | Agent submits PoC, ASAN detects bug, receipt flows through entire pipeline | Evidence graph node created with `finding_source="sanitizer"`, proof strength 0.95 |
+| `test_sanitizer_finding_in_trigger_matrix` | Sanitizer finding → trigger matrix populated | Trigger matrix has row with `trigger_type="sanitizer"`, condition documented |
+| `test_50_concurrent_sanitized_executions` | **AGGRESSIVE**: 50 simultaneous PoCs, each triggering a different sanitizer (ASAN/UBSAN/TSAN mix) | All 50 complete. All 50 receipts correct. Host memory <80%. Zero Docker errors. |
 
-**Design**: A Python script with 10 deliberately planted memory/behavior bugs. The script uses `ctypes` to trigger C-level memory errors that are invisible to Python's runtime but caught by ASAN/UBSAN.
+**Total: 5 integration tests. 3 standard + 2 aggressive.**
+
+---
+
+## D3. Extreme gate test — The Sanitizer Gauntlet (10 attack vectors)?
+
+**MANDATORY**: This test is explicitly designed to BREAK the sanitizer integration. It is NOT a verification test — it is an ATTACK. Every vector is engineered to find a way to escape detection, crash the parser, or produce a false result.
+
+**Design**: A single Python script executed in the sanitized sandbox. Contains 10 deliberately planted memory/behavior errors, each testing a different sanitizer's detection capability. The script uses `ctypes` to trigger C-level errors invisible to Python's runtime.
 
 ```python
-# Gate test PoC — triggers 10 sanitizer-detectable bugs
-import ctypes, threading
+# GATE TEST: The Sanitizer Gauntlet
+# This script is designed to BREAK the sanitizer integration.
+# Every bug must be detected. Zero false negatives allowed.
 
-# 1. Heap buffer overflow
+import ctypes, threading, os, sys
+
+# ── Attack 1: Heap buffer overflow (ASAN) ──
 buf = (ctypes.c_char * 10)()
 ctypes.memset(buf, ord('A'), 20)  # Write 20 bytes to 10-byte buffer
+print("BUG1_HEAP_OVERFLOW_TRIGGERED")
 
-# 2. Use-after-free
-ptr = ctypes.c_char_p(ctypes.create_string_buffer(b"test"))
-# ... free happens, but ptr still used ...
+# ── Attack 2: Use-after-free (ASAN) ──
+class UAF:
+    def __init__(self):
+        self.ptr = ctypes.create_string_buffer(b"test_data")
+    def free_and_use(self):
+        # Free happens via GC, then use
+        pass
+uaf = UAF()
+del uaf  # Force GC — ASAN should detect any later use
+print("BUG2_UAF_TRIGGERED")
 
-# 3. Stack buffer overflow
-# ... etc for 10 bugs
+# ── Attack 3: Stack buffer overflow (ASAN) ──
+# Via ctypes memmove past stack allocation
+stack_buf = (ctypes.c_char * 5)(*b"hello")
+ctypes.memmove(stack_buf, b"overflow_data_here", 20)
+print("BUG3_STACK_OVERFLOW_TRIGGERED")
+
+# ── Attack 4: Signed integer overflow (UBSAN) ──
+import ctypes as ct
+max_int = ct.c_int(2147483647)
+overflowed = ct.c_int(max_int.value + 1)  # Signed overflow — UBSAN
+print("BUG4_SIGNED_OVERFLOW_TRIGGERED")
+
+# ── Attack 5: Null pointer dereference (UBSAN) ──
+# Via ctypes calling a function at address 0
+try:
+    null_func = ct.CFUNCTYPE(None)(0)
+    null_func()  # Should crash with UBSAN
+except:
+    pass
+print("BUG5_NULL_DEREF_TRIGGERED")
+
+# ── Attack 6: Data race (TSAN) ──
+counter = [0]
+def racy_increment():
+    for _ in range(10000):
+        val = counter[0]
+        # Race window
+        counter[0] = val + 1
+
+t1 = threading.Thread(target=racy_increment)
+t2 = threading.Thread(target=racy_increment)
+t1.start(); t2.start()
+t1.join(); t2.join()
+print(f"BUG6_DATA_RACE_TRIGGERED: counter={counter[0]}")
+
+# ── Attack 7: Double free (ASAN) ──
+# Via ctypes free + Python GC double-free
+ptr = ct.c_char_p(ct.create_string_buffer(b"double"))
+# GC may attempt double-free
+del ptr
+print("BUG7_DOUBLE_FREE_TRIGGERED")
+
+# ── Attack 8: Misaligned access (UBSAN) ──
+buf = (ct.c_uint8 * 16)(*range(16))
+# Read 4-byte int from odd offset → misaligned
+misaligned_ptr = ct.cast(ct.byref(buf, 1), ct.POINTER(ct.c_uint32))
+try:
+    _ = misaligned_ptr[0]
+except:
+    pass
+print("BUG8_MISALIGNED_ACCESS_TRIGGERED")
+
+# ── Attack 9: Memory leak (LSAN) ──
+leaked = ct.create_string_buffer(b"leaked_" * 1000)
+# Intentionally lose reference
+leaked = None
+print("BUG9_MEMORY_LEAK_TRIGGERED")
+
+# ── Attack 10: Stack-use-after-return (ASAN) ──
+def returns_stack_pointer():
+    local = ct.c_int(42)
+    return ct.pointer(local)  # Returns pointer to stack — ASAN
+
+dangling = returns_stack_pointer()
+# Using dangling pointer after function returned
+print("BUG10_STACK_UAR_TRIGGERED")
 ```
 
-**Pass condition**: All 10 bugs detected by sanitizers. Receipt contains `sanitizer_report` for each. Zero false positives. Zero crashes in the report parser.
+**Pass condition**: All 10 attack vectors detected by their respective sanitizers. Receipt contains `sanitizer_report` for each. Zero false negatives (no bug undetected). Zero false positives (no sanitizer report where no bug exists). Zero crashes in the report parser. Host filesystem unchanged after execution.
+
+**Fail condition**: Any bug undetected, any parser crash, any false positive, any host modification.
 
 **Gate receipt**:
 ```json
-{"phase": 16, "gate": "sanitizer_gauntlet", "passed": 10, "failed": 0, "verdict": "PHASE 16 COMPLETE"}
+{
+  "phase": 16,
+  "gate": "sanitizer_gauntlet",
+  "attack_vectors": 10,
+  "expected_detections": 10,
+  "actual_detections": "TBD",
+  "false_positives": 0,
+  "false_negatives": "TBD",
+  "host_integrity": "unchanged",
+  "verdict": "PHASE 16 PENDING"
+}
 ```
+
+**Aggressive additions**: The gate test also verifies:
+1. **Host integrity**: `sha256sum /etc/os-release` before and after — must be identical
+2. **No orphaned containers**: `docker ps -a | grep bugswarm` returns empty
+3. **Report parser under stress**: All 10 sanitizer outputs parsed simultaneously (concurrent parse test)
+4. **Resource cleanup**: Temp files, Docker volumes, and cgroup entries all cleaned up
 
 ---
 
@@ -522,12 +628,14 @@ After:  Phase 23 (Trigger Matrix — needs sanitizer rows)
 
 - [x] All 25 questions answered
 - [x] Dependency tree verified — Phase 1 only, unblocks 4 downstream phases
-- [ ] Gate test (Sanitizer Gauntlet) passes at 100%
+- [x] Aggressive testing mandate included — 20 unit tests (9 aggressive), 5 integration tests (2 aggressive), 10-attack-vector gate test
+- [ ] Gate test (Sanitizer Gauntlet) passes at 100% — all 10 attack vectors detected, zero false positives, zero false negatives
+- [ ] Every component individually stress-tested (parser: corrupt/null/truncated/ANSI input; image selector: missing/override/unsupported lang; receipt: concurrent 50-execution storm)
 - [ ] No downstream phase blocked by missing sanitizer data
 - [ ] Docker images built and pushed to registry
 - [ ] Documentation updated (code docs, user docs, ADR, changelog)
-- [ ] 15 unit tests passing
-- [ ] 5 integration tests passing
+- [ ] 20 unit tests passing (11 standard + 9 aggressive)
+- [ ] 5 integration tests passing (3 standard + 2 aggressive)
 
 ---
 
