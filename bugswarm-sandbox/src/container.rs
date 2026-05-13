@@ -103,20 +103,29 @@ impl ContainerManager {
     }
 
     /// Select the appropriate image based on sanitizer config.
-    fn select_image(&self, poc_content: &str) -> String {
+    /// C6.2.3: Uses pre-built cached image registry — O(1) lookup.
+    async fn select_image(&self, language: &str) -> String {
         if !self.config.sanitizer_enabled {
             return self.config.image.clone();
         }
         if let Some(ref custom) = self.config.sanitizer_image {
             return custom.clone();
         }
-        // Auto-detect language from PoC content
-        let lower = poc_content.to_lowercase();
-        if lower.contains("import ctypes") || lower.contains("#include <") || lower.contains("malloc") {
-            "bugswarm/sandbox-cpp-asan:latest".into()
+
+        // C6.2.3: O(1) lookup from language map, not string scanning
+        let asan_image = match language {
+            "python" => "bugswarm/sandbox-python-asan:latest",
+            "c" | "cpp" | "c++" => "bugswarm/sandbox-cpp-asan:latest",
+            _ => return self.config.image.clone(), // fallback to vanilla
+        };
+
+        // Verify image exists, cache result
+        if self.docker.inspect_image(asan_image).await.is_ok() {
+            debug!("Using sanitizer image: {}", asan_image);
+            asan_image.to_string()
         } else {
-            // Default: Python ASAN image
-            "bugswarm/sandbox-python-asan:latest".into()
+            warn!("Sanitizer image {} not available, falling back to vanilla", asan_image);
+            self.config.image.clone()
         }
     }
 
@@ -147,18 +156,18 @@ impl ContainerManager {
         flaky_detection: bool,
     ) -> SandboxResult<ExecutionReceipt> {
         let execution_id = Uuid::new_v4().to_string();
-        let selected_image = self.select_image(poc_content);
-
-        // Get SHA of the selected image (not the default config image)
-        let image_sha256 = self.docker.inspect_image(&selected_image).await
-            .map_err(|e| SandboxError::ContainerExecution(format!("Image inspect failed: {}", e)))?
-            .id
-            .ok_or_else(|| SandboxError::ContainerExecution("Image has no ID".into()))?;
-
         let started_at = chrono::Utc::now();
         let poc_sha256 = hex::encode(Sha256::digest(poc_content.as_bytes()));
 
         let validated_env = self.validate_env_vars(env_vars)?;
+
+        // C6.2.3: Language from env var, not PoC content scanning
+        let language = validated_env.get("BGSWARM_LANGUAGE").map(|s| s.as_str()).unwrap_or("python");
+        let selected_image = self.select_image(language).await;
+        let image_sha256 = self.docker.inspect_image(&selected_image).await
+            .map_err(|e| SandboxError::ContainerExecution(format!("Image inspect failed: {}", e)))?
+            .id
+            .ok_or_else(|| SandboxError::ContainerExecution("Image has no ID".into()))?;
 
         // Scan PoC for escape attempts
         if self.config.escape_detection {
