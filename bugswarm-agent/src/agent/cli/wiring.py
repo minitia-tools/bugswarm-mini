@@ -38,6 +38,27 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
     except ValueError:
         logger.warning("unknown_provider", provider=config.provider, fallback="deepseek")
         gw_config.default_provider = ProviderType.DEEPSEEK
+
+    # G3: Read learning data for investigation prioritization (Phase 18.5)
+    learning_context = ""
+    try:
+        from swarm.pattern_db import BugPatternDB, HotspotTracker
+        ht = HotspotTracker()
+        pdb = BugPatternDB()
+        hotspots = ht.get_top(20)
+        patterns = pdb.query_similar(f"Repository: {config.repo}", top_k=5)
+        if hotspots:
+            learning_context += f"\nHOTSPOT FILES (investigate first — these had bugs in previous runs):\n"
+            for fp, score in hotspots[:5]:
+                learning_context += f"  {fp} (hotspot score: {score:.1f})\n"
+        if patterns:
+            learning_context += f"\nSIMILAR PAST BUGS (these patterns were found in similar code before):\n"
+            for pat in patterns[:3]:
+                learning_context += f"  [{pat.get('cwe','?')}] {pat.get('snippet','')[:100]}\n"
+        if learning_context:
+            logger.info("learning_context_loaded", hotspots=len(hotspots), patterns=len(patterns))
+    except Exception as e:
+        logger.debug("learning_context_unavailable", error=str(e)[:100])
     gateway = LLMClient(gw_config)
     gateway.register_default_adapters()
 
@@ -159,10 +180,17 @@ async def _exec_sandbox_async(sandbox, scanner, args):
         return ToolResult(False, "No PoC code provided")
     if scanner.has_escape_attempt(poc):
         return ToolResult(False, "PoC contains sandbox escape patterns — REJECTED")
-    receipt = await sandbox.execute(poc)
+    # G4: Detect language and pass to sandbox for sanitizer image selection
+    lang = "python"
+    poc_lower = poc[:200].lower()
+    if any(kw in poc_lower for kw in ["#include", "malloc", "free(", "int main", "printf"]):
+        lang = "c"
+    elif any(kw in poc_lower for kw in ["cout", "std::", "template<"]):
+        lang = "cpp"
+    receipt = await sandbox.execute(poc, env={"BGSWARM_LANGUAGE": lang})
     import json
     return ToolResult(True, json.dumps(receipt.to_summary()),
-                      {"exit_code": receipt.exit_code, "status": receipt.status})
+                      {"exit_code": receipt.exit_code, "status": receipt.status, "language": lang})
 
 def _exec_sandbox(sandbox, scanner, args):
     return _run_async(_exec_sandbox_async(sandbox, scanner, args))

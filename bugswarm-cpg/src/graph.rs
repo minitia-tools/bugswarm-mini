@@ -313,16 +313,39 @@ impl CodePropertyGraph {
         paths
     }
 
-    /// Find all taint paths from sources to sinks.
+    /// Find all taint paths from sources to sinks using SSA-based propagation.
+    /// C6.2.3 PEAK: Wired to propagate_taint_peak() from Phase 17.
     pub fn find_taint_paths(&self) -> Vec<TaintPath> {
-        let mut paths = Vec::new();
-        for &source in &self.sources {
-            for &sink in &self.sinks {
-                let found = self.bfs_taint(source, sink);
-                paths.extend(found);
+        // Try SSA propagation first
+        let ssa_paths = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::taint::propagate_taint_peak(self)
+        }));
+
+        match ssa_paths {
+            Ok(ssa_paths) if !ssa_paths.is_empty() => {
+                // Convert SsaTaintPath → TaintPath
+                ssa_paths.into_iter().map(|p| TaintPath {
+                    source: p.source_id,
+                    sink: p.sink_id,
+                    path: p.hops.iter().map(|h| h.node_id).collect(),
+                    sanitized: p.sanitized,
+                    sanitizer: p.sanitizer_id,
+                    length: p.length,
+                    confidence: p.confidence,
+                }).collect()
+            }
+            _ => {
+                // Fallback to old substring-based bfs_taint
+                let mut paths = Vec::new();
+                for &source in &self.sources {
+                    for &sink in &self.sinks {
+                        let found = self.bfs_taint(source, sink);
+                        paths.extend(found);
+                    }
+                }
+                paths
             }
         }
-        paths
     }
 
     fn bfs_taint(&self, source: NodeId, sink: NodeId) -> Vec<TaintPath> {

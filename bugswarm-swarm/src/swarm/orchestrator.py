@@ -369,6 +369,34 @@ class SwarmOrchestrator:
                     "status": a.status.value,
                 }
 
+        # G2: Push verified findings to PatternDB for persistent learning (Phase 18.5)
+        try:
+            from swarm.pattern_db import BugPatternDB, HotspotTracker, AgentHistory
+            pdb = BugPatternDB()
+            ht = HotspotTracker()
+            ah = AgentHistory()
+            for finding in all_findings:
+                if finding.get("verified"):
+                    loc = finding.get("location", "unknown:0")
+                    file_path = loc.split(":")[0] if ":" in loc else loc
+                    severity = finding.get("severity_estimate", 5)
+                    claim = finding.get("claim", "")
+                    mechanism = finding.get("mechanism", "")
+                    pdb.store_finding(
+                        {"claim": claim, "mechanism": mechanism, "severity_estimate": severity, "location": loc},
+                        code_snippet=f"{claim}\n{mechanism}"[:500],
+                        language="python",
+                    )
+                    ht.record_bug(file_path, severity)
+            for aid, s in scores.items():
+                ah.record_run(aid, s.get("persona", ""), self.config.model,
+                              s.get("contributions", 0), 0,
+                              self.gateway.registry.total_tokens.total_tokens,
+                              sum(1 for f in all_findings if f.get("verified") and f.get("agent") == aid))
+            logger.info("learning_persisted", patterns=pdb.count, hotspots=len(ht.entries), agents=len(ah.records))
+        except Exception as e:
+            logger.warning("learning_persist_failed", error=str(e)[:200])
+
         return {
             "rounds": len(round_results),
             "total_findings": len(all_findings),
