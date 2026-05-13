@@ -3,170 +3,140 @@
 **Status**: NOT_STARTED
 **Estimated Effort**: 18 hours
 **Depends On**: Phase 1 (Sandbox), Phase 17 (Data Flow Analysis)
-**Unblocks**: Phase 21 (Taint-Guided Fuzzing)
+**Unblocks**: Phase 21 (Taint-Guided Fuzzing), Phase 22 (Delta Debugging)
 
 ---
 
 ## A1. What is being built?
 
-AFL++ integrated into the sandbox daemon. The fuzzer runs continuously inside isolated containers, generating thousands of mutated inputs per second. Coverage instrumentation tracks which code paths are discovered. Any crash is automatically triaged, deduplicated by stack trace hash, and injected into the evidence graph as an auto-discovered finding. Agents investigate and explain the crashes.
+AFL++ integrated into the sandbox daemon. Fuzzer runs continuously inside isolated containers generating 1000s of mutated inputs/second. Coverage instrumentation tracks code paths. Crashes auto-triaged, deduplicated by stack trace hash, and injected into the evidence graph as auto-discovered findings. Agents investigate and explain every crash.
 
----
+## A2. Which gap does it fill?
 
-## A2. Which specific gap does it fill?
+**Gap ID**: INV-003. Current: PoCs handwritten by agents one at a time. Agent tests `x=0` and `x=1`, never finds crash at `x=2^31`. Target: Fuzzer generates 1000s inputs/second, discovers crashes agents never consider, auto-injects into evidence graph.
 
-**Gap ID**: INV-003 (from `invincible.md`)
-**Current behavior**: PoCs are handwritten by agents one at a time. An agent tests `x=0` and `x=1` but never finds the crash at `x=2^31`.
-**Target behavior**: Fuzzer generates 1000s of inputs/second. Discovers crashes agents never consider. Auto-injects into evidence graph.
+## A3. Success criteria?
 
----
+| Metric | Target |
+|--------|--------|
+| Crash discovery | ≥1 unique crash per 10K executions |
+| Coverage gain | ≥20% new paths within 60s |
+| Dedup accuracy | 100% — zero duplicate crash reports |
+| Sandbox isolation | 0 host escapes across 1M executions |
+| Agent handoff | 100% of crashes investigated by agents |
 
-## A3. What is the success criteria?
+## A4. Priority?
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Crash discovery rate | ≥1 unique crash per 10K fuzzer executions | Count unique stack trace hashes |
-| Coverage gain | ≥20% new code paths within 60s | Compare before/after coverage maps |
-| Deduplication accuracy | 100% — no duplicate crash reports | All crashes with same stack trace hash merged |
-| Sandbox isolation | 0 host escapes across 1M fuzzer executions | Host integrity check before/after |
-| Agent handoff | 100% of fuzzer crashes investigated by agents | Every crash → evidence graph → agent receives notification |
+5th in invincibility stack. Independent of prior phases except sandbox. Highest ROI for crash-based bugs. Unlocks Phase 21 (taint-guided for 10x efficiency).
 
----
+## A5. Scope boundary?
 
-## A4. What is the priority and why?
-
-**Priority**: 5th in the invincibility stack. Independent of previous phases except sandbox. Highest ROI for crash-based bugs (memory errors, buffer overflows, use-after-free). Unlocks Phase 21 (taint-guided fuzzing for 10x efficiency).
-
----
-
-## A5. What is NOT being built?
-
-- NOT taint-guided fuzzing (that's Phase 21 — this is uniform coverage-guided)
-- NOT a custom fuzzer (AFL++ is the gold standard, battle-tested for 10+ years)
-- NOT fuzzing of network protocols (only local binaries/Python via AFL++'s forkserver)
-- NOT grammar-based fuzzing (mutation-based, not generation-based)
+NOT: taint-guided fuzzing (Phase 21), custom fuzzer (AFL++ is gold standard), network protocol fuzzing (local binaries only), grammar-based fuzzing (mutation-based only), Windows support (Linux AFL++ only).
 
 ---
 
 ## B1. Integration point?
 
-**Primary**: Sandbox daemon (`bugswarm-sandbox/src/container.rs`) — new fuzz execution mode
-**New files**:
-- `bugswarm-sandbox/src/fuzzer.rs` — AFL++ integration: spawn, monitor, collect crashes, deduplicate
-- `bugswarm-sandbox/docker/sandbox-fuzz.Dockerfile` — Image with AFL++ compiled in
-
-**Modified files**:
-- `bugswarm-sandbox/src/container.rs` — Add `fuzz()` method alongside `execute()`
-- `bugswarm-sandbox/src/config.rs` — Add fuzzer config (timeout, seed inputs, coverage map path)
-- `bugswarm-sandbox/src/daemon.rs` — Add `fuzz` method to daemon protocol
-- `agent/src/agent/tools.py` — Add `fuzz_target` tool for agents to invoke fuzzer
-
----
+**New files**: `bugswarm-sandbox/src/fuzzer.rs`, `bugswarm-sandbox/docker/sandbox-fuzz.Dockerfile`
+**Modified**: `bugswarm-sandbox/src/container.rs` (add `fuzz()` method), `bugswarm-sandbox/src/config.rs` (fuzzer config), `bugswarm-sandbox/src/daemon.rs` (add `fuzz` method), `agent/src/agent/tools.py` (add `fuzz_target` tool)
 
 ## B2. Data flow?
 
 ```
-Agent submits fuzz request: {target: "auth.py:login", seeds: [input1, input2], duration: 60s}
-  │
-  ├─→ Sandbox creates fuzzer container
-  │     ├─ AFL++ compiled with coverage instrumentation
-  │     ├─ Seed inputs copied to container
-  │     └─ Fuzzer loop starts:
-  │         ├─ Mutate input (bit flip, byte insert, arithmetic, havoc)
-  │         ├─ Execute target with mutated input
-  │         ├─ Check coverage map — new paths?
-  │         │   ├─ Yes → keep input in queue, mutate further
-  │         │   └─ No → discard
-  │         └─ Crash?
-  │             ├─ Yes → capture stack trace + input
-  │             │         hash = sha256(stack_trace)
-  │             │         if hash not in seen_crashes:
-  │             │           save crash
-  │             │           inject into evidence graph
-  │             └─ No → continue
-  │
-  ├─→ After duration: fuzzer stops
-  │     └─ Returns: {unique_crashes: 3, total_executions: 50000, coverage: 67%}
-  │
-  └─→ Agent receives: "3 unique crashes found. Investigating crash #1..."
-        → Agent reads crash input, analyzes stack trace, explains bug
+Agent → fuzz_target(auth.py:login, seeds=[x,y], 60s)
+  → Sandbox creates fuzzer container with AFL++
+  → AFL forkserver: mutate→execute→check coverage→repeat
+  → Crash detected → capture stack trace + input → sha256 dedup → evidence graph
+  → Returns: {unique_crashes:3, total_executions:50000, coverage:67%}
+  → Agent investigates each crash
 ```
 
----
+## B3. New types?
 
-## B3. New types/schemas?
+`FuzzConfig`: target_binary, seed_inputs, duration_secs, max_executions, cpu_core
+`FuzzResult`: unique_crashes (Vec<FuzzCrash>), total_executions, coverage_pct, duration_secs
+`FuzzCrash`: crash_id (SHA256), input_hex, input_size, stack_trace, crash_type (SIGSEGV/SIGABRT/SIGFPE), exit_code, is_unique
 
-### Rust: FuzzResult (in `bugswarm-sandbox/src/config.rs`)
+## B4. Modified modules?
 
-```rust
-pub struct FuzzResult {
-    pub unique_crashes: Vec<FuzzCrash>,
-    pub total_executions: u64,
-    pub coverage_pct: f64,
-    pub duration_secs: f64,
-    pub seed_inputs: Vec<String>,
-}
+| File | Change |
+|------|--------|
+| `bugswarm-sandbox/src/fuzzer.rs` | NEW — AFL++ spawn, monitor, crash collection, dedup |
+| `bugswarm-sandbox/docker/sandbox-fuzz.Dockerfile` | NEW — Image with AFL++ compiled |
+| `bugswarm-sandbox/src/container.rs` | Add `fuzz()` alongside `execute()` |
+| `bugswarm-sandbox/src/config.rs` | Add FuzzConfig, FuzzResult, FuzzCrash types |
+| `bugswarm-sandbox/src/daemon.rs` | Add `fuzz` method to daemon protocol |
+| `agent/src/agent/tools.py` | Add `fuzz_target` tool definition |
 
-pub struct FuzzCrash {
-    pub crash_id: String,            // SHA256 of stack trace
-    pub input_hex: String,           // Hex-encoded crashing input
-    pub input_size: usize,
-    pub stack_trace: Vec<String>,    // Top 10 frames
-    pub crash_type: String,          // SIGSEGV, SIGABRT, SIGFPE
-    pub exit_code: i32,
-    pub execution_time_ms: u64,
-    pub is_unique: bool,
-}
-```
+## B5. Dependencies?
+
+| Dep | Version | Purpose |
+|-----|---------|---------|
+| AFL++ | 4.0+ | Fuzzer engine, compiled into sandbox image |
+| None (Rust) | — | AFL++ runs as external process, communication via files |
 
 ---
 
 ## C1. Core algorithm?
 
 ```
-function fuzz_target(target_binary, seeds, duration_secs, container):
-    # Prepare AFL++ environment
-    mount_coverage_map(container, "/dev/shm/afl_map")
-    set_cpu_affinity(container, cpu_core=0)  # Pin to one core
+fuzz_target(target, seeds, duration_secs, container):
+    mount_coverage_map("/dev/shm/afl_map")
+    write_seeds(seeds)
+    spawn_afl(f"afl-fuzz -i /seeds -o /output -t 1000+ -- {target} @@")
     
-    # Write seeds
-    for (i, seed) in enumerate(seeds):
-        write_seed_file(container, f"seed_{i}", seed)
-    
-    # Start AFL++ with forkserver
-    afl_cmd = f"afl-fuzz -i /seeds -o /output -t 1000+ -- {target_binary} @@"
-    container.exec(afl_cmd, background=True)
-    
-    seen_crashes = HashSet()
+    seen = HashSet()
     crashes = []
     
-    start = now()
-    while now() - start < duration_secs:
-        sleep(1)
-        
-        # Check for new crashes in AFL output dir
-        for crash_file in container.list_dir("/output/crashes/"):
+    while elapsed < duration_secs:
+        for crash_file in list_dir("/output/crashes/"):
             if crash_file == "README.txt": continue
-            
-            stack_trace = container.get_stack_trace(crash_file)
-            crash_hash = sha256(stack_trace)
-            
-            if crash_hash not in seen_crashes:
-                seen_crashes.insert(crash_hash)
-                crashes.push(FuzzCrash { crash_id: crash_hash, ... })
+            trace = get_stack_trace(crash_file)
+            h = sha256(trace)
+            if h not in seen:
+                seen.insert(h)
+                crashes.push(FuzzCrash{crash_id: h, input: read(crash_file), stack_trace: trace, ...})
+        sleep(1)
     
-    # Stop fuzzer
-    container.kill("afl-fuzz")
-    
-    return FuzzResult {
-        unique_crashes: crashes,
-        total_executions: parse_afl_stats("/output/fuzzer_stats"),
-        coverage_pct: compute_coverage("/dev/shm/afl_map"),
-        duration_secs: now() - start,
-    }
+    kill("afl-fuzz")
+    return FuzzResult{crashes, total: parse_stats("/output/fuzzer_stats"), coverage: calc_coverage()}
 ```
 
-**Complexity**: O(E × M) where E = executions, M = mutation cost. AFL++ handles this internally.
+**Complexity**: AFL++ handles mutation internally. Sandbox monitors files.
+
+## C2. Failure modes?
+
+| Failure | Handling | Recovery |
+|---------|----------|----------|
+| AFL++ binary missing | Image build failed. Log ERROR. | Agent receives "fuzzer unavailable" |
+| Target binary crashes on seed input | AFL handles gracefully. Records as crash. | Normal operation |
+| Forkserver hangs | Wall-clock timeout kills container. | Receipt marked TIMEOUT |
+| Coverage map corrupted | Coverage reported as 0%. | Fuzzer continues. No crash. |
+| Disk full (crash outputs) | Container storage limit enforces quota. | Old crashes rotated. |
+
+## C3. Edge cases?
+
+| Edge Case | Behavior |
+|-----------|----------|
+| Zero seeds | AFL++ generates random seed. Fuzzes normally. |
+| 1MB crash input | Stored as hex. Receipt <20KB (truncated). |
+| Infinite loop in target | AFL++ timeout per execution (default 1s). Kills and continues. |
+| Target with 100% coverage already | No new paths. Fuzzer still mutates (havoc may find crashes even at 100%). |
+| Target that reads stdin (not file) | AFL++ uses `@@` placeholder → replaces with filename. Works. |
+
+## C4. Concurrency?
+
+Each fuzzer runs in separate Docker container with CPU pinning. No shared state between fuzzers. 4 concurrent fuzzers = 4 containers on 4 cores. Crash dedup via in-memory HashSet per container. Evidence graph writes serialized by daemon.
+
+## C5. Performance budget?
+
+| Metric | Target |
+|--------|--------|
+| Fuzzer execs/sec | >500 (AFL++ forkserver on single core) |
+| Coverage map parse | <1ms |
+| Crash dedup | <1ms per crash |
+| Container start (fuzz image) | <3s cold, <1s warm |
+| Max executions per run | 1,000,000 (configurable) |
 
 ---
 
@@ -174,56 +144,125 @@ function fuzz_target(target_binary, seeds, duration_secs, container):
 
 ### C6.1 Algorithm Inventory
 
-| # | Component | Current Approach | Naive/Peak |
-|---|-----------|-----------------|------------|
-| 1 | Fuzzer engine | AFL++ 4.0 | **PEAK** — gold standard, forkserver-based, coverage-guided |
-| 2 | Crash deduplication | Stack trace SHA256 | **PEAK** — deterministic, collision-resistant |
-| 3 | Coverage tracking | AFL bitmap (64KB shared memory) | **PEAK** — standard AFL approach |
-| 4 | Mutation strategy | AFL havoc (deterministic + random) | **PEAK** — battle-tested for 10+ years |
-| 5 | Seed selection | Agent-provided PoC inputs | NAIVE → Coverage-weighted seed selection (C6.2.1) |
+| # | Component | Approach | Status | Peak Reference |
+|---|-----------|----------|--------|----------------|
+| 1 | Fuzzer engine | AFL++ 4.0 forkserver | **PEAK** | Gold standard, 10+ years battle-tested |
+| 2 | Crash dedup | Stack trace SHA256 | **PEAK** | Deterministic, collision-resistant |
+| 3 | Coverage tracking | AFL bitmap (64KB shared mem) | **PEAK** | Standard AFL approach |
+| 4 | Mutation strategy | AFL havoc (deterministic + random) | **PEAK** | Battle-tested |
+| 5 | Seed selection | Agent PoCs as equal seeds | NAIVE → Coverage-weighted | C6.2.1 |
+| 6 | Target instrumentation | AFL++ compiler wrappers (afl-gcc/afl-clang) | **PEAK** | Standard AFL instrumentation |
 
-### C6.2.1 Seed Selection — Coverage-Weighted
+### C6.2.1 Seed Selection — Coverage-Weighted (Deferred)
 
-**What**: Instead of using all agent PoCs as equal seeds, run each seed once, measure coverage, rank by coverage contribution, and fuzz the top-N seeds first. Seeds that discover unique coverage get fuzzed 10x longer.
+**Peak**: Run each seed once, measure coverage, rank by unique path discovery, fuzz top-N 10x longer. Seeds that discover unique coverage get priority.
 
-**Deferred**: Requires per-seed coverage measurement (adds ~1s per seed). Acceptable for Phase 20 — uniform seed treatment is sufficient.
+**Quantitative**: 30% more unique crashes found in first 60s vs uniform seed treatment.
+
+**Deferral**: Requires per-seed coverage measurement (~1s per seed). Acceptable for Phase 20. Uniform treatment is sufficient baseline.
+
+### C6.3 Zero-Gap Guarantee
+
+```
+Component: Engine — [x] PEAK via AFL++
+Component: Dedup — [x] PEAK via SHA256
+Component: Coverage — [x] PEAK via AFL bitmap
+Component: Mutation — [x] PEAK via AFL havoc
+Component: Seeds — [x] NAIVE with valid deferral (minor optimization, Phase 21 covers this)
+Component: Instrumentation — [x] PEAK via AFL compiler wrappers
+```
+
+### C6.4 Peak Deferral
+
+Coverage-weighted seed selection deferred. Reason: no measurable impact without taint guidance (Phase 21). Uniform treatment sufficient for Phase 20.
 
 ---
 
-## D1. Aggressive unit tests? (12 tests)
+## D1. Aggressive unit tests? (12 tests, 7 aggressive)
 
-| Test | Attack | Expected |
-|------|--------|----------|
-| `test_afl_binary_available` | Check AFL++ in sandbox image | Binary found at `/usr/bin/afl-fuzz` |
-| `test_fuzz_simple_crash` | Fuzz a binary with known buffer overflow | Crash detected within 10s |
-| `test_crash_deduplication` | Same crash twice → same hash | One unique crash reported |
-| `test_fuzz_no_crash_target` | Fuzz a crash-free binary | 0 crashes. Coverage report generated. |
-| `test_seed_input_used` | Provide 3 seeds | AFL++ starts with all 3 seeds in queue |
-| `test_fuzz_timeout_respected` | Set duration=5s | Fuzzer stops at 5s ±1s |
-| `test_fuzz_sandbox_isolation` | **AGGRESSIVE**: 100K fuzzer executions | Host filesystem unchanged |
-| `test_fuzz_crash_injected_to_evidence` | Fuzzer finds crash → evidence graph | Finding with `finding_source="fuzzer"` |
-| `test_fuzz_concurrent_containers` | **AGGRESSIVE**: 4 fuzzers on 4 cores | All 4 produce results. No interference. |
-| `test_fuzz_empty_seeds` | **AGGRESSIVE**: 0 seeds provided | AFL++ generates random seed. Fuzzes normally. |
-| `test_fuzz_large_crash_input` | **AGGRESSIVE**: 1MB crashing input | Stored as hex. Receipt <20KB. |
-| `test_fuzz_coverage_map_read` | Parse AFL bitmap | Coverage percentage computed correctly |
+| # | Test | Attack | Expected |
+|---|------|-------|----------|
+| 1 | `test_afl_binary` | Check AFL++ in image | `/usr/bin/afl-fuzz` exists |
+| 2 | `test_fuzz_simple_crash` | Binary with known overflow | Crash detected <10s |
+| 3 | `test_crash_dedup` | Same crash twice | One unique reported |
+| 4 | `test_no_crash_target` | Crash-free binary | 0 crashes, coverage reported |
+| 5 | `test_seeds_used` | 3 seeds provided | AFL starts with all 3 |
+| 6 | `test_timeout_respected` | duration=5s | Stops at 5s ±1s |
+| 7 | `test_isolation` | **AGGRESSIVE**: 100K execs | Host filesystem unchanged |
+| 8 | `test_crash_to_evidence` | **AGGRESSIVE**: Crash→evidence graph | finding_source="fuzzer" |
+| 9 | `test_concurrent_4` | **AGGRESSIVE**: 4 fuzzers, 4 cores | All produce results. No interference. |
+| 10 | `test_zero_seeds` | **AGGRESSIVE**: No seeds | Generates random. Works. |
+| 11 | `test_1mb_crash_input` | **AGGRESSIVE**: Large crash | Stored as hex. Receipt <20KB. |
+| 12 | `test_coverage_map` | **AGGRESSIVE**: Parse bitmap | Coverage % computed correctly |
 
----
+## D2. Aggressive integration tests? (4 tests, 3 aggressive)
+
+| # | Test | Attack | Expected |
+|---|------|-------|----------|
+| 1 | `test_fuzz_agent_handoff` | Agent requests fuzz → crash → evidence → agent investigates | Full loop |
+| 2 | `test_fuzz_sandbox_kill` | **AGGRESSIVE**: SIGKILL mid-fuzz | No orphaned containers |
+| 3 | `test_fuzz_10k_stress` | **AGGRESSIVE**: 10K execs, check memory | No leak in daemon |
+| 4 | `test_fuzz_with_sanitizers` | **AGGRESSIVE**: ASAN+fuzzer together | Crashes detected by both |
 
 ## D3. Extreme gate test — The Fuzz Crucible? (8 attack vectors)
 
-1. Fuzz a binary with 5 known crashes (different stack traces). All 5 detected. All deduplicated correctly.
-2. 60-second fuzz run on a crash-free binary. 0 false positives.
-3. Host integrity: sha256sum /etc before/after 1M fuzzer executions. Identical.
-4. 4 concurrent fuzzer containers. All produce independent results. No shared memory corruption.
-5. Agent submits fuzz request → fuzzer runs → crash found → evidence graph updated → agent investigates.
-6. Fuzzer killed mid-execution (SIGKILL). No orphaned containers. No corrupted state.
-7. 10K-execution stress test. No memory leak in sandbox daemon.
-8. Coverage map correctly reports >0% coverage after fuzzing (if target has any code).
+1. **Detection**: Binary with 5 known crashes (different traces). All 5 found. All dedup'd.
+2. **Zero FP**: 60s fuzz on crash-free binary. 0 false positives.
+3. **Host integrity**: sha256sum /etc before/after 1M executions. Identical.
+4. **Concurrent**: 4 fuzzers simultaneously. All independent. No shared memory corruption.
+5. **Full loop**: Agent→fuzz→crash→evidence→agent investigates→explains.
+6. **Kill recovery**: Fuzzer SIGKILL'd. No orphaned containers. No corrupted state.
+7. **Stress**: 10K-execution run. No memory leak in sandbox daemon.
+8. **Coverage**: Coverage map reports >0% after fuzzing (target has code).
+
+## D4. Golden dataset?
+
+N/A. Fuzzing is a detection capability, not reasoning. Success measured by crash count and coverage, not human adjudication comparison.
+
+## D5. Regression test?
+
+`test_fuzz_regression`: Fuzz Crucible runs on every CI push. Any vector fails → build fails.
+
+---
+
+## E1. Estimated cost?
+
+| Cost | Estimate |
+|------|----------|
+| Development | 18 hours |
+| AFL++ compilation | One-time Docker image build (~5min) |
+| Per-execution overhead | ~2μs per exec (forkserver) |
+| Per-run cost | ~1 CPU-core-minute per 60s fuzz |
+| Infrastructure | $0 (runs in existing sandbox containers) |
+
+## E2. Observability?
+
+**Logs**: fuzz_started, fuzz_crash_detected, fuzz_completed, fuzz_dedup_hit, fuzz_timeout
+**Metrics**: `bugswarm_fuzzer_executions_total`, `bugswarm_fuzzer_crashes_total`, `bugswarm_fuzzer_unique_crashes`, `bugswarm_fuzzer_coverage_pct`, `bugswarm_fuzzer_duration_secs`
+**Alerts**: Fuzzer finds >10 unique crashes in 60s → INFO (high-value target). Fuzzer finds 0 crashes in 5 consecutive runs → WARN (target may be clean or instrumentation broken).
+
+## E3. Configuration?
+
+| Parameter | Default | Env | Flag |
+|-----------|---------|-----|------|
+| `fuzzer_enabled` | `true` | `BGSWARM_FUZZER` | `--[no-]fuzzer` |
+| `fuzz_duration_secs` | `60` | `BGSWARM_FUZZ_DURATION` | `--fuzz-duration` |
+| `fuzz_max_execs` | `1_000_000` | — | — |
+| `fuzz_cpu_core` | `0` | `BGSWARM_FUZZ_CPU` | `--fuzz-cpu` |
+| `fuzz_image` | `bugswarm/sandbox-fuzz:latest` | `BGSWARM_FUZZ_IMAGE` | `--fuzz-image` |
+
+## E4. Migration?
+
+Full backward compat. Fuzzer is additive — existing `execute()` unchanged. Agents opt into fuzzing via `fuzz_target` tool. Existing receipts unaffected.
+
+## E5. Documentation?
+
+ADR-020: AFL++ Fuzzing Integration. User docs: "Fuzzing System." Docker image build guide. Changelog.
 
 ---
 
 ## Gate Receipt
 
 ```json
-{"phase": 20, "gate": "fuzz_crucible", "status": "PENDING"}
+{"phase":20,"gate":"fuzz_crucible","attack_vectors":8,"passed":0,"failed":0,"verdict":"PHASE 20 NOT YET EXECUTED"}
 ```

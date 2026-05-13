@@ -9,270 +9,146 @@
 
 ## A1. What is being built?
 
-A persistent learning layer that stores every confirmed bug finding as an embedded pattern in a Vector DB. The CPG of every new repository is matched against this database to identify code regions with high similarity to previously confirmed bugs. A CVE corpus with graph-isomorphism matching prioritizes known vulnerability patterns. Agent performance history and file hotspot tracking feed the allocation algorithm so every run is smarter than the last.
-
----
+A persistent learning layer storing every confirmed finding as an embedded pattern in ChromaDB. CPG of new repos matched against historical patterns to identify high-similarity code regions. CVE corpus with graph-isomorphism matching. File hotspot tracking with exponential decay. Agent performance history feeding allocation algorithm. Every run makes the next run smarter.
 
 ## A2. Which specific gap does it fill?
 
-**Gap ID**: INV-006 (from `invincible.md`)
-**Current behavior**: Every run is amnesia. The system doesn't remember which code patterns caused bugs, which agent strategies worked best, which CVE patterns are relevant, or which files had bugs in previous runs. Same repo scanned twice = same false positives twice.
-**Target behavior**: Bug Pattern Vector DB persists across runs. Hotspot scores prioritize historically buggy files. CVE corpus matching flags known vulnerability patterns. Agent performance history optimizes allocation.
+**Gap ID**: INV-006. Current: every run is amnesia. Target: Pattern DB persists across runs, hotspots prioritize historically buggy files, CVE matching flags known vulnerabilities, agent history optimizes allocation.
 
----
+## A3. Success criteria?
 
-## A3. What is the success criteria?
+| Metric | Target |
+|--------|--------|
+| Pattern recall | >70% of re-introduced bugs matched to prior findings |
+| Hotspot accuracy | Top-20% hotspot files contain >60% of new bugs |
+| CVE detection | >80% of known CVE patterns matched |
+| Token efficiency | >30% reduction in tokens/verified-bug after 5 runs |
+| Query latency | <100ms for 10K patterns |
+| Storage | <1GB for 100K findings |
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Pattern DB recall | >70% of re-introduced bugs matched to previous findings | Scan a repo with bugs fixed, re-introduce 2 bugs, verify both matched to prior findings |
-| Hotspot accuracy | Top-20% hotspot files contain >60% of new bugs | Compare hotspot ranking vs actual bugs found in 5 repos |
-| CVE pattern detection | >80% of known CVE patterns detected in the corpus | Test against 100 known CVE code snippets |
-| Token efficiency gain | >30% reduction in tokens per verified bug after 5 runs on same repo | Compare run 1 vs run 5 token/verified-bug ratio |
-| Query latency | <100ms for pattern DB similarity search | ChromaDB ANN query on 10K patterns |
-| Storage | <1GB for 100K findings | Compressed embeddings + metadata |
+## A4. Priority?
 
----
+3rd in invincibility stack. Learning layer — everything above it (ML, fuzzer steering, allocation) depends on having historical data. Without it, every run starts from zero.
 
-## A4. What is the priority and why?
+## A5. Scope boundary?
 
-**Priority**: 3rd in the invincibility stack (Phase 18 of 30). Immediately after Data Flow Analysis.
-**Justification**: This is the learning layer. Without it, every run starts from zero. Every other phase (ML prediction, fuzzer steering, allocation optimization) depends on having historical data to learn from. The system gets better with every run — but only if it remembers.
-
----
-
-## A5. What is NOT being built?
-
-- NOT a full ML pipeline (that's Phase 19 — this phase builds the data store that Phase 19 trains on)
-- NOT real-time pattern matching during indexing (batch matching after CPG build)
-- NOT a public vulnerability database (uses local corpus, not live NVD queries)
-- NOT graph neural networks for pattern matching (cosine similarity on embeddings for Phase 18, GNNs deferred)
-- NOT agent strategy optimization (stores history, Phase 15 allocation algorithm consumes it)
+NOT: full ML pipeline (Phase 19), real-time matching (batch), public vulnerability DB, GNN matching (cosine only for now), agent strategy optimization (stores history, Phase 15 consumes it).
 
 ---
 
 ## B1. Integration point?
 
-**Primary**: New Python module `swarm/learning.py` + ChromaDB collection
-**New files**:
-- `swarm/learning.py` — BugPatternDB, HotspotTracker, CveCorpus, AgentHistory
-- `swarm/learning/store.py` — ChromaDB integration: embed, store, query
-- `swarm/learning/embed.py` — Code-to-embedding: function signature + AST structure + taint metadata → vector
-
-**Modified files**:
-- `swarm/orchestrator.py` — After each run, push confirmed findings to PatternDB; update hotspots; record agent performance
-- `agent/cli/wiring.py` — Assessment phase reads hotspot scores and pattern similarity before scout runs
-- `agent/cli/config.py` — Add `--learning-db` flag pointing to ChromaDB path
-
----
+**New files**: `swarm/learning.py`, `swarm/learning/store.py`, `swarm/learning/embed.py`
+**Modified**: `swarm/orchestrator.py` (post-run: push findings, update hotspots), `agent/cli/wiring.py` (pre-run: read hotspots + patterns), `agent/cli/config.py` (+`--learning-db` flag)
 
 ## B2. Data flow?
 
 ```
-RUN COMPLETES
-  │
-  ├─→ Every confirmed finding:
-  │     ├─ Extract: code snippet (50 lines around bug) + CWE + language + severity + fix
-  │     ├─ Embed: function signature + AST structure + taint metadata → 384-dim vector
-  │     └─ Store: ChromaDB collection "bug_patterns" with metadata
-  │
-  ├─→ Hotspot tracker:
-  │     ├─ File where bug was found → hotspot_score += severity × recency_weight
-  │     └─ Persist to ~/.bugswarm/hotspots.yaml
-  │
-  ├─→ Agent history:
-  │     ├─ Agent performance: bugs_found, FP_rate, tokens_per_verified
-  │     └─ Persist to ~/.bugswarm/agent_history.yaml
-  │
-NEXT RUN BEGINS
-  │
-  ├─→ Assessment phase reads:
-  │     ├─ Hotspot scores → prioritize high-score files
-  │     ├─ Pattern similarity → for each function in new repo, query ChromaDB
-  │     │   └─ Top-K similar patterns returned with similarity scores
-  │     └─ Agent history → allocation algorithm weights agents that performed well
-  │
-  └─→ Scout agent receives: top-N hotspot files + top-M pattern matches
-        → Investigates these first → faster bug discovery
+RUN COMPLETES → every confirmed finding embedded + stored in ChromaDB
+              → hotspot scores updated with exponential decay
+              → agent performance recorded
+
+NEXT RUN → assessment reads hotspots + queries ChromaDB for similar patterns
+         → scout agent receives top-N prioritized files
 ```
 
----
+## B3. New types?
 
-## B3. New types/schemas?
-
-### Python: BugPattern (in `swarm/learning.py`)
-
-```python
-@dataclass
-class BugPattern:
-    id: str                          # SHA256 of code snippet
-    cwe: str                         # CWE-89, CWE-78, etc.
-    language: str                    # python, javascript, etc.
-    severity: int                    # 1-10
-    code_snippet: str                # 50 lines around the bug
-    function_signature: str          # "login(username, password) -> bool"
-    taint_metadata: dict             # {sources: [...], sinks: [...], sanitized: bool}
-    fix_diff: str | None             # The fix that resolved it
-    embedding: list[float] | None    # 384-dim vector (computed by embed module)
-    discovered_at: datetime
-    repo_hash: str                   # Which repo this was found in
-    run_id: str                      # Which run
-```
-
-### Python: HotspotEntry (in `swarm/learning.py`)
-
-```python
-@dataclass
-class HotspotEntry:
-    file_path: str
-    score: float                     # Cumulative: sum(severity × recency_weight)
-    bug_count: int                   # How many bugs found in this file
-    last_bug_at: datetime
-    last_scan_at: datetime
-    recency_decay: float = 0.95      # Exponential decay per week
-```
-
----
+`BugPattern` (id, cwe, language, severity, code_snippet, function_signature, taint_metadata, fix_diff, embedding, discovered_at, repo_hash, run_id)
+`HotspotEntry` (file_path, score, bug_count, last_bug_at, recency_decay=0.95)
+`AgentPerformanceRecord` (agent_id, persona, model, bugs_found, fp_rate, tokens_per_verified, runs_completed)
 
 ## B4. Modified modules?
 
-| File | Change | Impact |
-|------|--------|--------|
-| `swarm/learning.py` | NEW — BugPatternDB, HotspotTracker, CveCorpus, AgentHistory | Core module |
-| `swarm/learning/store.py` | NEW — ChromaDB client wrapper | Storage layer |
-| `swarm/learning/embed.py` | NEW — Code embedding function | Embedding layer |
-| `swarm/orchestrator.py:run()` | After run completes: push findings, update hotspots, record history | Integration point |
-| `agent/cli/wiring.py` | Assessment phase reads patterns + hotspots before scout runs | Integration point |
-| `agent/cli/config.py` | Add `--learning-db` flag | Config |
+| File | Change |
+|------|--------|
+| `swarm/learning.py` | NEW — BugPatternDB, HotspotTracker, CveCorpus, AgentHistory |
+| `swarm/learning/store.py` | NEW — ChromaDB client wrapper, embed + store + query |
+| `swarm/learning/embed.py` | NEW — Code→embedding: sentence-transformer all-MiniLM-L6-v2 |
+| `swarm/orchestrator.py` | After each run: push findings, update hotspots, record history |
+| `agent/cli/wiring.py` | Assessment reads hotspots + patterns before scout |
+| `agent/cli/config.py` | Add `--learning-db` flag |
 
----
+## B5. Dependencies?
 
-## B5. New dependencies?
-
-| Dependency | Version | Purpose | Justification |
-|-----------|---------|---------|---------------|
-| `chromadb` | >=0.5.0 | Vector DB for pattern storage + ANN search | Already in Python deps |
-| `sentence-transformers` | >=2.6.0 | Code-to-embedding (all-MiniLM-L6-v2) | 384-dim, fast, local, free |
-| `pyyaml` | >=6.0 | Hotspot + agent history persistence | Already in deps |
+| Dep | Version | Purpose |
+|-----|---------|---------|
+| `chromadb` | >=0.5.0 | Vector DB for pattern storage + ANN search |
+| `sentence-transformers` | >=2.6.0 | Code→384-dim embedding (all-MiniLM-L6-v2) |
+| `pyyaml` | >=6.0 | Hotspot + agent history persistence |
 
 ---
 
 ## C1. Core algorithm?
 
 ### Pattern Storage
-
 ```
-function store_finding(finding: ParsedFinding, repo_path: Path):
-    snippet = extract_code_surrounding(finding.location, radius=25 lines)
-    embedding = sentence_transformer.encode(
-        f"{finding.claim} | {finding.mechanism} | {snippet[:500]}"
-    )
-    
-    pattern = BugPattern(
-        id = sha256(snippet),
-        cwe = map_to_cwe(finding.claim),
-        language = detect_language(finding.location),
-        severity = finding.severity,
-        code_snippet = snippet,
-        function_signature = extract_function_at(finding.location),
-        taint_metadata = extract_taint_context(finding),
-        embedding = embedding.tolist(),
-        ...
-    )
-    
-    chroma_collection.add(
-        ids=[pattern.id],
-        embeddings=[embedding],
-        metadatas=[pattern.to_metadata_dict()],
-        documents=[snippet[:1000]]
-    )
+store_finding(finding, repo_path):
+    snippet = extract_code_surrounding(location, radius=25)
+    embedding = sentence_transformer.encode(claim + mechanism + snippet[:500])
+    chroma_collection.add(ids=[sha256(snippet)], embeddings=[embedding], metadatas=[...])
 ```
 
 ### Pattern Query
-
 ```
-function query_similar_patterns(function_code: str, top_k: int = 10):
+query_similar(function_code, top_k=10):
     embedding = sentence_transformer.encode(function_code[:1000])
-    results = chroma_collection.query(
-        query_embeddings=[embedding],
-        n_results=top_k,
-        include=["metadatas", "documents", "distances"]
-    )
-    return [
-        SimilarPattern(
-            similarity = 1.0 - distance,
-            cwe = metadata["cwe"],
-            severity = metadata["severity"],
-            snippet = document
-        )
-        for distance, metadata, document in zip(results["distances"][0], ...)
-    ]
+    results = chroma_collection.query(query_embeddings=[embedding], n_results=top_k)
+    return [(1.0 - distance, cwe, severity, snippet) for ... in results]
 ```
 
 ### Hotspot Scoring
-
 ```
-function update_hotspot(file_path: str, bug_severity: int, current_time: datetime):
+update_hotspot(file_path, severity, now):
     entry = hotspots.get(file_path) or HotspotEntry(file_path)
-    
-    # Apply recency decay to existing score
-    days_since_last = (current_time - entry.last_scan_at).days
-    entry.score *= entry.recency_decay ** days_since_last
-    
-    # Add new score
-    entry.score += bug_severity
+    entry.score *= decay_rate ** days_since_last_scan
+    entry.score += severity
     entry.bug_count += 1
-    entry.last_bug_at = current_time
-    entry.last_scan_at = current_time
-    
-    hotspots[file_path] = entry
     save_hotspots()
 ```
 
-**Complexity**: Embedding: O(N) where N = code length. ChromaDB query: O(log N) via HNSW index.
+### CVE Corpus Matching
+```
+match_cve_patterns(function_code):
+    embedding = sentence_transformer.encode(function_code)
+    results = cve_collection.query(query_embeddings=[embedding], n_results=5)
+    return [cve for cve in results if distance < 0.3]
+```
 
----
+**Complexity**: Embedding O(N), ChromaDB query O(log N) via HNSW, hotspot O(1).
 
 ## C2. Failure modes?
 
 | Failure | Handling | Recovery |
 |---------|----------|----------|
-| ChromaDB unavailable | Agent runs without pattern matching. Log WARN. | Retry connection every 5 min. Re-enable on reconnect. |
-| Embedding model fails to load | Fall back to trigram BoW similarity (no ML embedding). | Log ERROR. Alert. |
-| Hotspot file corrupted | Reset to empty. Log WARN. | Fresh start — no historical data lost (it's additive). |
-| Pattern DB grows too large (>1M patterns) | Enable ChromaDB persistence with disk-backed index. | Monitor size. Alert at 80% disk. |
-| Embedding produces NaN/Inf | Skip that pattern. Log ERROR. | Investigate input. Usually caused by empty/zero-length code. |
-
----
+| ChromaDB unavailable | Agent runs without patterns. Log WARN. | Retry every 5min. Re-enable on reconnect. |
+| Embedding model fails | Fall back to trigram BoW similarity. Log ERROR. | Alert. Investigate model file. |
+| Hotspot file corrupted | Reset to empty. Log WARN. | Fresh start — data is additive, loss is non-critical. |
+| Pattern DB >1M entries | Enable disk-backed ChromaDB persistence. | Monitor size. Alert at 80% disk. |
+| Embedding NaN/Inf | Skip pattern. Log ERROR. | Usually caused by empty code input. |
 
 ## C3. Edge cases?
 
 | Edge Case | Behavior |
 |-----------|----------|
-| First run (empty DB) | No patterns returned. Hotspots start at zero. Agent history empty. Graceful — runs normally. |
-| Duplicate finding (same bug found twice) | Pattern DB deduplicates by SHA256 of snippet. Second insertion is a no-op. |
-| Very short function (<50 chars) | Embedding still works. Sentence transformer handles short text. |
-| Multi-language repo | Patterns tagged with language. Queries filtered by language. |
-| Hotspot decay over time | Score decays exponentially. File not touched in 6 months → score approaches 0. |
-
----
+| First run (empty DB) | No patterns. Hotspots zero. Agent history empty. Runs normally. |
+| Duplicate finding | SHA256 dedup. Second insert is no-op. |
+| Very short function (<50 chars) | Embedding still works on short text. |
+| Multi-language repo | Patterns tagged by language. Queries filtered. |
+| Hotspot decay over 6 months | Score approaches 0. File effectively forgotten. |
 
 ## C4. Concurrency?
 
-**Locking strategy**: ChromaDB handles concurrent reads natively. Writes are batched at end of run (single writer). Hotspot YAML uses file-level lock (`fcntl`). Agent history uses atomic write (write to temp, rename).
-
-**Race conditions**: None. Pattern DB writes happen after swarm terminates. Hotspot writes are additive — worst case is a slightly stale score, which is acceptable.
-
----
+ChromaDB handles concurrent reads natively. Writes batched at end of run (single writer). Hotspot YAML uses atomic write (temp file + rename). Agent history same. No race conditions — data written after swarm terminates.
 
 ## C5. Performance budget?
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Embedding time | <50ms per function | `sentence_transformer.encode()` on 500-char input |
-| ChromaDB query | <100ms for top-10 | ANN over 100K patterns |
-| Hotspot save | <10ms | YAML dump of <1000 entries |
-| Pattern DB insert | <50ms per pattern | Batch insert of <100 findings per run |
+| Metric | Target |
+|--------|--------|
+| Embedding time | <50ms per function |
+| ChromaDB query | <100ms for top-10 over 100K patterns |
+| Hotspot save | <10ms for <1000 entries |
+| Pattern insert | <50ms per pattern (batch) |
 
 ---
 
@@ -280,83 +156,100 @@ function update_hotspot(file_path: str, bug_severity: int, current_time: datetim
 
 ### C6.1 Algorithm Inventory
 
-| # | Component | Current Approach | Naive/Peak | Peak Algorithm |
-|---|-----------|-----------------|------------|----------------|
-| 1 | Embedding generation | Sentence-transformer (all-MiniLM-L6-v2) | **PEAK** | Already peak — 384-dim, production-grade |
-| 2 | Similarity search | ChromaDB HNSW ANN | **PEAK** | Already peak — O(log N) approximate nearest neighbor |
-| 3 | Hotspot decay | Exponential decay | **PEAK** | Already peak — mathematically sound forgetting curve |
-| 4 | CVE corpus matching | Embedding cosine similarity | NAIVE | → Graph edit distance on CPG subgraphs (C6.2.1) |
+| # | Component | Approach | Status | Peak Reference |
+|---|-----------|----------|--------|----------------|
+| 1 | Embedding | sentence-transformer all-MiniLM-L6-v2 (384-dim) | **PEAK** | Already optimal for code similarity |
+| 2 | Similarity search | ChromaDB HNSW ANN O(log N) | **PEAK** | Production-grade approximate nearest neighbor |
+| 3 | Hotspot decay | Exponential decay (0.95/week) | **PEAK** | Mathematically sound forgetting curve |
+| 4 | CVE matching | Embedding cosine similarity | NAIVE → Graph edit distance | C6.2.1 |
 
-### C6.2.1 CVE Matching — Graph Edit Distance
+### C6.2.1 CVE Matching — Graph Edit Distance (Deferred)
 
-**What**: Instead of embedding similarity (which only captures surface text), compute graph edit distance between the CPG subgraph at the target function and known-vulnerable CPG subgraphs from the CVE corpus.
+**Peak algorithm**: Compute graph edit distance between CPG subgraph at target function and known-vulnerable CPG subgraphs from CVE corpus. Catches >90% vs 60% for text embedding.
 
-**Quantitative improvement**: Text embedding catches ~60% of CVE patterns. Graph edit distance catches >90% because it matches STRUCTURE (call graph, data flow, control flow), not surface text.
+**Quantitative**: Graph structure matches even when variable names differ (obfuscation-resistant).
 
-**Edge cases**: Functions with same structure but different names match. Obfuscated code (renamed variables) still matches because graph structure is unchanged.
+**Edge cases**: Same structure, different names → matched. Obfuscated → still matched. Different structure, similar text → NOT matched (embedding false positive eliminated).
 
-**Deferred**: Requires CPG serialization for CVE patterns (Phase 17b). Embedding approach is sufficient for Phase 18.
+**Verification**: 100 known CVE snippets. Assert graph edit distance finds ≥90, embedding finds ≥60.
 
----
+**Deferral reason**: Requires CPG serialization for CVE patterns (dependency-blocked, Phase 17b). Embedding is sufficient for Phase 18.
 
-## D1. Aggressive unit tests? (15 tests)
+### C6.3 Zero-Gap Guarantee
 
-| Test Name | Attack Vector | Expected Behavior |
-|-----------|---------------|-------------------|
-| `test_pattern_store_and_retrieve` | Store 1 pattern, query same code | Returns pattern with similarity >0.95 |
-| `test_pattern_different_code` | Store SQL injection pattern, query race condition | Returns similarity <0.3 |
-| `test_pattern_deduplication` | Store same pattern twice | Second insert is no-op. Collection has 1 entry. |
-| `test_hotspot_scoring` | Bug at auth.py:42 severity 9 | Score increases by 9 |
-| `test_hotspot_decay` | Score 100, 7 days pass | Score decays to ~70 |
-| `test_hotspot_empty_start` | No hotspots | All files score 0. No crash. |
-| `test_agent_history_record` | Agent A: 5 bugs, 1 FP | History stored correctly |
-| `test_cve_corpus_match` | Know CVE-2024-12345 pattern in code | Matched with distance <0.3 |
-| `test_empty_db_graceful` | Query before any patterns stored | Returns empty. No error. |
-| `test_large_db_performance` | **AGGRESSIVE**: 50K patterns, query | <100ms. No OOM. |
-| `test_corrupt_hotspot_file` | **AGGRESSIVE**: Invalid YAML | Resets to empty. Logs WARN. |
-| `test_chromadb_unavailable` | **AGGRESSIVE**: ChromaDB down | Agent runs normally. Patterns skipped. |
-| `test_multi_language_filtering` | Store Python + JS patterns. Query Python. | Only Python patterns returned. |
-| `test_concurrent_reads` | **AGGRESSIVE**: 50 simultaneous queries | All return within 200ms. No corruption. |
-| `test_embedding_nan_handling` | **AGGRESSIVE**: Empty code snippet | Skipped. Logged. No crash. |
+```
+Component: Embedding — [x] PEAK achieved via sentence-transformer
+Component: Similarity — [x] PEAK achieved via ChromaDB HNSW
+Component: Hotspot — [x] PEAK achieved via exponential decay
+Component: CVE — [x] NAIVE accepted with valid deferral (dependency-blocked: Phase 17b)
+```
+
+### C6.4 Peak Deferral
+
+CVE graph matching deferred. Reason: dependency-blocked (requires CPG serialization, not yet built). Embedding approach is sufficient with documented limitation.
 
 ---
 
-## D2. Aggressive integration tests? (5 tests)
+## D1. Aggressive unit tests? (15 tests, 9 aggressive)
 
-| Test Name | Attack Vector | Expected Behavior |
-|-----------|---------------|-------------------|
-| `test_full_learning_loop` | Run agent on repo with known bugs → store patterns → run again | Second run finds bugs faster (fewer tokens per verified bug) |
-| `test_hotspot_prioritization` | Buggy file gets high hotspot → next run investigates it first | First agent turn targets high-hotspot file |
-| `test_learning_persistence` | Run → store → restart process → query | Patterns survive process restart |
-| `test_cross_repo_learning` | Learn pattern in repo A → query in repo B with similar code | Pattern matched across repos |
-| `test_learning_with_50_agents` | **AGGRESSIVE**: 50 concurrent agents, each storing findings | No corruption. All patterns stored. All queries correct. |
+| # | Test | Attack | Expected |
+|---|------|-------|----------|
+| 1 | `test_pattern_store_retrieve` | Store + query same code | Similarity >0.95 |
+| 2 | `test_pattern_different_code` | SQLi pattern, query race condition | Similarity <0.3 |
+| 3 | `test_pattern_dedup` | Store same pattern twice | Collection has 1 entry |
+| 4 | `test_hotspot_scoring` | Bug at auth.py:42 severity 9 | Score increases by 9 |
+| 5 | `test_hotspot_decay` | Score 100, 7 days pass | Score ~70 |
+| 6 | `test_hotspot_empty` | No hotspots | All files 0. No crash. |
+| 7 | `test_agent_history` | Agent A: 5 bugs, 1 FP | Correctly stored |
+| 8 | `test_cve_corpus` | Known CVE pattern in code | Matched |
+| 9 | `test_empty_db` | **AGGRESSIVE**: Query with 0 patterns | Empty result. No crash. |
+| 10 | `test_large_db` | **AGGRESSIVE**: 50K patterns, query | <100ms, no OOM |
+| 11 | `test_corrupt_hotspot` | **AGGRESSIVE**: Invalid YAML | Reset to empty, log WARN |
+| 12 | `test_chromadb_down` | **AGGRESSIVE**: ChromaDB unavailable | Agent runs. Patterns skipped. No crash. |
+| 13 | `test_multi_language` | **AGGRESSIVE**: Python+JS, query Python | Only Python returned |
+| 14 | `test_concurrent_reads` | **AGGRESSIVE**: 50 simultaneous queries | All <200ms. No corruption. |
+| 15 | `test_embedding_nan` | **AGGRESSIVE**: Empty code input | Skipped. Logged. No crash. |
 
----
+## D2. Aggressive integration tests? (5 tests, 3 aggressive)
+
+| # | Test | Attack | Expected |
+|---|------|-------|----------|
+| 1 | `test_full_learning_loop` | Run → store → run again | Second run fewer tokens/bug |
+| 2 | `test_hotspot_prioritization` | Buggy file high score → next run first | Agent targets hotspot first |
+| 3 | `test_learning_persistence` | **AGGRESSIVE**: Run → store → restart → query | Patterns survive restart |
+| 4 | `test_cross_repo` | **AGGRESSIVE**: Learn repo A → query repo B | Cross-repo pattern matching |
+| 5 | `test_50_agent_concurrent` | **AGGRESSIVE**: 50 agents storing findings | No corruption. All stored. |
 
 ## D3. Extreme gate test — The Memory Crucible? (8 attack vectors)
 
-1. **Amnesia test**: Run, store 20 patterns, restart process, verify all 20 retrievable
-2. **Decay test**: Insert score 100, simulate 30 days, verify score <5
-3. **Scale test**: Insert 100K patterns, query top-10, verify <100ms
-4. **Corruption test**: Corrupt hotspot YAML, verify graceful reset
-5. **Multi-repo test**: Patterns from 5 different repos stored and queryable independently
-6. **CVE detection test**: 20 known CVE snippets inserted, all 20 matched when queried with similar code
-7. **Concurrent test**: 100 simultaneous queries against 50K pattern DB
-8. **Empty test**: Fresh install, zero patterns, agent runs without error
+1. **Amnesia**: Store 20 patterns, restart, all 20 retrievable
+2. **Decay**: Score 100, simulate 30 days, score <5
+3. **Scale**: 100K patterns, top-10 query <100ms
+4. **Corruption**: Corrupt hotspot YAML, graceful reset
+5. **Multi-repo**: 5 repos, patterns independently queryable
+6. **CVE detection**: 20 CVE snippets, all 20 matched
+7. **Concurrent**: 100 simultaneous queries, 50K DB
+8. **Empty**: Fresh install, zero patterns, agent runs
+
+## D4. Golden dataset?
+
+Applicable: 200 golden dataset bugs stored as patterns. After Phase 18, re-query golden dataset against itself. Assert >95% self-match rate (each bug matches itself).
+
+## D5. Regression test?
+
+`test_learning_regression`: Memory Crucible gate runs on every CI push. Any of 8 vectors fail → build fails.
 
 ---
 
 ## E1. Estimated cost?
 
-| Cost Type | Estimate |
-|-----------|----------|
+| Cost | Estimate |
+|------|----------|
 | Development | 16 hours |
-| ChromaDB storage | ~50MB per 10K patterns |
-| Embedding compute | <1ms per function on CPU (all-MiniLM-L6-v2 is tiny) |
-| Token cost impact | NEGATIVE — saves 30%+ tokens by prioritizing investigation |
-| Infrastructure | $0 (ChromaDB runs locally, no cloud service needed) |
-
----
+| Storage | ~50MB per 10K patterns |
+| Embedding compute | <1ms per function (CPU) |
+| Token savings | 30%+ reduction |
+| Infrastructure | $0 (local ChromaDB) |
 
 ## E2. Observability?
 
@@ -364,33 +257,28 @@ function update_hotspot(file_path: str, bug_severity: int, current_time: datetim
 **Metrics**: `bugswarm_pattern_db_size`, `bugswarm_pattern_query_latency_ms`, `bugswarm_hotspot_files_tracked`, `bugswarm_learning_token_savings_pct`
 **Alerts**: ChromaDB unavailable >5min → WARN
 
----
-
 ## E3. Configuration?
 
-| Parameter | Default | Env Var | CLI Flag |
-|-----------|---------|---------|----------|
-| `learning_enabled` | `true` | `BGSWARM_LEARNING_ENABLED` | `--[no-]learning` |
+| Parameter | Default | Env | Flag |
+|-----------|---------|-----|------|
+| `learning_enabled` | `true` | `BGSWARM_LEARNING` | `--[no-]learning` |
 | `chromadb_path` | `~/.bugswarm/chroma` | `BGSWARM_CHROMADB_PATH` | `--chromadb-path` |
 | `hotspot_decay_rate` | `0.95` | — | — |
 | `pattern_top_k` | `10` | — | — |
-
----
+| `cve_similarity_threshold` | `0.3` | — | — |
 
 ## E4. Migration?
 
-**Backward compatibility**: Full. Learning is additive. First run has empty DB. Second run has data from first run. No migration needed.
-
----
+Full backward compat. Learning is additive. First run: empty DB. Second run: data from first. No migration needed.
 
 ## E5. Documentation?
 
-ADR-018: Persistent Bug Pattern Database. User docs: "Learning System" section.
+ADR-018: Persistent Bug Pattern Database. User docs: "Learning System" section. Changelog entry.
 
 ---
 
 ## Gate Receipt
 
 ```json
-{"phase": 18, "gate": "memory_crucible", "status": "PENDING", "verdict": "PHASE 18 NOT YET EXECUTED"}
+{"phase":18,"gate":"memory_crucible","attack_vectors":8,"passed":0,"failed":0,"verdict":"PHASE 18 NOT YET EXECUTED"}
 ```
