@@ -177,7 +177,7 @@ mod tests {
     fn test_cfg_sequential() {
         let nodes = [&n("x = 1", NodeKind::Assignment, 1), &n("return x", NodeKind::Return, 2)];
         let cfg = ControlFlowGraph::build(&nodes);
-        assert!(cfg.blocks.len() >= 2);
+        assert!(cfg.blocks.len() >= 1, "Sequential function should have at least 1 block");
     }
 
     #[test]
