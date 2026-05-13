@@ -103,6 +103,66 @@ Empty inputs. Maximum inputs. Boundary conditions. Concurrency scenarios.
 ### C5. What is the performance budget?
 CPU, memory, latency, throughput. With p50/p95/p99 targets.
 
+### C6. Algorithmic Peak Analysis (MANDATORY)
+
+Every algorithm, heuristic, or logic path in the phase must be audited for peak quality. Naive implementations that leave a gap must have a specified peak replacement. No gap may be accepted without one of three valid deferral reasons.
+
+#### C6.1 Algorithm Inventory
+
+List every algorithm in the phase. Tag each as `NAIVE` or `PEAK`.
+
+```
+| # | Component | Current Approach | Naive/Peak | Peak Algorithm Specified? |
+|---|-----------|-----------------|------------|--------------------------|
+| 1 | [name]    | [approach]      | NAIVE/PEAK | → [reference to C6.2.N]  |
+```
+
+#### C6.2 Peak Algorithm Specifications
+
+For each `NAIVE` entry, answer all 4 sub-questions:
+
+##### C6.2.N.1 What is the peak algorithm?
+Pseudocode. Complexity class. Why it's correct. Reference to canonical paper/implementation.
+
+##### C6.2.N.2 What is the quantitative improvement over naive?
+Before/after numbers. Not "faster" — "10-50x faster, measured as 15μs vs 750μs per 10KB input."
+
+##### C6.2.N.3 What edge cases does the peak version handle that naive misses?
+```
+Naive: [what breaks]
+Peak: [how it handles]
+```
+
+##### C6.2.N.4 How is the peak version verified against naive?
+```
+Strategy: Fuzz N random inputs against both. Assert output equality for valid.
+          Assert peak handles all inputs that crash naive.
+```
+
+#### C6.3 Zero-Gap Guarantee
+
+For each algorithm, assert:
+```
+Component: [name]
+  [ ] No algorithm is implemented naively without peak specification
+  [ ] Every NAIVE entry has a peak replacement in C6.2
+  [ ] Every peak replacement has quantitative improvement target
+  [ ] Every peak replacement has edge case handling specified
+  [ ] Every peak replacement has verification strategy
+```
+
+#### C6.4 When Peak Can Be Deferred
+
+Only three valid reasons to accept naive:
+
+| Reason | Required Documentation |
+|--------|----------------------|
+| **Correctness-first** | Peak version changes semantics. Naive is proven correct. ADR required. |
+| **Dependency-blocked** | Peak requires infrastructure not yet built. Reference blocking phase + timeline. |
+| **No measurable impact** | Profiling data proves <1% of execution time spent here. |
+
+If none apply — naive is NOT acceptable. Peak must be specified in the plan and implemented.
+
 ---
 
 ## Section D: Verification — AGGRESSIVE TESTING MANDATORY
@@ -308,7 +368,9 @@ After: [list]
 | ... | ... | ... |
 
 ## Review Checklist
-- [ ] All 25 questions answered
+- [ ] All 25 questions answered (now 30+ with C6 sub-questions)
+- [ ] C6 Algorithmic Peak Analysis complete — every algorithm inventoried, every NAIVE has peak specification
+- [ ] Zero-Gap Guarantee verified — no algorithm left naive without peak or valid deferral
 - [ ] Aggressive testing mandate met — D1 unit tests include attack vectors, D2 integration tests include failure modes, D3 gate test designed to BREAK implementation
 - [ ] Every component individually stress-tested (parser, handler, algorithm, config — each with null/empty/corrupt/concurrent/maximum inputs)
 - [ ] Dependency tree verified
