@@ -136,6 +136,16 @@ pub struct CampaignStats {
     pub sink_mutations_count: u64,
     /// Rolling average of danger scores across all unique crashes.
     pub avg_danger_score: f32,
+    /// Minimum danger score seen across all unique crashes.
+    pub danger_score_min: f32,
+    /// Maximum danger score seen across all unique crashes.
+    pub danger_score_max: f32,
+    /// Median danger score (approximate, updated per crash).
+    pub danger_score_p50: f32,
+    /// Sum of all power scores computed (for averaging).
+    pub power_scores_total: f64,
+    /// Count of power score computations.
+    pub power_score_computations: u64,
 }
 
 /// High-level crash classification derived from the terminating signal.
@@ -382,6 +392,119 @@ impl DedupEngine {
 }
 
 // ---------------------------------------------------------------------------
+// DangerFeed
+// ---------------------------------------------------------------------------
+
+/// Aggregated danger feed statistics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DangerFeedStats {
+    pub executions: usize,
+    pub avg_danger_score: f32,
+    pub avg_power_score: f32,
+    pub danger_min: f32,
+    pub danger_max: f32,
+    pub danger_p50: f32,
+    pub danger_p95: f32,
+    pub sink_mutations: usize,
+}
+
+/// Tracks danger-weighted fuzzing statistics across a campaign.
+pub struct DangerFeed {
+    /// Whether danger-guided fuzzing is active.
+    pub enabled: bool,
+    /// The current danger map.
+    pub map: crate::danger_map::DangerMap,
+    /// Configuration for blending danger into power schedule.
+    pub config: crate::danger_map::DangerConfig,
+    /// Cumulative danger scores from all power computations.
+    pub danger_scores: Vec<f32>,
+    /// Cumulative power scores from all computations.
+    pub power_scores: Vec<f32>,
+}
+
+impl DangerFeed {
+    pub fn new(enabled: bool, config: crate::danger_map::DangerConfig) -> Self {
+        Self {
+            enabled,
+            map: crate::danger_map::DangerMap::new(),
+            config,
+            danger_scores: Vec::new(),
+            power_scores: Vec::new(),
+        }
+    }
+
+    /// Populate map from pairs and normalize.
+    pub fn load_map(&mut self, pairs: Vec<(u64, f32)>) {
+        let mut map = crate::danger_map::DangerMap::from_pairs(pairs);
+        map.normalize();
+        self.map = map;
+    }
+
+    /// Load a danger map from a CPG JSON response.
+    pub fn load_map_from_json(&mut self, response: &crate::danger_map::DangerMapResponse) {
+        self.map = response.to_danger_map();
+    }
+
+    /// Lookup danger score and compute power schedule.
+    pub fn compute_score(&self, address: u64, coverage_rarity: f32) -> f32 {
+        let danger_score = self.map.lookup(address);
+        self.config
+            .compute_power_schedule(coverage_rarity, danger_score)
+    }
+
+    /// Record an execution, return the computed power score.
+    pub fn record_execution(&mut self, address: u64, coverage_rarity: f32) -> f32 {
+        let power_score = self.compute_score(address, coverage_rarity);
+        let danger_score = self.map.lookup(address);
+        self.danger_scores.push(danger_score);
+        self.power_scores.push(power_score);
+        power_score
+    }
+
+    /// Return aggregate danger feed statistics.
+    pub fn stats(&self) -> DangerFeedStats {
+        let executions = self.danger_scores.len();
+        if executions == 0 {
+            return DangerFeedStats::default();
+        }
+
+        let avg_danger: f32 =
+            self.danger_scores.iter().sum::<f32>() / executions as f32;
+        let avg_power: f32 =
+            self.power_scores.iter().sum::<f32>() / executions as f32;
+
+        let mut sorted = self.danger_scores.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let danger_min = sorted.first().copied().unwrap_or(0.0);
+        let danger_max = sorted.last().copied().unwrap_or(0.0);
+        let danger_p50 = percentile(&sorted, 0.5);
+        let danger_p95 = percentile(&sorted, 0.95);
+
+        let sink_mutations = self.danger_scores.iter().filter(|&&s| s > 0.5).count();
+
+        DangerFeedStats {
+            executions,
+            avg_danger_score: avg_danger,
+            avg_power_score: avg_power,
+            danger_min,
+            danger_max,
+            danger_p50,
+            danger_p95,
+            sink_mutations,
+        }
+    }
+}
+
+fn percentile(sorted: &[f32], p: f32) -> f32 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let idx = ((sorted.len() - 1) as f32 * p) as usize;
+    sorted[idx]
+}
+
+// ---------------------------------------------------------------------------
 // FuzzController
 // ---------------------------------------------------------------------------
 
@@ -394,8 +517,7 @@ pub struct FuzzController {
     dedup: DedupEngine,
     crashes: Vec<FuzzCrash>,
     started_at: DateTime<Utc>,
-    danger_map: crate::danger_map::DangerMap,
-    danger_config: crate::danger_map::DangerConfig,
+    danger_feed: DangerFeed,
 }
 
 impl FuzzController {
@@ -404,6 +526,7 @@ impl FuzzController {
     pub fn new(config: FuzzConfig, dedup_config: DedupConfig) -> Self {
         let campaign_id = CampaignId(Uuid::new_v4());
         let danger_config = config.danger_config.clone().unwrap_or_default();
+        let danger_map_enabled = config.danger_map_enabled;
         Self {
             campaign_id,
             config,
@@ -426,19 +549,38 @@ impl FuzzController {
                 stability_pct: 0.0,
                 sink_mutations_count: 0,
                 avg_danger_score: 0.0,
+                danger_score_min: 0.0,
+                danger_score_max: 0.0,
+                danger_score_p50: 0.0,
+                power_scores_total: 0.0,
+                power_score_computations: 0,
             },
             dedup: DedupEngine::new(dedup_config),
             crashes: Vec::new(),
             started_at: Utc::now(),
-            danger_map: crate::danger_map::DangerMap::new(),
-            danger_config,
+            danger_feed: DangerFeed::new(danger_map_enabled, danger_config),
         }
     }
 
     /// Transition the campaign into `Running` state.
     pub fn start(&mut self) -> Result<()> {
+        if self.state != CampaignState::Provisioning {
+            return Err(FuzzerError::CampaignNotRunning(self.campaign_id, self.state));
+        }
         self.state = CampaignState::Running;
-        log::info!("Campaign {} started", self.campaign_id);
+        self.started_at = Utc::now();
+
+        if self.danger_feed.enabled {
+            log::info!(
+                "danger_feed_enabled campaign={:?} taint_weight={} coverage_weight={}",
+                self.campaign_id,
+                self.danger_feed.config.taint_weight,
+                self.danger_feed.config.coverage_weight,
+            );
+        } else {
+            log::info!("Campaign {} started", self.campaign_id);
+        }
+
         Ok(())
     }
 
@@ -461,7 +603,10 @@ impl FuzzController {
         stderr: String,
         crash_addr: u64,
     ) -> Option<FuzzCrash> {
-        let danger_score = self.danger_map.lookup(crash_addr);
+        let danger_score = self.danger_feed.map.lookup(crash_addr);
+
+        // Track in DangerFeed
+        let _power_score = self.danger_feed.record_execution(crash_addr, 0.0);
 
         if self.dedup.is_unique(&stack_trace) {
             let normalized = self.dedup.normalize_stack_trace(&stack_trace);
@@ -522,30 +667,57 @@ impl FuzzController {
         }
     }
 
-    /// Load (or replace) the danger map from raw (address, score) pairs.
-    /// The scores are automatically normalized.
+    /// Load a danger map from raw pairs.
     pub fn load_danger_map(&mut self, pairs: Vec<(u64, f32)>) {
-        let mut map = crate::danger_map::DangerMap::from_pairs(pairs);
-        map.normalize();
-        self.danger_map = map;
+        self.danger_feed.load_map(pairs);
     }
 
     /// Load a danger map from a CPG JSON response.
     pub fn load_danger_map_from_json(&mut self, response: &crate::danger_map::DangerMapResponse) {
-        self.danger_map = response.to_danger_map();
-        log::info!(
-            "Danger map loaded: {} entries, {} sinks",
-            response.num_entries,
-            response.sink_count
-        );
+        self.danger_feed.load_map_from_json(response);
     }
 
-    /// Compute a combined power score from coverage rarity and the danger
-    /// score at `address`.
+    /// Compute a combined power score for a code address.
     pub fn compute_power_score(&self, address: u64, coverage_rarity: f32) -> f32 {
-        let danger_score = self.danger_map.lookup(address);
-        self.danger_config
-            .compute_power_schedule(coverage_rarity, danger_score)
+        self.danger_feed.compute_score(address, coverage_rarity)
+    }
+
+    /// Record a power score computation for statistics tracking.
+    pub fn record_power_score(&mut self, address: u64, coverage_rarity: f32) -> f32 {
+        self.danger_feed.record_execution(address, coverage_rarity)
+    }
+
+    /// Load danger map from configured source (shared memory or empty).
+    /// Called during campaign provisioning before start().
+    pub fn load_danger_map_if_configured(&mut self) -> Result<()> {
+        if !self.danger_feed.enabled {
+            return Ok(());
+        }
+
+        if let Some(ref shm_name) = self.config.danger_map_shm_name {
+            match crate::danger_map::danger_map_from_shm(shm_name) {
+                Ok(map) => {
+                    self.danger_feed.map = map;
+                    log::info!(
+                        "danger_map_loaded campaign={:?} shm={} entries={}",
+                        self.campaign_id, shm_name, self.danger_feed.map.len()
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "danger_map_shm_failed campaign={:?} shm={} error={}",
+                        self.campaign_id, shm_name, e
+                    );
+                }
+            }
+        } else {
+            log::debug!(
+                "danger_map_no_shm campaign={:?} — running without danger guidance",
+                self.campaign_id
+            );
+        }
+
+        Ok(())
     }
 
     /// Mark the campaign as `Completed` (normal termination).
@@ -650,6 +822,11 @@ impl FuzzController {
     /// Return the list of unique crashes discovered so far.
     pub fn crashes(&self) -> &[FuzzCrash] {
         &self.crashes
+    }
+
+    /// Get danger feed statistics for the campaign.
+    pub fn danger_stats(&self) -> DangerFeedStats {
+        self.danger_feed.stats()
     }
 
     /// Produce a response describing the current state of the campaign.
@@ -778,6 +955,11 @@ impl AFLStatsParser {
             stability_pct: stability.unwrap_or(0.0),
             sink_mutations_count: 0,
             avg_danger_score: 0.0,
+            danger_score_min: 0.0,
+            danger_score_max: 0.0,
+            danger_score_p50: 0.0,
+            power_scores_total: 0.0,
+            power_score_computations: 0,
         })
     }
 }
@@ -1189,6 +1371,11 @@ impl Default for CampaignStats {
             stability_pct: 0.0,
             sink_mutations_count: 0,
             avg_danger_score: 0.0,
+            danger_score_min: 0.0,
+            danger_score_max: 0.0,
+            danger_score_p50: 0.0,
+            power_scores_total: 0.0,
+            power_score_computations: 0,
         }
     }
 }

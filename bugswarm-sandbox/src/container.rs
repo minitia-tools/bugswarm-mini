@@ -607,6 +607,10 @@ impl ContainerManager {
 
         // Create and start the campaign controller
         let mut controller = FuzzController::new(fuzz_config.clone(), DedupConfig::default());
+
+        // Phase 21C: Load danger map if enabled
+        controller.load_danger_map_if_configured()?;
+
         controller.start()?;
 
         // Build AFL++ command from the controller
