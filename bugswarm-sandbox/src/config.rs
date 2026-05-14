@@ -139,7 +139,27 @@ pub struct SandboxConfig {
     /// Maximum unique crashes before auto-stop.
     #[serde(default = "default_fuzz_max_crashes")]
     pub fuzz_max_crashes: u64,
+
+    /// Enable taint-guided fuzzing (Phase 21 danger map).
+    #[serde(default)]
+    pub fuzz_danger_map_enabled: bool,
+
+    /// Decay factor for danger score propagation (multiplicative per call-graph edge).
+    #[serde(default = "default_fuzz_danger_decay")]
+    pub fuzz_danger_decay: f32,
+
+    /// Weight for danger score in power schedule (0.0-1.0, remainder = coverage weight).
+    #[serde(default = "default_fuzz_danger_taint_weight")]
+    pub fuzz_danger_taint_weight: f32,
+
+    /// Weight for coverage rarity in power schedule (computed as 1.0 - taint_weight).
+    #[serde(default = "default_fuzz_danger_coverage_weight")]
+    pub fuzz_danger_coverage_weight: f32,
 }
+
+fn default_fuzz_danger_decay() -> f32 { 0.7 }
+fn default_fuzz_danger_taint_weight() -> f32 { 0.7 }
+fn default_fuzz_danger_coverage_weight() -> f32 { 0.3 }
 
 fn default_wall_timeout() -> u64 { DEFAULT_WALL_CLOCK_TIMEOUT_SECS }
 fn default_cpu_timeout() -> u64 { DEFAULT_CPU_TIMEOUT_SECS }
@@ -192,6 +212,10 @@ impl Default for SandboxConfig {
             fuzz_memory_limit_mb: default_fuzz_memory(),
             fuzz_max_duration_secs: default_fuzz_duration(),
             fuzz_max_crashes: default_fuzz_max_crashes(),
+            fuzz_danger_map_enabled: false,
+            fuzz_danger_decay: default_fuzz_danger_decay(),
+            fuzz_danger_taint_weight: default_fuzz_danger_taint_weight(),
+            fuzz_danger_coverage_weight: default_fuzz_danger_coverage_weight(),
         }
     }
 }

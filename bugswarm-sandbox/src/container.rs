@@ -599,14 +599,27 @@ impl ContainerManager {
     /// Uses FuzzController for campaign lifecycle management.
     pub async fn fuzz(&self, fuzz_config: &FuzzConfig) -> std::result::Result<FuzzResponse, FuzzerError> {
         info!(
-            "Starting fuzzer: target={}, timeout={}ms, memory={}MB",
+            "Starting fuzzer: target={}, timeout={}ms, memory={}MB danger={}",
             fuzz_config.target_path,
             fuzz_config.exec_timeout_ms,
-            fuzz_config.memory_limit_mb
+            fuzz_config.memory_limit_mb,
+            self.config.fuzz_danger_map_enabled
         );
 
+        // Populate danger map config from SandboxConfig
+        let mut fz_config = fuzz_config.clone();
+        if self.config.fuzz_danger_map_enabled {
+            fz_config.danger_map_enabled = true;
+            fz_config.danger_config = Some(crate::danger_map::DangerConfig {
+                enabled: true,
+                taint_weight: self.config.fuzz_danger_taint_weight,
+                coverage_weight: self.config.fuzz_danger_coverage_weight,
+                decay_factor: self.config.fuzz_danger_decay,
+            });
+        }
+
         // Create and start the campaign controller
-        let mut controller = FuzzController::new(fuzz_config.clone(), DedupConfig::default());
+        let mut controller = FuzzController::new(fz_config, DedupConfig::default());
 
         // Phase 21C: Load danger map if enabled
         controller.load_danger_map_if_configured()?;

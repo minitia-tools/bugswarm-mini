@@ -230,3 +230,109 @@ fn test_campaign_fail() {
     ctrl.fail("OOM in container").unwrap();
     assert_eq!(ctrl.state(), CampaignState::Failed);
 }
+
+// ── Phase 21D Danger Config Tests ──────────────────────────────────────────
+
+#[test]
+fn test_danger_config_defaults() {
+    let config = bugswarm_sandbox::danger_map::DangerConfig::default();
+    assert!(config.enabled);
+    assert!((config.taint_weight - 0.7).abs() < 0.001);
+    assert!((config.coverage_weight - 0.3).abs() < 0.001);
+    assert!((config.decay_factor - 0.7).abs() < 0.001);
+}
+
+#[test]
+fn test_danger_feed_creation() {
+    let config = bugswarm_sandbox::danger_map::DangerConfig::default();
+    let feed = bugswarm_sandbox::fuzzer::DangerFeed::new(true, config);
+    assert!(feed.enabled);
+    assert_eq!(feed.map.len(), 0);
+    assert!(feed.danger_scores.is_empty());
+}
+
+#[test]
+fn test_danger_feed_disabled() {
+    let config = bugswarm_sandbox::danger_map::DangerConfig::default();
+    let feed = bugswarm_sandbox::fuzzer::DangerFeed::new(false, config);
+    assert!(!feed.enabled);
+}
+
+#[test]
+fn test_danger_feed_load_map() {
+    let config = bugswarm_sandbox::danger_map::DangerConfig::default();
+    let mut feed = bugswarm_sandbox::fuzzer::DangerFeed::new(true, config);
+    feed.load_map(vec![(0x1000, 0.5), (0x2000, 0.8), (0x3000, 1.0)]);
+    assert_eq!(feed.map.len(), 3);
+    assert!((feed.map.lookup(0x2000) - 0.8).abs() < 0.001);
+}
+
+#[test]
+fn test_danger_feed_record_execution() {
+    let config = bugswarm_sandbox::danger_map::DangerConfig::default();
+    let mut feed = bugswarm_sandbox::fuzzer::DangerFeed::new(true, config);
+    feed.load_map(vec![(0x1000, 0.5), (0x2000, 0.9)]);
+    let score = feed.record_execution(0x1000, 0.3);
+    assert!(score > 0.0);
+    let stats = feed.stats();
+    assert_eq!(stats.executions, 1);
+    // Verify the danger feed recorded the execution and computed stats
+    assert!(stats.avg_danger_score > 0.0, "avg_danger should be non-zero after execution");
+}
+
+#[test]
+fn test_danger_feed_stats_empty() {
+    let config = bugswarm_sandbox::danger_map::DangerConfig::default();
+    let feed = bugswarm_sandbox::fuzzer::DangerFeed::new(true, config);
+    let stats = feed.stats();
+    assert_eq!(stats.executions, 0);
+}
+
+#[test]
+fn test_danger_feed_stats_with_data() {
+    let config = bugswarm_sandbox::danger_map::DangerConfig::default();
+    let mut feed = bugswarm_sandbox::fuzzer::DangerFeed::new(true, config);
+    feed.load_map(vec![
+        (0x1000, 0.2), (0x2000, 0.5), (0x3000, 0.8), (0x4000, 1.0)
+    ]);
+    feed.record_execution(0x1000, 0.1);
+    feed.record_execution(0x2000, 0.1);
+    feed.record_execution(0x3000, 0.1);
+    feed.record_execution(0x4000, 0.1);
+    let stats = feed.stats();
+    assert_eq!(stats.executions, 4);
+    assert!(stats.danger_p50 > 0.0);
+    assert!(stats.danger_p95 > stats.danger_p50);
+    // Sink mutations: danger > 0.5 counts
+    assert!(stats.sink_mutations >= 2); // 0.8 and 1.0 are > 0.5
+}
+
+#[test]
+fn test_fuzz_config_danger_fields_default() {
+    let config = FuzzConfig::default();
+    assert!(!config.danger_map_enabled);
+    assert!(config.danger_config.is_none());
+    assert!(config.danger_map_shm_name.is_none());
+}
+
+#[test]
+fn test_fuzz_config_danger_enabled() {
+    let config = FuzzConfig {
+        danger_map_enabled: true,
+        danger_config: Some(bugswarm_sandbox::danger_map::DangerConfig::default()),
+        danger_map_shm_name: Some("/bugswarm_danger_test".into()),
+        ..Default::default()
+    };
+    assert!(config.danger_map_enabled);
+    assert!(config.danger_config.is_some());
+    assert_eq!(config.danger_map_shm_name, Some("/bugswarm_danger_test".into()));
+}
+
+#[test]
+fn test_sandbox_config_danger_defaults() {
+    let config = bugswarm_sandbox::config::SandboxConfig::default();
+    assert!(!config.fuzz_danger_map_enabled);
+    assert!((config.fuzz_danger_decay - 0.7).abs() < 0.001);
+    assert!((config.fuzz_danger_taint_weight - 0.7).abs() < 0.001);
+    assert!((config.fuzz_danger_coverage_weight - 0.3).abs() < 0.001);
+}
