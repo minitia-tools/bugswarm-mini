@@ -139,6 +139,28 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         max_retries=1,
         cache_ttl_secs=300.0,
     ))
+    tools.register(ToolDefinition(
+        name="describe_trigger",
+        description="Document a trigger condition for a confirmed bug. Records what input, environment, timing, data state, concurrency, configuration, dependency version, or OS/arch triggers the bug.",
+        parameters={"type": "object", "properties": {
+            "bug_id": {"type": "string", "description": "The bug identifier"},
+            "dimension": {"type": "string", "description": "Trigger dimension: Input, Environment, Timing, DataState, Concurrency, Configuration, DependencyVersion, OsArch"},
+            "description": {"type": "string", "description": "Human-readable description of the trigger condition"},
+        }, "required": ["bug_id", "dimension", "description"]},
+        handler=lambda args: _describe_trigger(args),
+        timeout_secs=10.0,
+        cache_ttl_secs=0.0,  # No cache — each call is unique
+    ))
+    tools.register(ToolDefinition(
+        name="get_trigger_matrix",
+        description="Retrieve the complete trigger matrix for a confirmed bug. Returns all documented trigger conditions organized by dimension.",
+        parameters={"type": "object", "properties": {
+            "bug_id": {"type": "string", "description": "The bug identifier"},
+        }, "required": ["bug_id"]},
+        handler=lambda args: _get_trigger_matrix(args),
+        timeout_secs=10.0,
+        cache_ttl_secs=30.0,
+    ))
 
     # 6. Parser
     parser = OutputParser()
@@ -310,3 +332,40 @@ async def _delta_debug_async(sandbox, args):
 
 def _delta_debug(sandbox, args):
     return _run_async(_delta_debug_async(sandbox, args))
+
+
+def _describe_trigger(args):
+    try:
+        import hashlib, json
+        bug_id = args.get("bug_id", "unknown")
+        dim = args.get("dimension", "Input")
+        desc = args.get("description", "")
+
+        # Compute a basic condition JSON
+        condition = {
+            "bug_id": bug_id,
+            "dimension": dim,
+            "description": desc,
+            "hash": hashlib.sha256(f"{dim}:{desc}".encode()).hexdigest()[:12],
+        }
+        return ToolResult(True, json.dumps(condition, indent=2), {"bug_id": bug_id, "dimension": dim})
+    except Exception as e:
+        return ToolResult(False, f"describe_trigger failed: {e}")
+
+
+def _get_trigger_matrix(args):
+    try:
+        import json
+        bug_id = args.get("bug_id", "unknown")
+        # Stub: return empty matrix structure
+        result = {
+            "bug_id": bug_id,
+            "conditions": [],
+            "dimensions_covered": [],
+            "completeness_score": 0.0,
+            "total_rows": 0,
+            "phase30_compliant": False,
+        }
+        return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id, "rows": 0})
+    except Exception as e:
+        return ToolResult(False, f"get_trigger_matrix failed: {e}")

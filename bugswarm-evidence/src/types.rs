@@ -21,6 +21,10 @@ pub enum NodeKind {
     Agent,
     /// A confirmed vulnerability (aggregate of Claim + SandboxRun).
     ConfirmedBug,
+    /// Trigger matrix for a confirmed bug (8-dimension trigger documentation).
+    TriggerMatrix,
+    /// A single trigger condition row in a trigger matrix.
+    TriggerCondition,
 }
 
 /// An evidence node in the graph.
@@ -67,6 +71,12 @@ pub enum EdgeKind {
     Verifies,
     /// A confirmed bug aggregates multiple nodes.
     Aggregates,
+    /// Connects a TriggerCondition to its TriggerMatrix.
+    Triggers,
+    /// Which layer contributed this trigger condition.
+    ContributedBy,
+    /// Two trigger conditions are semantically equivalent.
+    ConditionEquivalent,
 }
 
 /// An edge in the evidence graph.
