@@ -134,6 +134,19 @@ class CPGClient:
             raise RuntimeError(f"CPG index failed: {stderr[:200]}")
         return CPGStats.from_json(json.loads(stdout))
 
+    async def danger_map(self, repo_path: Path, decay: float = 0.7) -> dict:
+        """Request a danger map from the CPG daemon.
+
+        Returns dict with keys: num_entries, sink_count, entries, decay_factor, timestamp.
+        Each entry is {address: str, danger_score: float}.
+        """
+        stdout, stderr, rc = await self._run(
+            "danger-map", "--repo", str(repo_path), "--decay", str(decay),
+        )
+        if rc != 0:
+            raise RuntimeError(f"CPG danger_map failed: {stderr[:200]}")
+        return json.loads(stdout)
+
     async def test_file(self, file_path: Path) -> CPGStats:
         """Test-parse a single file."""
         stdout, stderr, rc = await self._run("test", "--file", str(file_path))

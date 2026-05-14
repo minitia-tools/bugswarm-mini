@@ -1,5 +1,41 @@
 use serde::{Deserialize, Serialize};
 
+/// A single danger map entry as received from the CPG daemon in JSON form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DangerMapEntryJson {
+    pub address: String,
+    pub danger_score: f32,
+}
+
+/// Full danger map response from the CPG daemon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DangerMapResponse {
+    pub num_entries: usize,
+    pub sink_count: usize,
+    pub decay_factor: f32,
+    pub entries: Vec<DangerMapEntryJson>,
+    pub timestamp: String,
+}
+
+impl DangerMapResponse {
+    /// Convert JSON-formatted entries into the internal [`DangerMap`].
+    pub fn to_danger_map(&self) -> DangerMap {
+        let pairs: Vec<(u64, f32)> = self
+            .entries
+            .iter()
+            .map(|e| {
+                let addr_str = e
+                    .address
+                    .trim_start_matches("0x")
+                    .trim_start_matches("0X");
+                let addr = u64::from_str_radix(addr_str, 16).unwrap_or(0);
+                (addr, e.danger_score)
+            })
+            .collect();
+        DangerMap::from_pairs(pairs)
+    }
+}
+
 /// A sorted map of (address, danger_score) pairs used for taint-guided
 /// fuzzing prioritization.
 #[derive(Debug, Clone)]

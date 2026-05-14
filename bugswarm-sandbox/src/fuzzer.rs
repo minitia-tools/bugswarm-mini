@@ -530,6 +530,16 @@ impl FuzzController {
         self.danger_map = map;
     }
 
+    /// Load a danger map from a CPG JSON response.
+    pub fn load_danger_map_from_json(&mut self, response: &crate::danger_map::DangerMapResponse) {
+        self.danger_map = response.to_danger_map();
+        log::info!(
+            "Danger map loaded: {} entries, {} sinks",
+            response.num_entries,
+            response.sink_count
+        );
+    }
+
     /// Compute a combined power score from coverage rarity and the danger
     /// score at `address`.
     pub fn compute_power_score(&self, address: u64, coverage_rarity: f32) -> f32 {

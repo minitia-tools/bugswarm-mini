@@ -30,7 +30,11 @@ struct DaemonRequest {
     to_func: String,
     #[serde(default)]
     prune: bool,
+    #[serde(default = "default_decay")]
+    decay: f32,
 }
+
+fn default_decay() -> f32 { 0.7 }
 
 #[derive(Debug, Serialize)]
 struct DaemonResponse {
@@ -192,6 +196,31 @@ fn process_request(req: &DaemonRequest, cache: &CpgCache) -> DaemonResponse {
 
         "health" => {
             DaemonResponse { success: true, data: None, error: None }
+        }
+
+        "danger_map" => {
+            match cache.get_or_index(&req.repo) {
+                Ok(cpg) => {
+                    let danger_map = crate::danger_map::danger_map_from_graph(&cpg, req.decay);
+                    let entries: Vec<serde_json::Value> = danger_map.iter().map(|(addr, score)| {
+                        serde_json::json!({"address": format!("0x{:x}", addr), "danger_score": score})
+                    }).collect();
+                    let sinks_used: Vec<&str> = crate::danger_map::DEFAULT_SINKS.to_vec();
+                    let source_count = entries.len();
+                    let sink_count = sinks_used.len();
+                    let data = serde_json::json!({
+                        "num_entries": entries.len(),
+                        "sink_count": sink_count,
+                        "source_count": source_count,
+                        "decay_factor": req.decay,
+                        "entries": entries,
+                        "sinks": sinks_used,
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                    });
+                    DaemonResponse { success: true, data: Some(data), error: None }
+                }
+                Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
+            }
         }
 
         _ => DaemonResponse {

@@ -78,6 +78,15 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Compute a danger map for taint-guided fuzzing prioritization.
+    DangerMap {
+        #[arg(short, long)]
+        repo: PathBuf,
+
+        #[arg(long, default_value = "0.7")]
+        decay: f32,
+    },
+
     /// Run as a daemon listening on a Unix socket.
     RunServer {
         /// Unix socket path.
@@ -169,6 +178,24 @@ async fn main() -> anyhow::Result<()> {
             parser::index_directory(&mut cpg, &repo)?;
             let stats = cpg.stats();
             println!("{}", serde_json::to_string_pretty(&stats)?);
+        }
+
+        Commands::DangerMap { repo, decay } => {
+            let mut cpg = CodePropertyGraph::new();
+            parser::index_directory(&mut cpg, &repo)?;
+            let danger_map = bugswarm_cpg::danger_map::danger_map_from_graph(&cpg, decay);
+            let sinks_used: Vec<&str> = bugswarm_cpg::danger_map::DEFAULT_SINKS.to_vec();
+            let entries: Vec<serde_json::Value> = danger_map.iter().map(|(addr, score)| {
+                serde_json::json!({"address": format!("0x{:x}", addr), "danger_score": score})
+            }).collect();
+            let result = serde_json::json!({
+                "num_entries": entries.len(),
+                "sink_count": sinks_used.len(),
+                "decay_factor": decay,
+                "entries": entries,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            println!("{}", serde_json::to_string(&result)?);
         }
 
         Commands::Test { file } => {
