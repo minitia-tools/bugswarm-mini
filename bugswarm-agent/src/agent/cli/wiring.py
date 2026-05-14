@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import structlog
 from pathlib import Path
 from gateway.types import GatewayConfig, ProviderType
@@ -125,6 +126,18 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
             "required": ["function_name"]},
         handler=lambda args: _trace_dependency(cpg, config.repo, args),
         timeout_secs=30.0, cache_ttl_secs=15.0,
+    ))
+    tools.register(ToolDefinition(
+        name="delta_debug",
+        description="Minimize a crashing input using delta debugging (ddmin). Returns the minimal reproduction by systematically removing irrelevant bytes.",
+        parameters={"type": "object", "properties": {
+            "input_base64": {"type": "string", "description": "Base64-encoded crashing input to minimize"},
+            "max_iterations": {"type": "integer", "description": "Maximum ddmin iterations (default: 200)"},
+        }, "required": ["input_base64"]},
+        handler=lambda args: _delta_debug(sandbox, args),
+        timeout_secs=60.0,
+        max_retries=1,
+        cache_ttl_secs=300.0,
     ))
 
     # 6. Parser
@@ -281,3 +294,19 @@ async def _trace_dependency_async(cpg, repo, args):
 
 def _trace_dependency(cpg, repo, args):
     return _run_async(_trace_dependency_async(cpg, repo, args))
+
+
+async def _delta_debug_async(sandbox, args):
+    try:
+        input_b64 = args.get("input_base64", "")
+        input_bytes = base64.b64decode(input_b64)
+        max_iter = int(args.get("max_iterations", 200))
+        result = await sandbox.delta_debug(input_bytes, max_iter)
+        import json
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"delta_debug failed: {e}")
+
+
+def _delta_debug(sandbox, args):
+    return _run_async(_delta_debug_async(sandbox, args))

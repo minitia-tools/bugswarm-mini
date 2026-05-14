@@ -246,6 +246,62 @@ class SandboxClient:
             except OSError:
                 pass
 
+    # ─── Delta Debugging ───
+
+    async def delta_debug(self, input_bytes: bytes, max_iterations: int = 200,
+                          timeout_secs: int = 30) -> dict:
+        """Run delta debugging to minimize a crashing input.
+
+        Args:
+            input_bytes: The crashing input bytes to minimize
+            max_iterations: Maximum ddmin iterations
+            timeout_secs: Timeout in seconds
+
+        Returns dict with: minimized (base64), original_size, minimized_size,
+                          reduction_ratio, iterations, is_1_minimal, elapsed_ms
+        """
+        import base64
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.bin', delete=False) as f:
+            f.write(input_bytes)
+            input_path = f.name
+
+        try:
+            stdout, stderr, rc = await self._run(
+                "delta",
+                "--input", input_path,
+                "--max-iterations", str(max_iterations),
+                "--timeout", str(timeout_secs),
+            )
+            result = json.loads(stdout)
+            return result
+        except asyncio.TimeoutError:
+            return {
+                "minimized": base64.b64encode(input_bytes).decode(),
+                "original_size": len(input_bytes),
+                "minimized_size": len(input_bytes),
+                "reduction_ratio": 0.0,
+                "iterations": 0,
+                "is_1_minimal": False,
+                "elapsed_ms": 0,
+                "error": "timeout",
+            }
+        except Exception as e:
+            return {
+                "minimized": base64.b64encode(input_bytes).decode(),
+                "original_size": len(input_bytes),
+                "minimized_size": len(input_bytes),
+                "reduction_ratio": 0.0,
+                "iterations": 0,
+                "is_1_minimal": False,
+                "elapsed_ms": 0,
+                "error": str(e)[:200],
+            }
+        finally:
+            try:
+                Path(input_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
     # ─── Health Check ───
 
     async def health_check(self) -> bool:

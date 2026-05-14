@@ -155,6 +155,13 @@ pub struct SandboxConfig {
     /// Weight for coverage rarity in power schedule (computed as 1.0 - taint_weight).
     #[serde(default = "default_fuzz_danger_coverage_weight")]
     pub fuzz_danger_coverage_weight: f32,
+
+    /// Delta debugging max iterations.
+    #[serde(default = "default_delta_max_iterations")]
+    pub delta_max_iterations: u32,
+    /// Delta debugging timeout in seconds.
+    #[serde(default = "default_delta_timeout")]
+    pub delta_timeout_secs: u64,
 }
 
 fn default_fuzz_danger_decay() -> f32 { 0.7 }
@@ -179,6 +186,8 @@ fn default_fuzz_timeout() -> u64 { 1000 }
 fn default_fuzz_memory() -> u64 { 2048 }
 fn default_fuzz_duration() -> u64 { 3600 }
 fn default_fuzz_max_crashes() -> u64 { 100 }
+fn default_delta_max_iterations() -> u32 { 200 }
+fn default_delta_timeout() -> u64 { 30 }
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -216,6 +225,8 @@ impl Default for SandboxConfig {
             fuzz_danger_decay: default_fuzz_danger_decay(),
             fuzz_danger_taint_weight: default_fuzz_danger_taint_weight(),
             fuzz_danger_coverage_weight: default_fuzz_danger_coverage_weight(),
+            delta_max_iterations: default_delta_max_iterations(),
+            delta_timeout_secs: default_delta_timeout(),
         }
     }
 }

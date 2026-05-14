@@ -12,8 +12,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info, warn};
 
-use crate::config::{ExecutionReceipt, SandboxConfig};
+use crate::config::{ExecutionReceipt, ExecutionStatus, SandboxConfig};
 use crate::container::ContainerManager;
+use crate::delta::{DeltaConfig, DeltaMinimizer, OracleFn};
 use crate::error::SandboxResult;
 use crate::fuzzer::{FuzzRequest, FuzzResponse};
 
@@ -28,6 +29,29 @@ struct DaemonRequest {
     flaky: bool,
     #[serde(default)]
     count: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeltaRequest {
+    input: String,
+    #[serde(default)]
+    max_iterations: u32,
+    #[serde(default)]
+    timeout_secs: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct DeltaResponse {
+    success: bool,
+    minimized: String,
+    original_size: usize,
+    minimized_size: usize,
+    reduction_ratio: f64,
+    iterations: u32,
+    is_1_minimal: bool,
+    elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +171,65 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                         }
                     }
                     Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid FuzzRequest: {}", e)) },
+                }
+            }
+            "delta" => {
+                match serde_json::from_str::<DeltaRequest>(line.trim()) {
+                    Ok(delta_req) => {
+                        let input_bytes = hex::decode(&delta_req.input).unwrap_or_default();
+                        let max_iterations = if delta_req.max_iterations > 0 {
+                            delta_req.max_iterations
+                        } else {
+                            manager.config.delta_max_iterations
+                        };
+                        let timeout_secs = if delta_req.timeout_secs > 0 {
+                            delta_req.timeout_secs
+                        } else {
+                            manager.config.delta_timeout_secs
+                        };
+                        let config = DeltaConfig {
+                            max_iterations,
+                            timeout_secs,
+                            ..DeltaConfig::default()
+                        };
+                        let minimizer = DeltaMinimizer::new(config);
+
+                        let mgr = manager.clone();
+                        let oracle: OracleFn = std::sync::Arc::new(move |test_input: &[u8]| -> bool {
+                            let poc_str = String::from_utf8_lossy(test_input).to_string();
+                            let handle = tokio::runtime::Handle::current();
+                            match handle.block_on(mgr.execute(&poc_str, &std::collections::HashMap::new(), false)) {
+                                Ok(receipt) => receipt.status == ExecutionStatus::Passed,
+                                Err(_) => false,
+                            }
+                        });
+
+                        let result = minimizer.minimize(&input_bytes, &oracle);
+
+                        let resp = DeltaResponse {
+                            success: true,
+                            minimized: hex::encode(&result.minimized),
+                            original_size: result.original_size,
+                            minimized_size: result.minimized_size,
+                            reduction_ratio: result.reduction_ratio,
+                            iterations: result.iterations,
+                            is_1_minimal: result.is_1_minimal,
+                            elapsed_ms: result.elapsed_ms,
+                            error: None,
+                        };
+
+                        let json = serde_json::to_string(&resp).unwrap_or_default();
+                        DaemonResponse {
+                            success: true,
+                            receipt: None,
+                            error: Some(json),
+                        }
+                    }
+                    Err(e) => DaemonResponse {
+                        success: false,
+                        receipt: None,
+                        error: Some(format!("Invalid DeltaRequest: {}", e)),
+                    },
                 }
             }
             _ => {
