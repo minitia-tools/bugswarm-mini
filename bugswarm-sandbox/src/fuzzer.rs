@@ -54,6 +54,12 @@ pub struct FuzzConfig {
     pub enable_splice: bool,
     /// Additional environment variables injected into the container.
     pub env_vars: HashMap<String, String>,
+    /// Enable taint-guided prioritization via danger map.
+    #[serde(default)]
+    pub danger_map_enabled: bool,
+    /// Configuration for blending danger scores into the power schedule.
+    #[serde(default)]
+    pub danger_config: Option<crate::danger_map::DangerConfig>,
 }
 
 impl Default for FuzzConfig {
@@ -72,6 +78,8 @@ impl Default for FuzzConfig {
             enable_havoc: true,
             enable_splice: true,
             env_vars: HashMap::new(),
+            danger_map_enabled: false,
+            danger_config: None,
         }
     }
 }
@@ -120,6 +128,10 @@ pub struct CampaignStats {
     pub pending_total: u64,
     /// AFL stability percentage.
     pub stability_pct: f64,
+    /// Number of mutations that reached a security-sensitive sink (danger > 0.5).
+    pub sink_mutations_count: u64,
+    /// Rolling average of danger scores across all unique crashes.
+    pub avg_danger_score: f32,
 }
 
 /// High-level crash classification derived from the terminating signal.
@@ -378,6 +390,8 @@ pub struct FuzzController {
     dedup: DedupEngine,
     crashes: Vec<FuzzCrash>,
     started_at: DateTime<Utc>,
+    danger_map: crate::danger_map::DangerMap,
+    danger_config: crate::danger_map::DangerConfig,
 }
 
 impl FuzzController {
@@ -385,6 +399,7 @@ impl FuzzController {
     /// the `Provisioning` state.
     pub fn new(config: FuzzConfig, dedup_config: DedupConfig) -> Self {
         let campaign_id = CampaignId(Uuid::new_v4());
+        let danger_config = config.danger_config.clone().unwrap_or_default();
         Self {
             campaign_id,
             config,
@@ -405,10 +420,14 @@ impl FuzzController {
                 pending_favs: 0,
                 pending_total: 0,
                 stability_pct: 0.0,
+                sink_mutations_count: 0,
+                avg_danger_score: 0.0,
             },
             dedup: DedupEngine::new(dedup_config),
             crashes: Vec::new(),
             started_at: Utc::now(),
+            danger_map: crate::danger_map::DangerMap::new(),
+            danger_config,
         }
     }
 
@@ -438,6 +457,8 @@ impl FuzzController {
         stderr: String,
         crash_addr: u64,
     ) -> Option<FuzzCrash> {
+        let danger_score = self.danger_map.lookup(crash_addr);
+
         if self.dedup.is_unique(&stack_trace) {
             let normalized = self.dedup.normalize_stack_trace(&stack_trace);
             let stack_hash = format!("{:x}", Sha256::digest(normalized.as_bytes()));
@@ -478,6 +499,16 @@ impl FuzzController {
                 artifact_path: format!("crashes/{}", crash_id),
             };
 
+            if danger_score > 0.5 {
+                self.stats.sink_mutations_count += 1;
+            }
+            let n_before = self.stats.unique_crashes as f32;
+            self.stats.avg_danger_score = if n_before > 0.0 {
+                (self.stats.avg_danger_score * n_before + danger_score) / (n_before + 1.0)
+            } else {
+                danger_score
+            };
+
             self.stats.unique_crashes += 1;
             self.crashes.push(crash.clone());
             Some(crash)
@@ -485,6 +516,22 @@ impl FuzzController {
             self.stats.duplicate_crashes += 1;
             None
         }
+    }
+
+    /// Load (or replace) the danger map from raw (address, score) pairs.
+    /// The scores are automatically normalized.
+    pub fn load_danger_map(&mut self, pairs: Vec<(u64, f32)>) {
+        let mut map = crate::danger_map::DangerMap::from_pairs(pairs);
+        map.normalize();
+        self.danger_map = map;
+    }
+
+    /// Compute a combined power score from coverage rarity and the danger
+    /// score at `address`.
+    pub fn compute_power_score(&self, address: u64, coverage_rarity: f32) -> f32 {
+        let danger_score = self.danger_map.lookup(address);
+        self.danger_config
+            .compute_power_schedule(coverage_rarity, danger_score)
     }
 
     /// Mark the campaign as `Completed` (normal termination).
@@ -715,6 +762,8 @@ impl AFLStatsParser {
             pending_favs: pending_favs.unwrap_or(0),
             pending_total: pending_total.unwrap_or(0),
             stability_pct: stability.unwrap_or(0.0),
+            sink_mutations_count: 0,
+            avg_danger_score: 0.0,
         })
     }
 }
@@ -1124,6 +1173,8 @@ impl Default for CampaignStats {
             pending_favs: 0,
             pending_total: 0,
             stability_pct: 0.0,
+            sink_mutations_count: 0,
+            avg_danger_score: 0.0,
         }
     }
 }
