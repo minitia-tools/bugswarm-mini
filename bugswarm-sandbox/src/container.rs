@@ -22,6 +22,7 @@ use crate::config::{
     SandboxConfig, StackFrame, TimeoutReason, ALLOWED_ENV_VARS, BLOCKED_ENV_VARS, TMPFS_MOUNTS,
 };
 use crate::error::{SandboxError, SandboxResult};
+use crate::fuzzer::{DedupConfig, FuzzConfig, FuzzController, FuzzResponse, FuzzerError};
 use crate::scanner::OutputScanner;
 
 /// Full output from a container execution.
@@ -591,6 +592,69 @@ impl ContainerManager {
     #[allow(dead_code)]
     fn compute_memory_growth(_samples: &[(f64, u64)]) -> (f64, f64) {
         (0.0, 0.0)
+    }
+
+    /// Start a fuzzing campaign inside this container.
+    /// Launches AFL++ with the given fuzz configuration.
+    /// Uses FuzzController for campaign lifecycle management.
+    pub async fn fuzz(&self, fuzz_config: &FuzzConfig) -> std::result::Result<FuzzResponse, FuzzerError> {
+        info!(
+            "Starting fuzzer: target={}, timeout={}ms, memory={}MB",
+            fuzz_config.target_path,
+            fuzz_config.exec_timeout_ms,
+            fuzz_config.memory_limit_mb
+        );
+
+        // Create and start the campaign controller
+        let mut controller = FuzzController::new(fuzz_config.clone(), DedupConfig::default());
+        controller.start()?;
+
+        // Build AFL++ command from the controller
+        let afl_cmd = controller.build_afl_command("/corpus/in", "/corpus/out");
+        let cmd_shell = afl_cmd.join(" ");
+
+        let stream_id = Uuid::new_v4().to_string();
+        let container_name = format!("bugswarm-fuzz-{}", controller.campaign_id());
+
+        let host_config = HostConfig {
+            memory: Some(i64::MAX),
+            auto_remove: Some(true),
+            mounts: Some(vec![
+                Mount {
+                    target: Some("/corpus/in".to_string()),
+                    typ: Some(MountTypeEnum::BIND),
+                    source: Some("/fuzz/corpus/in".to_string()),
+                    ..Default::default()
+                },
+                Mount {
+                    target: Some("/corpus/out".to_string()),
+                    typ: Some(MountTypeEnum::BIND),
+                    source: Some("/fuzz/corpus/out".to_string()),
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        };
+
+        let container_config = ContainerConfig {
+            image: Some(self.config.fuzz_image.clone()),
+            cmd: Some(vec!["sh".into(), "-c".into(), cmd_shell]),
+            host_config: Some(host_config),
+            ..Default::default()
+        };
+
+        self.docker.create_container(
+            Some(CreateContainerOptions { name: &container_name, platform: None }),
+            container_config,
+        ).await.map_err(|e| FuzzerError::ContainerError(format!("Fuzz container create failed: {}", e)))?;
+
+        self.docker.start_container(&container_name, None::<StartContainerOptions<&str>>)
+            .await
+            .map_err(|e| FuzzerError::ContainerError(format!("Fuzz container start failed: {}", e)))?;
+
+        info!("Fuzz campaign started: container={}", container_name);
+
+        Ok(controller.to_response(stream_id))
     }
 
     pub async fn independent_reexecute(&self, poc_content: &str, env_vars: &HashMap<String, String>) -> SandboxResult<ExecutionReceipt> {

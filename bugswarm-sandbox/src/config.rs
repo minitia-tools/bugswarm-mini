@@ -115,6 +115,30 @@ pub struct SandboxConfig {
     /// Custom sanitizer image. If None, auto-selects based on language.
     #[serde(default)]
     pub sanitizer_image: Option<String>,
+
+    /// Whether the fuzzer subsystem is enabled.
+    #[serde(default = "default_true")]
+    pub fuzzer_enabled: bool,
+
+    /// Docker image for fuzzing containers (includes AFL++).
+    #[serde(default = "default_fuzz_image")]
+    pub fuzz_image: String,
+
+    /// Fuzzer execution timeout per input (ms).
+    #[serde(default = "default_fuzz_timeout")]
+    pub fuzz_exec_timeout_ms: u64,
+
+    /// Fuzzer memory limit per target (MB).
+    #[serde(default = "default_fuzz_memory")]
+    pub fuzz_memory_limit_mb: u64,
+
+    /// Default fuzz campaign duration (seconds).
+    #[serde(default = "default_fuzz_duration")]
+    pub fuzz_max_duration_secs: u64,
+
+    /// Maximum unique crashes before auto-stop.
+    #[serde(default = "default_fuzz_max_crashes")]
+    pub fuzz_max_crashes: u64,
 }
 
 fn default_wall_timeout() -> u64 { DEFAULT_WALL_CLOCK_TIMEOUT_SECS }
@@ -130,6 +154,11 @@ fn default_image() -> String { "bugswarm/sandbox-python:latest".into() }
 fn default_workdir() -> String { "/sandbox".into() }
 fn default_reruns() -> u32 { DEFAULT_RERUN_COUNT }
 fn default_flaky_rate() -> f64 { MIN_FLAKY_FAILURE_RATE }
+fn default_fuzz_image() -> String { "bugswarm/sandbox-fuzz:latest".into() }
+fn default_fuzz_timeout() -> u64 { 1000 }
+fn default_fuzz_memory() -> u64 { 2048 }
+fn default_fuzz_duration() -> u64 { 3600 }
+fn default_fuzz_max_crashes() -> u64 { 100 }
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -157,6 +186,12 @@ impl Default for SandboxConfig {
             seccomp_profile_path: None,
             sanitizer_enabled: default_true(),
             sanitizer_image: None,
+            fuzzer_enabled: default_true(),
+            fuzz_image: default_fuzz_image(),
+            fuzz_exec_timeout_ms: default_fuzz_timeout(),
+            fuzz_memory_limit_mb: default_fuzz_memory(),
+            fuzz_max_duration_secs: default_fuzz_duration(),
+            fuzz_max_crashes: default_fuzz_max_crashes(),
         }
     }
 }

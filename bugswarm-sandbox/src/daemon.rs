@@ -15,6 +15,7 @@ use tracing::{error, info, warn};
 use crate::config::{ExecutionReceipt, SandboxConfig};
 use crate::container::ContainerManager;
 use crate::error::SandboxResult;
+use crate::fuzzer::{FuzzRequest, FuzzResponse};
 
 #[derive(Debug, Deserialize)]
 struct DaemonRequest {
@@ -129,6 +130,24 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
             }
             "health" => {
                 DaemonResponse { success: true, receipt: None, error: None }
+            }
+            "fuzz" => {
+                match serde_json::from_str::<FuzzRequest>(line.trim()) {
+                    Ok(fuzz_req) => {
+                        match manager.fuzz(&fuzz_req.config).await {
+                            Ok(fuzz_resp) => {
+                                let json = serde_json::to_string(&fuzz_resp).unwrap_or_default();
+                                DaemonResponse {
+                                    success: true,
+                                    receipt: None,
+                                    error: Some(json),
+                                }
+                            }
+                            Err(e) => DaemonResponse { success: false, receipt: None, error: Some(e.to_string()) },
+                        }
+                    }
+                    Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid FuzzRequest: {}", e)) },
+                }
             }
             _ => {
                 DaemonResponse { success: false, receipt: None, error: Some(format!("Unknown method: {}", request.method)) }
