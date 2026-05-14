@@ -453,7 +453,11 @@ impl DangerFeed {
     }
 
     /// Record an execution, return the computed power score.
+    /// If the danger feed is disabled, returns 0.0 without recording.
     pub fn record_execution(&mut self, address: u64, coverage_rarity: f32) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
         let power_score = self.compute_score(address, coverage_rarity);
         let danger_score = self.map.lookup(address);
         self.danger_scores.push(danger_score);
@@ -603,6 +607,9 @@ impl FuzzController {
         stderr: String,
         crash_addr: u64,
     ) -> Option<FuzzCrash> {
+        if self.state != CampaignState::Running {
+            return None;
+        }
         let danger_score = self.danger_feed.map.lookup(crash_addr);
 
         // Track in DangerFeed
@@ -658,6 +665,12 @@ impl FuzzController {
                 danger_score
             };
 
+            // Update danger distribution stats
+            let n_after = n_before as u64 + 1;
+            self.stats.danger_score_min = if n_before == 0.0 { danger_score } else { self.stats.danger_score_min.min(danger_score) };
+            self.stats.danger_score_max = self.stats.danger_score_max.max(danger_score);
+            self.stats.danger_score_p50 = if n_before == 0.0 { danger_score } else { (self.stats.danger_score_p50 * n_before as f32 + danger_score) / (n_before + 1.0) };
+
             self.stats.unique_crashes += 1;
             self.crashes.push(crash.clone());
             Some(crash)
@@ -684,7 +697,10 @@ impl FuzzController {
 
     /// Record a power score computation for statistics tracking.
     pub fn record_power_score(&mut self, address: u64, coverage_rarity: f32) -> f32 {
-        self.danger_feed.record_execution(address, coverage_rarity)
+        let score = self.danger_feed.record_execution(address, coverage_rarity);
+        self.stats.power_score_computations += 1;
+        self.stats.power_scores_total += score as f64;
+        score
     }
 
     /// Load danger map from configured source (shared memory or empty).
