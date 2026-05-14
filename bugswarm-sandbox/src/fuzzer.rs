@@ -192,6 +192,16 @@ pub struct FuzzCrash {
     pub artifact_path: String,
 }
 
+/// Data needed to create a trigger condition (serializable, no evidence dep).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerConditionData {
+    pub bug_id: String,
+    pub dimension: String,
+    pub description: String,
+    pub layer: String,
+    pub normalized: String,
+}
+
 /// Deduplication configuration controlling how stack-traces are normalized.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -857,6 +867,25 @@ impl FuzzController {
     /// Alias for generate_afl_command (test compatibility).
     pub fn build_afl_command(&self, _input_dir: &str, _output_dir: &str) -> Vec<String> {
         self.generate_afl_command()
+    }
+
+    /// Extract trigger condition data from all crashes in this campaign.
+    pub fn get_trigger_conditions(&self) -> Vec<TriggerConditionData> {
+        self.crashes.iter().map(|crash| {
+            TriggerConditionData {
+                bug_id: format!("fuzz-{}", self.campaign_id),
+                dimension: "Input".to_string(),
+                description: format!(
+                    "Fuzzer: {} at 0x{:x} (input {}B)",
+                    crash.signal_name, crash.crash_address, crash.input_size
+                ),
+                layer: "fuzzer".to_string(),
+                normalized: format!(
+                    "fuzzer crash {} at 0x{:x}",
+                    crash.signal_name, crash.crash_address
+                ).to_lowercase(),
+            }
+        }).collect()
     }
 
     /// Pause an active campaign (state Running → Paused).

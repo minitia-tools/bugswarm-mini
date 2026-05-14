@@ -29,7 +29,7 @@ async def cmd_run(config: CLIConfig) -> int:
         return 0 if not warnings else 2
 
     # Wire
-    engine, persistence, gateway = wire_everything(config)
+    engine, persistence, gateway, evidence = wire_everything(config)
     logger.info("bugswarm_run_start", repo=str(config.repo), persona=config.persona.value,
                 model=config.model, provider=config.provider)
 

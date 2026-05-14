@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "bugswarm-sandbox",
+    "bugswarm-cpg",
+    "bugswarm-evidence",
+]
+resolver = "2"

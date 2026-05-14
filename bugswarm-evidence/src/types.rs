@@ -133,6 +133,33 @@ pub struct GraphStats {
     pub weakest_claim: Option<String>,
     pub consensus_echo_chambers: usize,
     pub orphaned_claims: usize,
+    pub trigger_matrices: usize,
+    pub trigger_conditions: usize,
+}
+
+impl Default for GraphStats {
+    fn default() -> Self {
+        Self {
+            total_nodes: 0,
+            total_edges: 0,
+            claims: 0,
+            predictions: 0,
+            sandbox_runs: 0,
+            code_locations: 0,
+            confirmed_bugs: 0,
+            agents: 0,
+            supports_count: 0,
+            contradicts_count: 0,
+            confirms_count: 0,
+            average_confidence: 0.0,
+            strongest_claim: None,
+            weakest_claim: None,
+            consensus_echo_chambers: 0,
+            orphaned_claims: 0,
+            trigger_matrices: 0,
+            trigger_conditions: 0,
+        }
+    }
 }
 
 /// Query filters for searching the graph.

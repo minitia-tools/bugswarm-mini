@@ -23,16 +23,11 @@ impl TriggerDimension {
     }
 
     pub fn weight(&self) -> f32 {
-        match self {
-            Self::Input => 0.30,
-            Self::Environment => 0.15,
-            Self::Timing => 0.10,
-            Self::DataState => 0.20,
-            Self::Concurrency => 0.10,
-            Self::Configuration => 0.05,
-            Self::DependencyVersion => 0.05,
-            Self::OsArch => 0.0,  // Bonus dimension, doesn't count toward completeness
-        }
+        crate::spec::TRIGGER_DIMENSION_WEIGHTS
+            .iter()
+            .find(|(d, _)| d == self)
+            .map(|(_, w)| *w)
+            .unwrap_or(0.0)
     }
 }
 
@@ -47,6 +42,21 @@ pub enum ContributionLayer {
     Symbolic,
     Delta,
     Manual,
+}
+
+impl ContributionLayer {
+    pub fn layer_name(&self) -> &'static str {
+        match self {
+            Self::Agent => "Agent",
+            Self::Fuzzer => "Fuzzer",
+            Self::Concolic => "Concolic",
+            Self::Differential => "Differential",
+            Self::Sanitizer => "Sanitizer",
+            Self::Symbolic => "Symbolic",
+            Self::Delta => "Delta",
+            Self::Manual => "Manual",
+        }
+    }
 }
 
 /// A single trigger condition contributed by a layer.
@@ -64,6 +74,9 @@ pub struct TriggerCondition {
     pub normalized: String,
     /// Which layer contributed this condition.
     pub layer: ContributionLayer,
+    /// Layers that have contributed this condition (merged on dedup).
+    #[serde(default)]
+    pub contributed_by: Vec<ContributionLayer>,
     /// Severity-specific? (e.g., "only critical when X")
     pub severity_specific: Option<u8>,
     /// Whether this condition was verified by sandbox execution.
@@ -85,6 +98,7 @@ impl TriggerCondition {
             description: desc.to_string(),
             normalized,
             layer,
+            contributed_by: vec![layer],
             severity_specific: None,
             verified: false,
             contributed_at: chrono::Utc::now().to_rfc3339(),
@@ -101,6 +115,8 @@ pub struct TriggerMatrix {
     pub conditions: Vec<TriggerCondition>,
     /// Which layers have contributed.
     pub contributing_layers: HashSet<ContributionLayer>,
+    /// Number of deduplicated (merged) conditions.
+    pub dedup_count: usize,
     /// Completeness score (0.0-1.0).
     pub completeness_score: f32,
     /// Timestamp of last update.
@@ -113,6 +129,7 @@ impl TriggerMatrix {
             bug_id: bug_id.to_string(),
             conditions: vec![],
             contributing_layers: HashSet::new(),
+            dedup_count: 0,
             completeness_score: 0.0,
             last_updated: chrono::Utc::now().to_rfc3339(),
         }
@@ -121,19 +138,28 @@ impl TriggerMatrix {
     /// Add a trigger condition, deduplicating semantically equivalent ones.
     /// Returns true if the condition was new (not a duplicate).
     pub fn add_condition(&mut self, condition: TriggerCondition) -> bool {
-        // Semantic dedup: check if an equivalent condition already exists
-        if self.conditions.iter().any(|existing| {
-            existing.dimension == condition.dimension
+        // Check for existing semantically equivalent condition
+        if let Some(existing) = self.conditions.iter_mut().find(|existing| {
+            existing.dimension == condition.dimension 
             && is_semantically_equivalent(&existing.normalized, &condition.normalized)
         }) {
-            return false; // Duplicate
+            // MERGE instead of reject: add new layer if not already present
+            for layer in &condition.contributed_by {
+                if !existing.contributed_by.contains(layer) {
+                    existing.contributed_by.push(*layer);
+                }
+            }
+            self.contributing_layers.extend(condition.contributed_by.iter().copied());
+            self.dedup_count += 1;
+            self.last_updated = chrono::Utc::now().to_rfc3339();
+            return false; // Was a duplicate (merged)
         }
-
-        self.contributing_layers.insert(condition.layer);
+        
+        self.contributing_layers.extend(condition.contributed_by.iter().copied());
         self.conditions.push(condition);
         self.recompute_completeness();
         self.last_updated = chrono::Utc::now().to_rfc3339();
-        true
+        true // Was new
     }
 
     /// Recompute the weighted completeness score.
@@ -162,7 +188,8 @@ impl TriggerMatrix {
 
     /// Check if the matrix meets the Phase 30 gate: 5+ rows, 3+ layers.
     pub fn meets_phase30_gate(&self) -> bool {
-        self.conditions.len() >= 5 && self.contributing_layers.len() >= 3
+        self.conditions.len() >= crate::spec::PHASE30_MIN_ROWS
+            && self.contributing_layers.len() >= crate::spec::PHASE30_MIN_LAYERS
     }
 
     /// Get conditions for a specific dimension.
@@ -178,41 +205,67 @@ impl TriggerMatrix {
 
 /// Normalize a human-readable trigger description for semantic comparison.
 pub fn normalize_description(desc: &str) -> String {
-    let mut s = desc.to_lowercase();
-    s = s.replace("null", "empty");
-    s = s.replace("none", "empty");
-    s = s.replace("''", "empty");
-    s = s.replace("\"\"", "empty");
-    s = s.replace(" is ", " = ");
-    s = s.replace("==", "=");
-    s = s.replace("=", " = ");
+    let s = desc.to_lowercase();
+    // Word-boundary-aware replacements
+    let s = replace_word(&s, "null", "empty");
+    let s = replace_word(&s, "none", "empty");
+    let s = replace_word(&s, "nil", "empty");
+    // Normalize quotes
+    let s = s.replace("''", "empty").replace("\"\"", "empty");
+    // Normalize whitespace and operators
+    let s = s.replace(" is ", " = ").replace("==", "=").replace(" = ", " = ");
+    // Collapse multiple spaces
     while s.contains("  ") {
-        s = s.replace("  ", " ");
+        // Use split_whitespace + join for O(n) instead of O(n^2)
+        let words: Vec<&str> = s.split_whitespace().collect();
+        return words.join(" ");
     }
     s.trim().to_string()
 }
 
+/// Replace whole-word occurrences only. "null" → "empty" but "nullify" stays.
+fn replace_word(s: &str, from: &str, to: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let from_bytes = from.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + from_bytes.len() <= bytes.len() && &bytes[i..i+from_bytes.len()] == from_bytes {
+            // Check word boundaries
+            let left_ok = i == 0 || !bytes[i-1].is_ascii_alphanumeric();
+            let right_ok = i + from_bytes.len() >= bytes.len() || !bytes[i+from_bytes.len()].is_ascii_alphanumeric();
+            if left_ok && right_ok {
+                result.push_str(to);
+                i += from_bytes.len();
+                continue;
+            }
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
 /// Quick hash for normalized descriptions.
 fn normalize_hash(s: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    format!("{:016x}", h.finish())
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    format!("{:x}", h.finalize())[..16].to_string() // First 16 hex chars for brevity
 }
 
 /// Check if two normalized descriptions are semantically equivalent.
 pub fn is_semantically_equivalent(a: &str, b: &str) -> bool {
     if a == b { return true; }
-    // Fuzzy: one contains the other
-    if a.contains(b) || b.contains(a) { return true; }
-    // Token overlap > 80%
-    let tokens_a: HashSet<&str> = a.split_whitespace().collect();
-    let tokens_b: HashSet<&str> = b.split_whitespace().collect();
-    if tokens_a.is_empty() || tokens_b.is_empty() { return false; }
-    let intersection = tokens_a.intersection(&tokens_b).count();
-    let union = tokens_a.union(&tokens_b).count();
-    (intersection as f64 / union as f64) > 0.8
+    if a.len() < crate::spec::DEDUP_MIN_FUZZY_LENGTH || b.len() < crate::spec::DEDUP_MIN_FUZZY_LENGTH {
+        return false; // Short strings require exact match
+    }
+    // Truncate for performance
+    let a_trunc = &a[..a.len().min(crate::spec::DEDUP_MAX_DESCRIPTION_CHARS)];
+    let b_trunc = &b[..b.len().min(crate::spec::DEDUP_MAX_DESCRIPTION_CHARS)];
+    // Jaro-Winkler similarity
+    let sim = strsim::jaro_winkler(a_trunc, b_trunc);
+    sim >= crate::spec::DEDUP_JARO_WINKLER_THRESHOLD
 }
 
 /// Trigger Matrix Manager — stores all matrices indexed by bug_id.
@@ -316,7 +369,7 @@ mod tests {
         let mut m = TriggerMatrix::new("BUG-001");
         m.add_condition(TriggerCondition::new("BUG-001", TriggerDimension::Input, "x=null", ContributionLayer::Fuzzer));
         m.add_condition(TriggerCondition::new("BUG-001", TriggerDimension::Environment, "DEBUG=true", ContributionLayer::Agent));
-        // Input (0.30) + Environment (0.15) = 0.45 / 0.95 = ~0.473
+        // Input (0.30) + Environment (0.15) = 0.45 / 1.00 = 0.45
         assert!(m.completeness_score > 0.4 && m.completeness_score < 0.55);
     }
 
@@ -375,7 +428,28 @@ mod tests {
         let total: f32 = TriggerDimension::all().iter()
             .filter(|d| **d != TriggerDimension::OsArch)
             .map(|d| d.weight()).sum();
-        assert!((total - 0.95).abs() < 0.01); // OsArch excluded
+        assert!((total - 1.0).abs() < 0.01); // OsArch excluded
+    }
+
+    #[test]
+    fn test_spec_weights_match_plan() {
+        let weights: Vec<(TriggerDimension, f32)> = crate::spec::TRIGGER_DIMENSION_WEIGHTS.to_vec();
+        // Verify all 8 dimensions are present
+        assert_eq!(weights.len(), 8);
+        // Verify specific expected values
+        let get = |d: TriggerDimension| -> f32 {
+            weights.iter().find(|(dd,_)| *dd == d).map(|(_,w)| *w).unwrap_or(-1.0)
+        };
+        assert!((get(TriggerDimension::Input) - 0.30).abs() < 0.01);
+        assert!((get(TriggerDimension::Configuration) - 0.10).abs() < 0.01);
+        assert!((get(TriggerDimension::OsArch) - 0.00).abs() < 0.01);
+        assert!((get(TriggerDimension::DataState) - 0.20).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_phase30_gate_uses_spec_constants() {
+        assert_eq!(crate::spec::PHASE30_MIN_ROWS, 5);
+        assert_eq!(crate::spec::PHASE30_MIN_LAYERS, 3);
     }
 
     #[test]
@@ -388,5 +462,67 @@ mod tests {
             }
         }
         assert!((m.completeness_score - 1.0).abs() < 0.01, "Should be complete without OsArch");
+    }
+
+    #[test]
+    fn test_replace_word_preserves_nullify() {
+        let s = normalize_description("nullify the input");
+        assert!(s.contains("nullify"), "nullify should not become emptyify");
+    }
+
+    #[test]
+    fn test_replace_word_replaces_null() {
+        let s = normalize_description("username is null");
+        assert!(!s.contains(" null "), "null should be replaced");
+        assert!(s.contains("empty"), "null should become empty");
+    }
+
+    #[test]
+    fn test_replace_word_boundary_start() {
+        let s = normalize_description("null pointer exception");
+        assert!(s.contains("empty"), "null at start should be replaced");
+    }
+
+    #[test]
+    fn test_replace_word_boundary_end() {
+        let s = normalize_description("value is null");
+        assert!(s.contains("empty"), "null at end should be replaced");
+    }
+
+    #[test]
+    fn test_dedup_merges_layers() {
+        let mut m = TriggerMatrix::new("BUG-001");
+        let c1 = TriggerCondition::new("BUG-001", TriggerDimension::Input, "username=null", ContributionLayer::Fuzzer);
+        let c2 = TriggerCondition::new("BUG-001", TriggerDimension::Input, "username is None", ContributionLayer::Agent);
+        
+        assert!(m.add_condition(c1)); // New
+        assert!(!m.add_condition(c2)); // Merged
+        
+        let cond = &m.conditions[0];
+        assert!(cond.contributed_by.contains(&ContributionLayer::Fuzzer));
+        assert!(cond.contributed_by.contains(&ContributionLayer::Agent));
+        assert_eq!(cond.contributed_by.len(), 2);
+        assert_eq!(m.dedup_count, 1);
+        assert_eq!(m.contributing_layers.len(), 2);
+    }
+
+    #[test]
+    fn test_dedup_no_duplicate_layers() {
+        let mut m = TriggerMatrix::new("BUG-001");
+        m.add_condition(TriggerCondition::new("BUG-001", TriggerDimension::Input, "x=0", ContributionLayer::Fuzzer));
+        m.add_condition(TriggerCondition::new("BUG-001", TriggerDimension::Input, "x is 0", ContributionLayer::Fuzzer));
+        
+        let cond = &m.conditions[0];
+        assert_eq!(cond.contributed_by.len(), 1); // Fuzzer shouldn't be duplicated
+    }
+
+    #[test]
+    fn test_trigger_condition_serde_roundtrip() {
+        let tc = TriggerCondition::new("BUG-001", TriggerDimension::Input, "x=null", ContributionLayer::Fuzzer);
+        let json = serde_json::to_string(&tc).unwrap();
+        let tc2: TriggerCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(tc.id, tc2.id);
+        assert_eq!(tc.normalized, tc2.normalized);
+        assert_eq!(tc.contributed_by, tc2.contributed_by);
     }
 }

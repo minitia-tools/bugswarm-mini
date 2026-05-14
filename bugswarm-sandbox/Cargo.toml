@@ -5,6 +5,7 @@ edition = "2021"
 description = "Bug Swarm CLI — Execution Sandbox Daemon. Isolated PoC execution with cryptographic receipts."
 
 [dependencies]
+bugswarm-evidence = { path = "../bugswarm-evidence" }
 tokio = { version = "1.41", features = ["full"] }
 bollard = "0.17"
 serde = { version = "1.0", features = ["derive"] }

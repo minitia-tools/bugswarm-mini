@@ -14,6 +14,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info};
 
 use crate::graph::EvidenceGraph;
+use crate::trigger;
 use crate::types::{EvidenceQuery, NodeKind};
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +48,12 @@ struct DaemonRequest {
     sandbox_run_ids: Vec<usize>,
     #[serde(default)]
     agent_id: String,
+    #[serde(default)]
+    bug_id: String,
+    #[serde(default)]
+    dimension: String,
+    #[serde(default)]
+    layer: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,6 +186,70 @@ fn process(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
             DaemonResponse { success: true, data: None, error: None }
         }
 
+        "add_trigger_condition" => {
+            let dimension = match parse_dimension(&req.dimension) {
+                Ok(d) => d,
+                Err(e) => return DaemonResponse { success: false, data: None, error: Some(e) },
+            };
+            let layer = parse_layer(&req.layer);
+            let condition = trigger::TriggerCondition::new(
+                &req.bug_id, dimension, &req.description, layer,
+            );
+            let mut tm = graph.trigger_manager.write();
+            let is_new = tm.add_condition(condition.clone());
+            graph.add_trigger_condition(&req.bug_id, condition);
+            DaemonResponse {
+                success: true,
+                data: Some(serde_json::json!({"is_new": is_new})),
+                error: None,
+            }
+        }
+        "get_trigger_matrix" => {
+            let tm = graph.trigger_manager.read();
+            if let Some(matrix) = tm.get(&req.bug_id) {
+                DaemonResponse {
+                    success: true,
+                    data: Some(serde_json::to_value(matrix).unwrap_or_default()),
+                    error: None,
+                }
+            } else {
+                let matrix = trigger::TriggerMatrix::new(&req.bug_id);
+                DaemonResponse {
+                    success: true,
+                    data: Some(serde_json::to_value(&matrix).unwrap_or_default()),
+                    error: None,
+                }
+            }
+        }
+
         _ => DaemonResponse { success: false, data: None, error: Some(format!("Unknown method: {}", req.method)) },
+    }
+}
+
+fn parse_dimension(s: &str) -> Result<trigger::TriggerDimension, String> {
+    match s.to_lowercase().as_str() {
+        "input" | "inputtype" => Ok(trigger::TriggerDimension::Input),
+        "environment" => Ok(trigger::TriggerDimension::Environment),
+        "timing" => Ok(trigger::TriggerDimension::Timing),
+        "datastate" | "data_state" => Ok(trigger::TriggerDimension::DataState),
+        "concurrency" => Ok(trigger::TriggerDimension::Concurrency),
+        "configuration" | "config" => Ok(trigger::TriggerDimension::Configuration),
+        "dependencyversion" | "dependency" => Ok(trigger::TriggerDimension::DependencyVersion),
+        "osarch" | "os_arch" | "os" | "arch" => Ok(trigger::TriggerDimension::OsArch),
+        _ => Err(format!("Unknown dimension: {}", s)),
+    }
+}
+
+fn parse_layer(s: &str) -> trigger::ContributionLayer {
+    match s.to_lowercase().as_str() {
+        "agent" => trigger::ContributionLayer::Agent,
+        "fuzzer" => trigger::ContributionLayer::Fuzzer,
+        "concolic" => trigger::ContributionLayer::Concolic,
+        "differential" => trigger::ContributionLayer::Differential,
+        "sanitizer" => trigger::ContributionLayer::Sanitizer,
+        "symbolic" => trigger::ContributionLayer::Symbolic,
+        "delta" => trigger::ContributionLayer::Delta,
+        "manual" | "human" => trigger::ContributionLayer::Manual,
+        _ => trigger::ContributionLayer::Manual,
     }
 }

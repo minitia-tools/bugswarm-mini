@@ -8,6 +8,7 @@ description = "Bug Swarm CLI — Evidence Graph. Immutable hypergraph for agent 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+strsim = "0.11"
 hex = "0.4"
 uuid = { version = "1.11", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }

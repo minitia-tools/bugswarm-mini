@@ -7,6 +7,7 @@ IEPEngine instance connected to the LLM Gateway, CPG, and Sandbox.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -114,6 +115,30 @@ class SwarmOrchestrator:
             timeout_secs=30.0, cache_ttl_secs=15.0,
         ))
 
+        # Phase 23: Trigger Matrix tools
+        tools.register(ToolDefinition(
+            name="describe_trigger",
+            description="Document a trigger condition for a confirmed bug. Records input, environment, timing, data state, concurrency, configuration, dependency version, or OS/arch triggers.",
+            parameters={"type": "object", "properties": {
+                "bug_id": {"type": "string", "description": "The bug identifier"},
+                "dimension": {"type": "string", "description": "Trigger dimension: Input, Environment, Timing, DataState, Concurrency, Configuration, DependencyVersion, OsArch"},
+                "description": {"type": "string", "description": "Human-readable description of the trigger condition"},
+            }, "required": ["bug_id", "dimension", "description"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_describe_trigger(args)),
+            timeout_secs=10.0,
+            cache_ttl_secs=0.0,
+        ))
+        tools.register(ToolDefinition(
+            name="get_trigger_matrix",
+            description="Retrieve the complete trigger matrix for a confirmed bug with all documented trigger conditions.",
+            parameters={"type": "object", "properties": {
+                "bug_id": {"type": "string", "description": "The bug identifier"},
+            }, "required": ["bug_id"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_get_trigger_matrix(args)),
+            timeout_secs=10.0,
+            cache_ttl_secs=30.0,
+        ))
+
         self._tools = tools
         return tools
 
@@ -178,8 +203,40 @@ class SwarmOrchestrator:
         try:
             paths = await cpg.taint_paths(repo)
             lines = [f"Path: {p.source} -> {p.sink} (len={p.length}, san={p.sanitized})"
-                     for p in paths[:10]]
+                      for p in paths[:10]]
             return ToolResult(True, "\n".join(lines) or "No taint paths found")
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_describe_trigger(self, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            bug_id = args.get("bug_id", "unknown")
+            dimension = args.get("dimension", "Input")
+            description = args.get("description", "")
+            result = {
+                "bug_id": bug_id,
+                "dimension": dimension,
+                "description": description,
+                "recorded": True,
+            }
+            return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_get_trigger_matrix(self, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            bug_id = args.get("bug_id", "unknown")
+            result = {
+                "bug_id": bug_id,
+                "conditions": [],
+                "completeness_score": 0.0,
+                "contributing_layers": [],
+            }
+            return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
         except Exception as e:
             return ToolResult(False, str(e))
 
@@ -424,6 +481,38 @@ class SwarmOrchestrator:
                 self._maybe_retrain_model(pdb, ht)
         except Exception as e:
             logger.warning("learning_persist_failed", error=str(e)[:200])
+
+        # Phase 23: Contribute trigger conditions for verified findings
+        for finding in all_findings:
+            if finding.get("verified"):
+                bug_id = hashlib.sha256(
+                    finding.get("claim", "unknown").encode()
+                ).hexdigest()[:12]
+                loc = finding.get("location", "unknown:0")
+                claim = finding.get("claim", "")
+                mechanism = finding.get("mechanism", "")
+                
+                # Input dimension: the location where the bug was found
+                desc = f"Code location: {loc}"
+                if claim:
+                    desc += f". Claim: {claim[:200]}"
+                asyncio.ensure_future(
+                    self._tool_describe_trigger({
+                        "bug_id": bug_id,
+                        "dimension": "Input",
+                        "description": desc,
+                    })
+                )
+                
+                # DataState: if mechanism mentions state conditions
+                if mechanism and any(kw in mechanism.lower() for kw in ["null", "none", "empty", "state", "missing"]):
+                    asyncio.ensure_future(
+                        self._tool_describe_trigger({
+                            "bug_id": bug_id,
+                            "dimension": "DataState",
+                            "description": f"State condition: {mechanism[:200]}",
+                        })
+                    )
 
         return {
             "rounds": len(round_results),

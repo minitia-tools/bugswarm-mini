@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use parking_lot::RwLock;
 use tracing::{info, warn};
 
+use crate::trigger;
 use crate::types::{
     AgentScore, EdgeKind, EvidenceEdge, EvidenceNode, EvidenceQuery,
     GraphStats, NodeId, NodeKind,
@@ -21,6 +22,7 @@ pub struct EvidenceGraph {
     out_edges: RwLock<HashMap<NodeId, Vec<(usize, NodeId)>>>,
     /// Reverse adjacency: node_id → list of (edge_index, source_node_id)
     in_edges: RwLock<HashMap<NodeId, Vec<(usize, NodeId)>>>,
+    pub trigger_manager: RwLock<crate::trigger::TriggerManager>,
 }
 
 impl EvidenceGraph {
@@ -30,6 +32,7 @@ impl EvidenceGraph {
             edges: RwLock::new(Vec::new()),
             out_edges: RwLock::new(HashMap::new()),
             in_edges: RwLock::new(HashMap::new()),
+            trigger_manager: RwLock::new(crate::trigger::TriggerManager::new()),
         }
     }
 
@@ -104,6 +107,64 @@ impl EvidenceGraph {
         let edge_idx = self.add_edge(edge);
 
         (pred_id, edge_idx)
+    }
+
+    /// Add a trigger condition to the graph and link it to the bug's trigger matrix.
+    /// Creates TriggerMatrix node if one doesn't exist for this bug.
+    pub fn add_trigger_condition(&self, bug_id: &str, condition: trigger::TriggerCondition) -> bool {
+        let matrix_node_id = self.get_or_create_trigger_matrix(bug_id);
+
+        let cond_node = EvidenceNode::new(
+            0,
+            NodeKind::TriggerCondition,
+            &format!("{}-{:?}", bug_id, condition.dimension),
+            condition.layer.layer_name(),
+        );
+        let cond_node_id = self.add_node(cond_node);
+
+        let edge = EvidenceEdge::new(EdgeKind::Triggers, cond_node_id, matrix_node_id, 1.0);
+        self.add_edge(edge);
+
+        true
+    }
+
+    /// Get or create the trigger matrix node for a bug.
+    fn get_or_create_trigger_matrix(&self, bug_id: &str) -> NodeId {
+        let nodes = self.nodes.read();
+        for node in nodes.iter() {
+            if node.kind == NodeKind::TriggerMatrix && node.label == bug_id {
+                return node.id;
+            }
+        }
+        drop(nodes);
+
+        let matrix_node = EvidenceNode::new(0, NodeKind::TriggerMatrix, bug_id, "trigger-matrix");
+        self.add_node(matrix_node)
+    }
+
+    /// Get all trigger conditions for a bug from the graph.
+    pub fn get_trigger_conditions(&self, bug_id: &str) -> Vec<NodeId> {
+        let nodes = self.nodes.read();
+        let matrix_id = nodes.iter()
+            .find(|n| n.kind == NodeKind::TriggerMatrix && n.label == bug_id)
+            .map(|n| n.id);
+
+        let matrix_id = match matrix_id {
+            Some(id) => id,
+            None => return vec![],
+        };
+        drop(nodes);
+
+        let out = self.out_edges.read();
+        let mut conditions = vec![];
+        for (node_id, edges) in out.iter() {
+            for (_, target_id) in edges {
+                if *target_id == matrix_id {
+                    conditions.push(*node_id);
+                }
+            }
+        }
+        conditions
     }
 
     /// Add an edge between two nodes.
@@ -474,6 +535,8 @@ impl EvidenceGraph {
         let mut sandbox_runs = 0;
         let mut code_locations = 0;
         let mut confirmed_bugs = 0;
+        let mut trigger_matrices = 0;
+        let mut trigger_conditions = 0;
         let mut agents_set = HashSet::new();
         let mut supports = 0;
         let mut contradicts = 0;
@@ -487,6 +550,8 @@ impl EvidenceGraph {
                 NodeKind::SandboxRun => sandbox_runs += 1,
                 NodeKind::CodeLocation => code_locations += 1,
                 NodeKind::ConfirmedBug => confirmed_bugs += 1,
+                NodeKind::TriggerMatrix => trigger_matrices += 1,
+                NodeKind::TriggerCondition => trigger_conditions += 1,
                 _ => {}
             }
             agents_set.insert(node.author.clone());
@@ -524,6 +589,8 @@ impl EvidenceGraph {
             weakest_claim: weakest,
             consensus_echo_chambers: echo,
             orphaned_claims: orphaned,
+            trigger_matrices,
+            trigger_conditions,
         }
     }
 

@@ -13,6 +13,7 @@ from agent.tools import ToolRegistry, ToolDefinition, ToolResult
 from agent.parser import OutputParser
 from agent.cpg_client import CPGClient
 from agent.sandbox_client import SandboxClient
+from agent.evidence_client import EvidenceClient
 from agent.persistence import PersistenceManager
 from agent.scanner import UnifiedScanner
 from agent.prompts import Persona
@@ -22,7 +23,7 @@ from .config import CLIConfig
 logger = structlog.get_logger(__name__)
 
 
-def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, LLMClient]:
+def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, LLMClient, EvidenceClient]:
     """Build the full dependency tree. Called once at startup.
 
     Returns (engine, persistence, gateway) for lifecycle management.
@@ -87,6 +88,7 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
     # 4. Service clients
     cpg = CPGClient(binary=config.cpg_binary)
     sandbox = SandboxClient(binary=config.sandbox_binary)
+    evidence = EvidenceClient()
 
     # 5. Tools
     tools = ToolRegistry()
@@ -147,7 +149,7 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
             "dimension": {"type": "string", "description": "Trigger dimension: Input, Environment, Timing, DataState, Concurrency, Configuration, DependencyVersion, OsArch"},
             "description": {"type": "string", "description": "Human-readable description of the trigger condition"},
         }, "required": ["bug_id", "dimension", "description"]},
-        handler=lambda args: _describe_trigger(args),
+        handler=lambda args: _describe_trigger_evidence(evidence, args),
         timeout_secs=10.0,
         cache_ttl_secs=0.0,  # No cache — each call is unique
     ))
@@ -157,7 +159,7 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         parameters={"type": "object", "properties": {
             "bug_id": {"type": "string", "description": "The bug identifier"},
         }, "required": ["bug_id"]},
-        handler=lambda args: _get_trigger_matrix(args),
+        handler=lambda args: _get_trigger_matrix_evidence(evidence, args),
         timeout_secs=10.0,
         cache_ttl_secs=30.0,
     ))
@@ -177,7 +179,7 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
     )
 
     engine = IEPEngine(iep_config, tools, parser, gateway, persistence)
-    return engine, persistence, gateway
+    return engine, persistence, gateway, evidence
 
 
 def _extract_cpg_functions(cpg, repo_path):
@@ -334,38 +336,29 @@ def _delta_debug(sandbox, args):
     return _run_async(_delta_debug_async(sandbox, args))
 
 
-def _describe_trigger(args):
-    try:
-        import hashlib, json
-        bug_id = args.get("bug_id", "unknown")
-        dim = args.get("dimension", "Input")
-        desc = args.get("description", "")
-
-        # Compute a basic condition JSON
-        condition = {
-            "bug_id": bug_id,
-            "dimension": dim,
-            "description": desc,
-            "hash": hashlib.sha256(f"{dim}:{desc}".encode()).hexdigest()[:12],
-        }
-        return ToolResult(True, json.dumps(condition, indent=2), {"bug_id": bug_id, "dimension": dim})
-    except Exception as e:
-        return ToolResult(False, f"describe_trigger failed: {e}")
-
-
-def _get_trigger_matrix(args):
+async def _describe_trigger_async(evidence, args):
     try:
         import json
         bug_id = args.get("bug_id", "unknown")
-        # Stub: return empty matrix structure
-        result = {
-            "bug_id": bug_id,
-            "conditions": [],
-            "dimensions_covered": [],
-            "completeness_score": 0.0,
-            "total_rows": 0,
-            "phase30_compliant": False,
-        }
-        return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id, "rows": 0})
+        dim = args.get("dimension", "Input")
+        desc = args.get("description", "")
+        result = await evidence.add_trigger_condition(bug_id, dim, desc, "agent")
+        return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
+    except Exception as e:
+        return ToolResult(False, f"describe_trigger failed: {e}")
+
+def _describe_trigger_evidence(evidence, args):
+    return _run_async(_describe_trigger_async(evidence, args))
+
+
+async def _get_trigger_matrix_async(evidence, args):
+    try:
+        import json
+        bug_id = args.get("bug_id", "unknown")
+        result = await evidence.get_trigger_matrix(bug_id)
+        return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
     except Exception as e:
         return ToolResult(False, f"get_trigger_matrix failed: {e}")
+
+def _get_trigger_matrix_evidence(evidence, args):
+    return _run_async(_get_trigger_matrix_async(evidence, args))
