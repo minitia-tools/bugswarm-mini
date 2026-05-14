@@ -60,6 +60,9 @@ pub struct FuzzConfig {
     /// Configuration for blending danger scores into the power schedule.
     #[serde(default)]
     pub danger_config: Option<crate::danger_map::DangerConfig>,
+    /// Shared memory name for the danger map segment.
+    #[serde(default)]
+    pub danger_map_shm_name: Option<String>,
 }
 
 impl Default for FuzzConfig {
@@ -80,6 +83,7 @@ impl Default for FuzzConfig {
             env_vars: HashMap::new(),
             danger_map_enabled: false,
             danger_config: None,
+            danger_map_shm_name: None,
         }
     }
 }
