@@ -52,6 +52,7 @@ impl DangerMap {
 
     pub fn from_pairs(mut pairs: Vec<(u64, f32)>) -> Self {
         pairs.sort_by_key(|&(addr, _)| addr);
+        pairs.dedup_by(|a, b| a.0 == b.0);
         Self { pairs }
     }
 
@@ -84,14 +85,22 @@ impl DangerMap {
         if self.pairs.is_empty() {
             return;
         }
-        let max_score = self
-            .pairs
-            .iter()
+
+        // Filter out NaN and INF values before computing max
+        let max_score = self.pairs.iter()
             .map(|&(_, s)| s)
+            .filter(|s| s.is_finite())
             .fold(0.0_f32, f32::max);
-        if max_score > 0.0 {
-            for (_, score) in &mut self.pairs {
+
+        if max_score <= 0.0 || !max_score.is_finite() {
+            return;
+        }
+
+        for (_, score) in &mut self.pairs {
+            if score.is_finite() {
                 *score /= max_score;
+            } else {
+                *score = 0.0;
             }
         }
     }
@@ -132,6 +141,9 @@ impl DangerMap {
                 expected_len,
                 data.len()
             ));
+        }
+        if data.len() > expected_len {
+            log::warn!("from_bytes: {} trailing bytes ignored", data.len() - expected_len);
         }
         let mut pairs = Vec::with_capacity(count);
         for i in 0..count {
@@ -203,11 +215,34 @@ impl Default for DangerConfig {
 }
 
 impl DangerConfig {
+    /// Validate configuration values.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.taint_weight < 0.0 {
+            return Err(format!("taint_weight must be >= 0.0, got {}", self.taint_weight));
+        }
+        if self.coverage_weight < 0.0 {
+            return Err(format!("coverage_weight must be >= 0.0, got {}", self.coverage_weight));
+        }
+        if self.decay_factor < 0.0 {
+            return Err(format!("decay_factor must be >= 0.0, got {}", self.decay_factor));
+        }
+        Ok(())
+    }
+
+    /// Create with validation.
+    pub fn new_validated(taint_weight: f32, coverage_weight: f32, decay_factor: f32) -> Result<Self, String> {
+        let config = Self { enabled: true, taint_weight, coverage_weight, decay_factor };
+        config.validate()?;
+        Ok(config)
+    }
+
     /// Blend coverage rarity and danger score into a power-schedule value
     /// clamped to [0.0, 1.0].
     pub fn compute_power_schedule(&self, coverage_rarity: f32, danger_score: f32) -> f32 {
-        let score = coverage_rarity * self.coverage_weight + danger_score * self.taint_weight;
-        score.clamp(0.0, 1.0)
+        let cov = coverage_rarity.max(0.0).min(1.0);
+        let dng = danger_score.max(0.0).min(1.0);
+        let score = cov * self.coverage_weight + dng * self.taint_weight;
+        score.max(0.0).min(1.0)
     }
 }
 
@@ -556,5 +591,64 @@ mod tests {
     fn test_shm_unlink_nonexistent() {
         // Should not panic, return Ok or ignore error
         let _ = shm_unlink("/nonexistent_shm_21a_test");
+    }
+
+    // ------------------------------------------------------------------
+    // Dedup / validate / NaN safety / from_bytes trailing garbage
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_dedup_duplicate_addresses() {
+        let dm = DangerMap::from_pairs(vec![
+            (0x1000, 0.1), (0x2000, 0.5), (0x1000, 0.9)
+        ]);
+        assert_eq!(dm.len(), 2, "Duplicate addresses should be deduplicated");
+        let score = dm.lookup(0x1000);
+        assert!((score - 0.1).abs() < 0.001 || (score - 0.9).abs() < 0.001,
+            "Should keep one of the duplicate entries");
+    }
+
+    #[test]
+    fn test_danger_config_validate() {
+        let valid = DangerConfig::new_validated(0.7, 0.3, 0.7);
+        assert!(valid.is_ok());
+
+        let neg = DangerConfig::new_validated(-0.1, 0.3, 0.7);
+        assert!(neg.is_err());
+
+        let neg2 = DangerConfig::new_validated(0.7, -0.3, 0.7);
+        assert!(neg2.is_err());
+    }
+
+    #[test]
+    fn test_normalize_with_nan() {
+        let mut dm = DangerMap::from_pairs(vec![
+            (0x1000, 0.5), (0x2000, f32::NAN), (0x3000, 1.0)
+        ]);
+        dm.normalize();
+        assert!((dm.lookup(0x1000) - 0.5).abs() < 0.01, "Finite values should normalize");
+        assert_eq!(dm.lookup(0x2000), 0.0, "NaN should become 0 after normalize");
+        assert!((dm.lookup(0x3000) - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_normalize_with_infinity() {
+        let mut dm = DangerMap::from_pairs(vec![
+            (0x1000, 2.0), (0x2000, f32::INFINITY), (0x3000, 1.0)
+        ]);
+        dm.normalize();
+        assert_eq!(dm.lookup(0x2000), 0.0, "INF should become 0 after normalize");
+        // max finite is 2.0, so 0x3000 -> 1.0/2.0 = 0.5
+        assert!((dm.lookup(0x3000) - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_from_bytes_trailing_garbage() {
+        let dm = DangerMap::from_pairs(vec![(0x1000, 0.5)]);
+        let mut bytes = dm.to_bytes();
+        bytes.extend_from_slice(&[0xFF; 10]);
+        let result = DangerMap::from_bytes(&bytes);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().lookup(0x1000), 0.5);
     }
 }

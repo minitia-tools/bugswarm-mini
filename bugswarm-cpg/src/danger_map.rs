@@ -81,19 +81,38 @@ pub fn compute_danger_map(
         return vec![];
     }
 
+    // Track visited nodes to prevent infinite cycles
+    let mut visited: HashSet<usize> = HashSet::new();
+    for &idx in &queue {
+        visited.insert(idx);
+    }
+
     // BFS backward through callers
     while let Some(callee_idx) = queue.pop_front() {
         let callee_score = scores[callee_idx];
-        let propagated = callee_score * decay;
+        let mut propagated = callee_score * decay;
+        if propagated > 1.0 {
+            propagated = 1.0;
+        }
 
         let func = &functions[callee_idx];
         for caller_name in &func.callers {
             if let Some(&caller_idx) = name_to_idx.get(caller_name.as_str()) {
                 if propagated > scores[caller_idx] {
                     scores[caller_idx] = propagated;
-                    queue.push_back(caller_idx);
+                    if visited.insert(caller_idx) {
+                        queue.push_back(caller_idx);
+                    }
+                    if visited.contains(&caller_idx) {
+                        queue.push_back(caller_idx);
+                    }
                 }
             }
+        }
+
+        // Safety cap to prevent infinite loops
+        if queue.len() > functions.len() * 2 {
+            break;
         }
     }
 
@@ -193,5 +212,52 @@ mod tests {
         assert!((get(0x1000) - 0.7).abs() < 0.01);
         assert!((get(0x2000) - 0.7).abs() < 0.01);
         assert!((get(0x3000) - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cycle_safety() {
+        // A → B → A (mutual recursion cycle)
+        let funcs = vec![
+            FunctionInfo { name: "A".into(), address: 0x1000, callees: vec!["B".into()], callers: vec!["B".into()] },
+            FunctionInfo { name: "B".into(), address: 0x2000, callees: vec!["A".into()], callers: vec!["A".into()] },
+        ];
+        // No sinks — should return empty map rather than infinite loop
+        let map = compute_danger_map(&funcs, &[], 0.7);
+        assert!(map.is_empty());
+
+        // With a sink on the cycle
+        let map = compute_danger_map(&funcs, &["A"], 0.7);
+        assert!(!map.is_empty());
+        let get = |addr| map.iter().find(|(a,_)| *a == addr).map(|(_,s)| *s).unwrap_or(0.0);
+        assert!((get(0x1000) - 1.0).abs() < 0.01);
+        // B should get score 0.7 from A
+        assert!((get(0x2000) - 0.7).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_decay_above_one_with_cycle() {
+        // With decay > 1.0, cycles MUST not infinite loop
+        let funcs = vec![
+            FunctionInfo { name: "A".into(), address: 0x1000, callees: vec!["B".into()], callers: vec!["B".into()] },
+            FunctionInfo { name: "B".into(), address: 0x2000, callees: vec!["A".into()], callers: vec!["A".into()] },
+        ];
+        let map = compute_danger_map(&funcs, &["A"], 2.0);
+        // Should complete without hanging
+        assert!(!map.is_empty());
+        let get = |addr| map.iter().find(|(a,_)| *a == addr).map(|(_,s)| *s).unwrap_or(0.0);
+        assert!((get(0x1000) - 1.0).abs() < 0.01);
+        // B gets 1.0 * 2.0 = 2.0, but capped to 1.0
+        assert!((get(0x2000) - 1.0).abs() < 0.01, "Score should be capped at 1.0");
+    }
+
+    #[test]
+    fn test_self_referencing_function() {
+        // A calls itself (recursive)
+        let funcs = vec![
+            FunctionInfo { name: "A".into(), address: 0x1000, callees: vec!["A".into()], callers: vec!["A".into()] },
+        ];
+        let map = compute_danger_map(&funcs, &["A"], 0.7);
+        assert!(!map.is_empty());
+        assert!((map[0].1 - 1.0).abs() < 0.01);
     }
 }

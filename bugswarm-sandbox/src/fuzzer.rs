@@ -530,7 +530,7 @@ impl FuzzController {
     pub fn new(config: FuzzConfig, dedup_config: DedupConfig) -> Self {
         let campaign_id = CampaignId(Uuid::new_v4());
         let danger_config = config.danger_config.clone().unwrap_or_default();
-        let danger_map_enabled = config.danger_map_enabled;
+        let danger_enabled = config.danger_map_enabled || danger_config.enabled;
         Self {
             campaign_id,
             config,
@@ -562,7 +562,7 @@ impl FuzzController {
             dedup: DedupEngine::new(dedup_config),
             crashes: Vec::new(),
             started_at: Utc::now(),
-            danger_feed: DangerFeed::new(danger_map_enabled, danger_config),
+            danger_feed: DangerFeed::new(danger_enabled, danger_config),
         }
     }
 
