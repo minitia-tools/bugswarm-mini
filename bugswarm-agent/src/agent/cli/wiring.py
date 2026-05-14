@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import structlog
+from pathlib import Path
 from gateway.types import GatewayConfig, ProviderType
 from gateway.client import LLMClient
 
@@ -55,8 +56,28 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
             learning_context += f"\nSIMILAR PAST BUGS (these patterns were found in similar code before):\n"
             for pat in patterns[:3]:
                 learning_context += f"  [{pat.get('cwe','?')}] {pat.get('snippet','')[:100]}\n"
-        if learning_context:
-            logger.info("learning_context_loaded", hotspots=len(hotspots), patterns=len(patterns))
+
+        # Phase 19: ML probability prediction feed — inject top-20 into scout prompt
+        if getattr(config, 'probability_enabled', True):
+            try:
+                from swarm.probability import BugProbabilityModel, FunctionFeatures
+                model = BugProbabilityModel(
+                    model_path=getattr(config, 'probability_model_path',
+                                       "~/.bugswarm/probability_model.json")
+                )
+                if model.model is not None:
+                    # Extract features from all functions in repo via CPG
+                    functions = _extract_cpg_functions(cpg, config.repo)
+                    prediction = model.predict_all(functions)
+                    prompt_block = prediction.to_prompt(
+                        top_n=getattr(config, 'probability_top_k', 20),
+                        threshold=getattr(config, 'probability_confidence_threshold', 0.5),
+                    )
+                    if prompt_block:
+                        learning_context += "\n" + prompt_block
+                        logger.info("probability_feed_injected", top_functions=prediction.get_top(5))
+            except Exception as e:
+                logger.debug("probability_feed_unavailable", error=str(e)[:100])
     except Exception as e:
         logger.debug("learning_context_unavailable", error=str(e)[:100])
     gateway = LLMClient(gw_config)
@@ -122,6 +143,46 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
 
     engine = IEPEngine(iep_config, tools, parser, gateway, persistence)
     return engine, persistence, gateway
+
+
+def _extract_cpg_functions(cpg, repo_path):
+    """Extract function features from CPG for probability prediction.
+
+    Best-effort: queries CPG for function nodes, falls back to empty list.
+    Full implementation requires CPG node listing API (Phase 19.5 deferred).
+    """
+    from swarm.probability import FunctionFeatures
+    features = []
+    try:
+        # Walk repo files and extract Python function names + basic features
+        rp = repo_path if hasattr(repo_path, 'iterdir') else Path(repo_path)
+        for py_file in list(rp.rglob("*.py"))[:100]:  # Cap at 100 files
+            try:
+                content = py_file.read_text()
+                lines = content.splitlines()
+                name = py_file.name
+                # Heuristic: treat each top-level def as a function
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith("def "):
+                        func_name = stripped[4:].split("(")[0].strip()
+                        features.append(FunctionFeatures(
+                            function_name=func_name,
+                            file_path=str(py_file.relative_to(rp)),
+                            lines_of_code=len(lines),
+                        ))
+                    elif stripped.startswith("class "):
+                        class_name = stripped[6:].split("(")[0].split(":")[0].strip()
+                        features.append(FunctionFeatures(
+                            function_name=class_name,
+                            file_path=str(py_file.relative_to(rp)),
+                            lines_of_code=len(lines),
+                        ))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return features
 
 
 # ─── Tool Handlers (async wrapped for sync ToolRegistry) ───

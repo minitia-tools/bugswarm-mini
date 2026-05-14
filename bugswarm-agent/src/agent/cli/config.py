@@ -35,6 +35,11 @@ class CLIConfig:
     dry_run: bool = False
     db_path: str = ":memory:"
     scanner_config: str = ""
+    # Phase 19: ML probability prediction
+    probability_enabled: bool = True
+    probability_model_path: str = "~/.bugswarm/probability_model.json"
+    probability_top_k: int = 20
+    probability_confidence_threshold: float = 0.5
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> CLIConfig:
@@ -63,6 +68,10 @@ class CLIConfig:
             dry_run=args.dry_run or False,
             db_path=args.db or os.getenv("BGSWARM_DB", ":memory:"),
             scanner_config=args.scanner_config or "",
+            probability_enabled=not getattr(args, 'no_probability', False),
+            probability_model_path=args.probability_model or os.getenv(
+                "BGSWARM_PROBABILITY_MODEL", "~/.bugswarm/probability_model.json"
+            ),
         )
 
     @classmethod
@@ -90,5 +99,8 @@ class CLIConfig:
         p.add_argument("--dry-run", action="store_true", help="Validate without running")
         p.add_argument("--db", help="SQLite database path for persistence")
         p.add_argument("--scanner-config", help="Path to scanner YAML config")
+        p.add_argument("--probability-model", help="Path to ML probability model file")
+        p.add_argument("--probability", action="store_true", default=True, help="Enable ML probability prediction (default: on)")
+        p.add_argument("--no-probability", action="store_true", help="Disable ML probability prediction")
         p.add_argument("--test", action="store_true", help=argparse.SUPPRESS)
         return p

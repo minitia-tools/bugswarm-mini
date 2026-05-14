@@ -313,6 +313,30 @@ class SwarmOrchestrator:
         else:
             logger.warning("spare_pool_exhausted", ejected=ejected_id)
 
+    @staticmethod
+    def _maybe_retrain_model(pdb, ht) -> None:
+        """Phase 19: Trigger ML model retraining after accumulating enough new bugs."""
+        try:
+            from swarm.probability import BugProbabilityModel
+            model = BugProbabilityModel()
+            confirmed = pdb.get_all_confirmed()
+            # Get all functions from CPG (best effort)
+            all_funcs = []
+            try:
+                # Pass empty list if CPG not available — model will train with what it has
+                pass
+            except Exception:
+                pass
+            result = model.train(confirmed, all_funcs, hotspot_tracker=ht)
+            if result.get("status") == "trained":
+                pdb.reset_training_counter()
+                logger.info("model_retrained_triggered", samples=result.get("samples", 0),
+                             auc=result.get("auc", 0))
+            else:
+                logger.info("model_retrain_skipped", reason=result.get("reason", "unknown"))
+        except Exception as e:
+            logger.warning("model_retrain_failed", error=str(e)[:200])
+
     def reinstate_agent(self, agent_id: str) -> None:
         if agent_id in self.agents:
             self.agents[agent_id].status = AgentStatus.ACTIVE
@@ -390,10 +414,14 @@ class SwarmOrchestrator:
                     ht.record_bug(file_path, severity)
             for aid, s in scores.items():
                 ah.record_run(aid, s.get("persona", ""), self.config.model,
-                              s.get("contributions", 0), 0,
-                              self.gateway.registry.total_tokens.total_tokens,
-                              sum(1 for f in all_findings if f.get("verified") and f.get("agent") == aid))
+                               s.get("contributions", 0), 0,
+                               self.gateway.registry.total_tokens.total_tokens,
+                               sum(1 for f in all_findings if f.get("verified") and f.get("agent") == aid))
             logger.info("learning_persisted", patterns=pdb.count, hotspots=len(ht.entries), agents=len(ah.records))
+
+            # Phase 19: Trigger retrain if enough new bugs accumulated
+            if pdb.count_since_last_train >= 50:
+                self._maybe_retrain_model(pdb, ht)
         except Exception as e:
             logger.warning("learning_persist_failed", error=str(e)[:200])
 

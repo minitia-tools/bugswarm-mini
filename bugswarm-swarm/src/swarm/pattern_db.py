@@ -95,6 +95,56 @@ class BugPatternDB:
     def __init__(self, persist_path: str = "~/.bugswarm/chroma"):
         self.store = PatternStore(persist_path)
         self.embedder = CodeEmbedder()
+        self._training_counter_path = Path(
+            os.path.expanduser("~/.bugswarm/chroma/training_counter")
+        )
+        self._confirmed_cache: list[dict] = []
+        self._train_counter_cache: int | None = None
+
+    def _load_counter(self) -> int:
+        if self._train_counter_cache is not None:
+            return self._train_counter_cache
+        try:
+            self._training_counter_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._training_counter_path.exists():
+                self._train_counter_cache = int(self._training_counter_path.read_text().strip())
+            else:
+                self._train_counter_cache = 0
+        except Exception:
+            self._train_counter_cache = 0
+        return self._train_counter_cache
+
+    def _save_counter(self, value: int) -> None:
+        self._train_counter_cache = value
+        try:
+            self._training_counter_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._training_counter_path.with_suffix(".tmp")
+            tmp.write_text(str(value))
+            tmp.rename(self._training_counter_path)
+        except Exception as e:
+            logger.warning("counter_save_failed", error=str(e)[:100])
+
+    @property
+    def count_since_last_train(self) -> int:
+        return self._load_counter()
+
+    def reset_training_counter(self) -> int:
+        """Reset counter and return the count that was reset."""
+        prev = self._load_counter()
+        self._save_counter(0)
+        return prev
+
+    def get_all_confirmed(self) -> list[dict]:
+        """Return all confirmed bug patterns stored.
+
+        Uses cached list + ChromaDB query as fallback.
+        """
+        if self._confirmed_cache:
+            return self._confirmed_cache
+        results = self.store.query([0.0] * 384, top_k=1000)
+        return [{"cwe": r.get("cwe", ""), "severity": r.get("severity", 5),
+                 "language": r.get("language", ""), "snippet": r.get("snippet", "")}
+                for r in results]
 
     def store_finding(self, finding: dict, code_snippet: str = "",
                       language: str = "python") -> str:
@@ -118,6 +168,12 @@ class BugPatternDB:
         }
 
         self.store.store(pid, embedding, metadata, code_snippet[:1000])
+        self._confirmed_cache.append({"id": pid, "cwe": metadata["cwe"],
+                                       "location": metadata.get("location", ""),
+                                       "severity_estimate": metadata.get("severity", 5),
+                                       "language": metadata.get("language", "python")})
+        current = self._load_counter()
+        self._save_counter(current + 1)
         logger.info("pattern_stored", id=pid, cwe=metadata["cwe"], severity=metadata["severity"])
         return pid
 
