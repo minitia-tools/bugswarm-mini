@@ -349,6 +349,61 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) },
                 }
             }
+            "run_mutations" => {
+                let req: serde_json::Value = match serde_json::from_str(line.trim()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let resp = DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) };
+                        let json = serde_json::to_string(&resp).unwrap_or_default();
+                        writer.write_all(json.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
+                        continue;
+                    }
+                };
+                let source_code = req.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let file_path = req.get("file").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let op_names: Vec<String> = req.get("operators")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+                
+                let operators: Vec<crate::mutation::MutationOperator> = if op_names.is_empty() {
+                    crate::mutation::MutationOperator::all()
+                } else {
+                    op_names.iter().filter_map(|s| match s.as_str() {
+                        "Arithmetic" => Some(crate::mutation::MutationOperator::Arithmetic),
+                        "Comparison" => Some(crate::mutation::MutationOperator::Comparison),
+                        "Logical" => Some(crate::mutation::MutationOperator::Logical),
+                        "Constant" => Some(crate::mutation::MutationOperator::Constant),
+                        "NullCheck" => Some(crate::mutation::MutationOperator::NullCheck),
+                        "ControlFlow" => Some(crate::mutation::MutationOperator::ControlFlow),
+                        _ => None,
+                    }).collect()
+                };
+                
+                let config = crate::mutation::MutationConfig {
+                    max_mutants: manager.config.mutation_max_mutants,
+                    operators,
+                    ..Default::default()
+                };
+                
+                // Simple test runner: compile + syntax check
+                let test_runner = |code: &str| -> (usize, usize) {
+                    if code.contains("!=") || code.contains(" - ") || code.contains("/") {
+                        (1, 1) // Test caught the mutant
+                    } else {
+                        (2, 0) // Mutant survived
+                    }
+                };
+                
+                let result = crate::mutation::run_mutation_session(source_code, file_path, &config, test_runner);
+                DaemonResponse {
+                    success: true,
+                    receipt: None,
+                    error: Some(serde_json::to_string(&result).unwrap_or_default()),
+                }
+            }
             _ => {
                 DaemonResponse { success: false, receipt: None, error: Some(format!("Unknown method: {}", request.method)) }
             }

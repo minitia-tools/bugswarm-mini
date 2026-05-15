@@ -352,6 +352,32 @@ class SandboxClient:
         except Exception:
             return {"invariants_found": 0, "violations_found": 0, "error": stderr[:200]}
 
+    # ─── Mutation Testing ───
+
+    async def run_mutations(self, source_code: str, file_path: str = "unknown",
+                            operators: list[str] | None = None) -> dict:
+        """Run mutation testing against source code.
+        
+        Args:
+            source_code: Source code to mutate
+            file_path: File path for identification
+            operators: List of mutation operators to apply
+            
+        Returns MutationSessionResult with mutation_score, survivors, etc.
+        """
+        import json as _json
+        payload = _json.dumps({
+            "method": "run_mutations",
+            "source": source_code,
+            "file": file_path,
+            "operators": operators or [],
+        })
+        stdout, stderr, rc = await self._run("--request", payload)
+        try:
+            return _json.loads(stdout)
+        except Exception:
+            return {"mutation_score": 0.0, "error": stderr[:200]}
+
     # ─── Health Check ───
 
     async def health_check(self) -> bool:

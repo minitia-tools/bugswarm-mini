@@ -192,6 +192,20 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         cache_ttl_secs=0.0,
     ))
 
+    # Phase 26: Mutation Testing tool
+    tools.register(ToolDefinition(
+        name="run_mutations",
+        description="Inject artificial bugs (mutants) into code and run tests against them. Surviving mutants are untested code paths — bugs-in-waiting. Returns mutation score, survivor list, and prescribed tests.",
+        parameters={"type": "object", "properties": {
+            "source_code": {"type": "string", "description": "Source code to mutate"},
+            "file_path": {"type": "string", "description": "File path for identification"},
+            "operators": {"type": "array", "items": {"type": "string"}, "description": "Mutation operators: Arithmetic, Comparison, Logical, Constant, NullCheck, ControlFlow"},
+        }, "required": ["source_code"]},
+        handler=lambda args: _run_mutations(sandbox, args),
+        timeout_secs=30.0,
+        cache_ttl_secs=300.0,
+    ))
+
     # 6. Parser
     parser = OutputParser()
 
@@ -421,3 +435,18 @@ async def _mine_invariants_async(sandbox, args):
 
 def _mine_invariants(sandbox, args):
     return _run_async(_mine_invariants_async(sandbox, args))
+
+
+async def _run_mutations_async(sandbox, args):
+    try:
+        source_code = args.get("source_code", "")
+        file_path = args.get("file_path", "unknown")
+        operators = args.get("operators", [])
+        import json
+        result = await sandbox.run_mutations(source_code, file_path, operators)
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"run_mutations failed: {e}")
+
+def _run_mutations(sandbox, args):
+    return _run_async(_run_mutations_async(sandbox, args))

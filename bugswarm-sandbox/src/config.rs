@@ -182,7 +182,15 @@ pub struct SandboxConfig {
     /// Minimum confidence threshold for invariant acceptance.
     #[serde(default = "default_invariant_confidence")]
     pub invariant_min_confidence: f64,
+    /// Enable mutation testing subsystem.
+    #[serde(default)]
+    pub mutation_enabled: bool,
+    /// Max mutants to generate.
+    #[serde(default = "default_mutation_max")]
+    pub mutation_max_mutants: usize,
 }
+
+fn default_mutation_max() -> usize { 500 }
 
 fn default_fuzz_danger_decay() -> f32 { 0.7 }
 fn default_fuzz_danger_taint_weight() -> f32 { 0.7 }
@@ -257,6 +265,8 @@ impl Default for SandboxConfig {
             invariant_enabled: false,
             invariant_inputs_per_function: default_invariant_inputs(),
             invariant_min_confidence: default_invariant_confidence(),
+            mutation_enabled: false,
+            mutation_max_mutants: default_mutation_max(),
         }
     }
 }
