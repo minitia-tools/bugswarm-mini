@@ -32,3 +32,40 @@ pub const DEDUP_MAX_DESCRIPTION_CHARS: usize = 512;
 
 /// Multiplicative decay factor for danger map propagation.
 pub const DANGER_DECAY_FACTOR: f32 = 0.7;
+
+// ------ H6 + H5 constants ------
+
+/// Staleness window in days.
+pub const STALENESS_WINDOW_DAYS: f64 = 30.0;
+
+/// Max conditions per dimension before eviction triggers.
+pub const MAX_CONDITIONS_PER_DIMENSION: usize = 100;
+
+/// Max serialized JSON size before per-bug file storage.
+pub const MAX_SERIALIZED_SIZE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Priority weights (sum = 1.0).
+pub const PRIORITY_SEVERITY_WEIGHT: f64 = 0.6;
+pub const PRIORITY_INCOMPLETENESS_WEIGHT: f64 = 0.3;
+pub const PRIORITY_STALENESS_WEIGHT: f64 = 0.1;
+
+/// Min conditions in a single dimension for full density bonus.
+pub const DENSITY_BONUS_SATURATION: usize = 3;
+
+/// Min layers for full layer diversity bonus.
+pub const LAYER_BONUS_SATURATION: usize = 3;
+
+/// Hard floor for completeness score.
+pub const COMPLETENESS_MIN_FLOOR: f64 = 0.1;
+
+/// The dimension excluded from weighted coverage (bonus-only).
+pub const EXCLUDED_DIMENSION: TriggerDimension = TriggerDimension::OsArch;
+
+/// Schema version for forward compatibility.
+pub const fn default_schema_version() -> u32 { 1 }
+
+// ------ H9: Dedup tri-state ------
+pub const DEDUP_BORDERLINE_THRESHOLD: f64 = 0.75;
+
+// ------ H12: Hash policy ------
+pub const HASH_KEY_PREFIX_LEN: usize = 32;

@@ -131,26 +131,13 @@ fn test_dangerfeed_load_map_empty_vector() {
 fn test_dangerfeed_load_map_duplicate_addresses() {
     let config = DangerConfig::default();
     let mut feed = DangerFeed::new(true, config);
-    // Load map with duplicate addresses — sort_by_key is stable, so first occurrence wins
-    // NOTE: load_map NORMALIZES (divides by max), so raw scores change
+    // Load map with duplicate addresses — sort_by_key is stable, dedup keeps first occurrence
     feed.load_map(vec![(0x1000, 0.1), (0x1000, 0.9), (0x1000, 0.5)]);
-    // After normalize: max=0.9, so scores become 0.1/0.9≈0.111, 0.5/0.9≈0.556, 0.9/0.9=1.0
-    assert_eq!(feed.map.len(), 3, "Map should preserve all 3 entries (no dedup on duplicates)");
-
-    // binary_search_by_key may return any of the duplicate entries.
-    // After stable sort (by addr, all same): order preserved → first 0.1, then 0.9, then 0.5.
-    // binary_search on equal keys: returns index of one of them (unspecified which).
-    // With our stable sort, entries are [0x1000:0.1, 0x1000:0.9, 0x1000:0.5].
-    // Rust binary_search may return index 0, 1, or 2. After normalize:
-    // 0.1/0.9 ≈ 0.1111, 0.5/0.9 ≈ 0.5556, 0.9/0.9 = 1.0
-    let score = feed.map.lookup(0x1000);
-    let norm_01 = 0.1 / 0.9;
-    let norm_05 = 0.5 / 0.9;
-    assert!(
-        (score - norm_01).abs() < 0.01 || (score - norm_05).abs() < 0.01 || (score - 1.0).abs() < 0.01,
-        "Duplicate addresses: unpredictable which entry hit. Got score: {} (possible: {}, {}, 1.0)",
-        score, norm_01, norm_05
-    );
+    // After dedup: only first occurrence (0.1) kept. After normalize with max=0.1: score=1.0
+    assert_eq!(feed.map.len(), 1, "Duplicate addresses should be deduplicated to 1 entry");
+    // First occurrence kept (0.1), normalized by max (0.1) → 1.0
+    assert!((feed.map.lookup(0x1000) - 1.0).abs() < 0.01,
+        "Dedup keeps first entry: 0.1/0.1 = 1.0");
 }
 
 #[test]
@@ -534,18 +521,13 @@ fn test_dangermap_special_scores_nan() {
     // What happens with NaN scores?
     let map = DangerMap::from_pairs(vec![(0x1000, f32::NAN)]);
     let score = map.lookup(0x1000);
-    assert!(score.is_nan(), "NaN score should be preserved");
+    assert!(score.is_nan(), "NaN score should be preserved on lookup");
 
-    // Normalize with NaN
+    // Normalize with NaN — NaN should be replaced with 0.0 after fix
     let mut map2 = DangerMap::from_pairs(vec![(0x1000, f32::NAN), (0x2000, 1.0)]);
     map2.normalize();
-    // fold with f32::max — max_score could be NaN, since any comparison with NaN returns NaN
-    // max_score = max(f32::NAN, 1.0) = f32::NAN
-    // Since NaN > 0.0 is false, normalize is a no-op (scores stay NaN and 1.0)
-    // Actually: f32::max(NaN, 1.0) depends on the implementation. f32::max returns the second arg if either is NaN!
-    // So max_score = 1.0, and NAN/1.0 = NaN
-    // This is arguably a bug — NaN scores survive normalization.
-    assert!(map2.lookup(0x1000).is_nan(), "POTENTIAL BUG: NaN scores survive normalization");
+    // After fix: NaN → 0.0, finite values normalized by max(1.0) → 1.0/1.0 = 1.0
+    assert_eq!(map2.lookup(0x1000), 0.0, "NaN should become 0.0 after normalize (fixed)");
     assert!((map2.lookup(0x2000) - 1.0).abs() < 0.001);
 }
 
@@ -555,18 +537,15 @@ fn test_dangermap_special_scores_infinity() {
     let score = map.lookup(0x1000);
     assert!(score.is_infinite() && score > 0.0, "Positive infinity should be preserved");
 
-    // Normalize with infinity — should clamp? Or normalize?
+    // Normalize with infinity — INF replaced with 0.0 after fix, finite values normalize normally
     let mut map2 = DangerMap::from_pairs(vec![(0x1000, f32::INFINITY), (0x2000, 5.0)]);
     map2.normalize();
-    // max_score = f32::max(INF, 5.0) = INF
-    // INF > 0.0 → true
-    // INF / INF = NaN
-    let score_norm = map2.lookup(0x1000);
-    assert!(score_norm.is_nan(), "POTENTIAL BUG: Normalizing with infinity produces NaN: 5.0/INF → 0, INF/INF → NaN");
+    // After fix: INF → 0.0, max finite = 5.0, so 5.0/5.0 = 1.0
+    assert_eq!(map2.lookup(0x1000), 0.0, "INF should become 0.0 after normalize (fixed)");
 
     let score2_norm = map2.lookup(0x2000);
-    // 5.0 / INF = 0.0
-    assert!((score2_norm - 0.0).abs() < 1e-10, "5.0/INF should be 0.0");
+    // 5.0 / 5.0 = 1.0
+    assert!((score2_norm - 1.0).abs() < 1e-10, "5.0/5.0 should be 1.0 with INF filtered out");
 }
 
 #[test]

@@ -620,3 +620,238 @@ impl Default for EvidenceGraph {
         Self::new()
     }
 }
+
+// ═══════════════════════════════════════════
+// H5: Persistence wrappers
+// ═══════════════════════════════════════════
+
+impl EvidenceGraph {
+    pub fn save_triggers(&self, path: &std::path::Path) -> anyhow::Result<usize> {
+        let tm = self.trigger_manager.read();
+        tm.save(path)
+    }
+
+    pub fn load_triggers(&self, path: &std::path::Path) -> anyhow::Result<usize> {
+        let mut tm = self.trigger_manager.write();
+        tm.load(path)
+    }
+
+    pub fn rebuild_trigger_manager(&self) -> anyhow::Result<usize> {
+        let trigger_data: Vec<(String, Vec<crate::trigger::TriggerCondition>)> = {
+            let nodes = self.nodes.read();
+            let mut data = Vec::new();
+            for node in nodes.iter() {
+                if node.kind != NodeKind::TriggerMatrix { continue; }
+                let bug_id = node.label.clone();
+                let mut conditions = Vec::new();
+                let incoming = self.edges_to(node.id);
+                for (edge, source_id) in &incoming {
+                    if edge.kind != EdgeKind::Triggers { continue; }
+                    if let Some(cond_node) = nodes.get(*source_id) {
+                        if let Some(tc_json) = cond_node.metadata.get("trigger_condition") {
+                            if let Ok(tc) = serde_json::from_str::<crate::trigger::TriggerCondition>(tc_json) {
+                                conditions.push(tc);
+                            }
+                        }
+                    }
+                }
+                data.push((bug_id, conditions));
+            }
+            data
+        };
+        let mut tm = self.trigger_manager.write();
+        let mut restored = 0;
+        for (bug_id, conditions) in trigger_data {
+            let matrix = tm.get_or_create(&bug_id);
+            for tc in conditions {
+                matrix.restore_condition(tc);
+            }
+            matrix.vacuum();
+            restored += 1;
+        }
+        Ok(restored)
+    }
+}
+
+// ═══════════════════════════════════════════
+// H10: Backfill migration
+// ═══════════════════════════════════════════
+
+#[derive(Debug, Clone)]
+pub struct MigrationResult {
+    pub bugs_scanned: usize,
+    pub bugs_skipped: usize,
+    pub matrices_created: usize,
+    pub conditions_extracted: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MigrationJournalEntry {
+    pub bug_label: String,
+    pub bug_node_id: NodeId,
+    pub status: String,
+    pub error: Option<String>,
+    pub conditions_extracted: usize,
+    pub matrix_node_id: Option<NodeId>,
+    #[serde(with = "chrono::serde::ts_seconds")]
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+fn read_completed_bugs_from_journal(path: &std::path::Path) -> std::collections::HashSet<String> {
+    if !path.exists() { return std::collections::HashSet::new(); }
+    let content = match std::fs::read_to_string(path) { Ok(c) => c, Err(_) => return std::collections::HashSet::new() };
+    content.lines()
+        .filter_map(|line| serde_json::from_str::<MigrationJournalEntry>(line).ok())
+        .filter(|entry| entry.status == "completed")
+        .map(|entry| entry.bug_label)
+        .collect()
+}
+
+fn append_journal_entry(path: &std::path::Path, entry: &MigrationJournalEntry) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let line = serde_json::to_string(entry)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error: {}", e)))?;
+    writeln!(file, "{}", line)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+pub fn migrate_existing_bugs<F>(
+    graph: &EvidenceGraph,
+    extract_condition: F,
+    journal_path: Option<std::path::PathBuf>,
+    dry_run: bool,
+) -> MigrationResult
+where F: Fn(&serde_json::Value) -> Option<crate::trigger::TriggerCondition>,
+{
+    let mut result = MigrationResult {
+        bugs_scanned: 0, bugs_skipped: 0, matrices_created: 0,
+        conditions_extracted: 0, errors: vec![],
+    };
+
+    let completed_bugs: std::collections::HashSet<String> = if let Some(ref jp) = journal_path {
+        read_completed_bugs_from_journal(jp)
+    } else { std::collections::HashSet::new() };
+
+    let confirmed_bugs: Vec<(NodeId, String, Vec<(NodeId, String)>)> = {
+        let nodes = graph.nodes.read();
+        nodes.iter()
+            .filter(|n| n.kind == NodeKind::ConfirmedBug)
+            .filter(|n| !completed_bugs.contains(&n.label))
+            .map(|n| {
+                let has_matrix = nodes.iter().any(|m|
+                    m.kind == NodeKind::TriggerMatrix && m.label == n.label);
+                if has_matrix { result.bugs_skipped += 1; }
+                let receipts: Vec<(NodeId, String)> = {
+                    let incoming = graph.edges_to(n.id);
+                    incoming.iter().filter_map(|(e, source_id)| {
+                        if e.kind == EdgeKind::Confirms {
+                            nodes.get(*source_id).and_then(|src_node| {
+                                if src_node.kind == NodeKind::SandboxRun {
+                                    src_node.metadata.get("receipt").map(|r| (*source_id, r.clone()))
+                                } else { None }
+                            })
+                        } else { None }
+                    }).collect()
+                };
+                (n.id, n.label.clone(), receipts)
+            })
+            .filter(|(_, _, receipts)| !receipts.is_empty())
+            .collect()
+    };
+
+    for (_i, (bug_node_id, bug_label, sandbox_data)) in confirmed_bugs.iter().enumerate() {
+        {
+            let nodes = graph.nodes.read();
+            if nodes.iter().any(|n| n.kind == NodeKind::TriggerMatrix && n.label == *bug_label) {
+                result.bugs_skipped += 1; continue;
+            }
+        }
+
+        if dry_run {
+            result.matrices_created += 1;
+            for (_, receipt_json) in sandbox_data {
+                if let Ok(receipt) = serde_json::from_str::<serde_json::Value>(receipt_json) {
+                    if extract_condition(&receipt).is_some() {
+                        result.conditions_extracted += 1;
+                    }
+                }
+            }
+            result.bugs_scanned += 1; continue;
+        }
+
+        result.bugs_scanned += 1;
+
+        let matrix_node = EvidenceNode::new(0, NodeKind::TriggerMatrix, bug_label, "migration-backfill");
+        let matrix_node_id = graph.add_node(matrix_node);
+        result.matrices_created += 1;
+        graph.add_edge(EvidenceEdge::new(EdgeKind::Aggregates, *bug_node_id, matrix_node_id, 1.0));
+
+        let mut bug_conditions_extracted = 0;
+        for (run_id, receipt_json) in sandbox_data {
+            match serde_json::from_str::<serde_json::Value>(receipt_json) {
+                Ok(receipt) => {
+                    if let Some(tc) = extract_condition(&receipt) {
+                        let mut cond_node = EvidenceNode::new(0, NodeKind::TriggerCondition,
+                            &format!("{}-{:?}", bug_label, tc.dimension), "migration-backfill");
+                        cond_node.metadata.insert("trigger_condition".to_string(),
+                            serde_json::to_string(&tc).unwrap_or_default());
+                        cond_node.metadata.insert("source_run_id".to_string(), run_id.to_string());
+                        let cond_node_id = graph.add_node(cond_node);
+                        graph.add_edge(EvidenceEdge::new(EdgeKind::Triggers, cond_node_id, matrix_node_id, 1.0));
+                        bug_conditions_extracted += 1;
+                    }
+                }
+                Err(e) => {
+                    result.errors.push(format!("receipt parse error run {} (bug {}): {}", run_id, bug_label, e));
+                }
+            }
+        }
+        result.conditions_extracted += bug_conditions_extracted;
+
+        if let Some(ref jp) = journal_path {
+            if let Err(e) = append_journal_entry(jp, &MigrationJournalEntry {
+                bug_label: bug_label.clone(), bug_node_id: *bug_node_id,
+                status: "completed".to_string(), error: None,
+                conditions_extracted: bug_conditions_extracted,
+                matrix_node_id: Some(matrix_node_id),
+                timestamp: chrono::Utc::now(),
+            }) {
+                result.errors.push(format!("journal write error for {}: {}", bug_label, e));
+            }
+        }
+    }
+
+    if !dry_run {
+        match graph.rebuild_trigger_manager() {
+            Ok(restored) => info!(matrices = restored, "trigger manager rebuilt from migration"),
+            Err(e) => result.errors.push(format!("rebuild_trigger_manager failed: {}", e)),
+        }
+    }
+    result
+}
+
+pub fn default_extract_condition(receipt: &serde_json::Value) -> Option<crate::trigger::TriggerCondition> {
+    let raw_desc = receipt.get("trigger_condition")
+        .or_else(|| receipt.get("input_hint"))
+        .or_else(|| receipt.get("trigger_hint"))
+        .or_else(|| receipt.get("input"))
+        .and_then(|v| v.as_str()).unwrap_or("");
+    if raw_desc.is_empty() { return None; }
+    let dimension = receipt.get("dimension").and_then(|v| v.as_str())
+        .map(|s| match s.to_lowercase().as_str() {
+            "input" => crate::trigger::TriggerDimension::Input,
+            "environment" | "env" => crate::trigger::TriggerDimension::Environment,
+            "timing" => crate::trigger::TriggerDimension::Timing,
+            "datastate" | "data_state" => crate::trigger::TriggerDimension::DataState,
+            "concurrency" => crate::trigger::TriggerDimension::Concurrency,
+            "configuration" | "config" => crate::trigger::TriggerDimension::Configuration,
+            "dependency" | "dependencyversion" | "depver" => crate::trigger::TriggerDimension::DependencyVersion,
+            "os" | "arch" | "osarch" => crate::trigger::TriggerDimension::OsArch,
+            _ => crate::trigger::TriggerDimension::Input,
+        }).unwrap_or(crate::trigger::TriggerDimension::Input);
+    let bug_id = receipt.get("bug_id").and_then(|v| v.as_str()).unwrap_or("unknown-migrated-bug");
+    Some(crate::trigger::TriggerCondition::new(bug_id, dimension, raw_desc, crate::trigger::ContributionLayer::Manual))
+}
