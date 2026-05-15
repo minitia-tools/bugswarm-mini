@@ -402,6 +402,30 @@ class SandboxClient:
         except Exception:
             return {"solutions": [], "error": stderr[:200]}
 
+    async def explore_paths(self, target_location: str, path_conditions: list[dict],
+                            max_queries: int = 100) -> dict:
+        """Systematically explore all code paths using concolic execution.
+
+        Args:
+            target_location: Target code location
+            path_conditions: List of {line: int, condition: str} dicts
+            max_queries: Maximum negation queries (default: 100)
+
+        Returns dict with coverage_pct, branches_covered, solutions, etc.
+        """
+        import json as _json
+        payload = _json.dumps({
+            "method": "explore_paths",
+            "target": target_location,
+            "conditions": path_conditions,
+            "max_queries": max_queries,
+        })
+        stdout, stderr, rc = await self._run("--request", payload)
+        try:
+            return _json.loads(stdout)
+        except Exception:
+            return {"coverage_pct": 0.0, "error": stderr[:200]}
+
     # ─── Health Check ───
 
     async def health_check(self) -> bool:
