@@ -162,6 +162,16 @@ pub struct SandboxConfig {
     /// Delta debugging timeout in seconds.
     #[serde(default = "default_delta_timeout")]
     pub delta_timeout_secs: u64,
+
+    /// Enable differential analysis subsystem.
+    #[serde(default)]
+    pub differential_enabled: bool,
+    /// Max parallel workers for differential execution.
+    #[serde(default = "default_diff_workers")]
+    pub differential_parallel_workers: usize,
+    /// Timeout per differential execution in seconds.
+    #[serde(default = "default_diff_exec_timeout")]
+    pub differential_exec_timeout_secs: u64,
 }
 
 fn default_fuzz_danger_decay() -> f32 { 0.7 }
@@ -188,6 +198,8 @@ fn default_fuzz_duration() -> u64 { 3600 }
 fn default_fuzz_max_crashes() -> u64 { 100 }
 fn default_delta_max_iterations() -> u32 { 200 }
 fn default_delta_timeout() -> u64 { 30 }
+fn default_diff_workers() -> usize { 8 }
+fn default_diff_exec_timeout() -> u64 { 10 }
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -227,6 +239,9 @@ impl Default for SandboxConfig {
             fuzz_danger_coverage_weight: default_fuzz_danger_coverage_weight(),
             delta_max_iterations: default_delta_max_iterations(),
             delta_timeout_secs: default_delta_timeout(),
+            differential_enabled: false,
+            differential_parallel_workers: default_diff_workers(),
+            differential_exec_timeout_secs: default_diff_exec_timeout(),
         }
     }
 }

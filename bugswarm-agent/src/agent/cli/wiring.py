@@ -164,6 +164,20 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         cache_ttl_secs=30.0,
     ))
 
+    # Phase 24: Differential Analysis tool
+    tools.register(ToolDefinition(
+        name="diff_execute",
+        description="Compare two outputs using differential analysis. Detects semantic regressions by normalizing volatile fields and computing diff magnitude.",
+        parameters={"type": "object", "properties": {
+            "output_a": {"type": "string", "description": "First output to compare"},
+            "output_b": {"type": "string", "description": "Second output to compare"},
+            "normalizer": {"type": "string", "description": "Output normalizer: Json, Xml, Dict, Text, Binary (default: Text)"},
+        }, "required": ["output_a", "output_b"]},
+        handler=lambda args: _diff_execute(sandbox, args),
+        timeout_secs=10.0,
+        cache_ttl_secs=0.0,
+    ))
+
     # 6. Parser
     parser = OutputParser()
 
@@ -362,3 +376,18 @@ async def _get_trigger_matrix_async(evidence, args):
 
 def _get_trigger_matrix_evidence(evidence, args):
     return _run_async(_get_trigger_matrix_async(evidence, args))
+
+
+async def _diff_execute_async(sandbox, args):
+    try:
+        output_a = args.get("output_a", "")
+        output_b = args.get("output_b", "")
+        normalizer = args.get("normalizer", "Text")
+        result = await sandbox.diff_execute(output_a, output_b, normalizer)
+        import json
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"diff_execute failed: {e}")
+
+def _diff_execute(sandbox, args):
+    return _run_async(_diff_execute_async(sandbox, args))

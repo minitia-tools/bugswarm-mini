@@ -173,6 +173,47 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid FuzzRequest: {}", e)) },
                 }
             }
+            "diff" => {
+                match serde_json::from_str::<serde_json::Value>(line.trim()) {
+                    Ok(req) => {
+                        let output_a = req.get("input").and_then(|v| v.as_str()).unwrap_or("");
+                        let output_b = req.get("reference").and_then(|v| v.as_str()).unwrap_or("");
+                        let normalizer = match req.get("normalizer").and_then(|v| v.as_str()).unwrap_or("Text") {
+                            "Json" => crate::differential::OutputNormalizer::Json,
+                            "Xml" => crate::differential::OutputNormalizer::Xml,
+                            "Dict" => crate::differential::OutputNormalizer::Dict,
+                            "Text" => crate::differential::OutputNormalizer::Text,
+                            "Binary" => crate::differential::OutputNormalizer::Binary,
+                            _ => crate::differential::OutputNormalizer::Text,
+                        };
+                        let result = crate::differential::compute_diff(output_a, output_b, normalizer, 0.01);
+                        DaemonResponse {
+                            success: true,
+                            receipt: None,
+                            error: Some(serde_json::to_string(&result).unwrap_or_default()),
+                        }
+                    }
+                    Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) },
+                }
+            }
+            "generate_pairs" => {
+                match serde_json::from_str::<serde_json::Value>(line.trim()) {
+                    Ok(req) => {
+                        let inputs: Vec<String> = req.get("inputs")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                            .unwrap_or_default();
+                        let max_pairs = req.get("max_pairs").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+                        let pairs = crate::differential::generate_pairs(&inputs, &[crate::differential::InvariantType::Commutative], max_pairs);
+                        DaemonResponse {
+                            success: true,
+                            receipt: None,
+                            error: Some(serde_json::to_string(&pairs).unwrap_or_default()),
+                        }
+                    }
+                    Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) },
+                }
+            }
             "delta" => {
                 match serde_json::from_str::<DeltaRequest>(line.trim()) {
                     Ok(delta_req) => {

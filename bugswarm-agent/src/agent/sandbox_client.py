@@ -302,6 +302,30 @@ class SandboxClient:
             except OSError:
                 pass
 
+    # ─── Differential Analysis ───
+
+    async def diff_execute(self, output_a: str, output_b: str,
+                           normalizer: str = "Text") -> dict:
+        """Compare two outputs using differential analysis.
+        
+        Args:
+            output_a: First output to compare
+            output_b: Second output to compare
+            normalizer: Output normalizer (Json, Xml, Dict, Text, Binary)
+            
+        Returns DiffExecution dict with is_different, diff_magnitude, etc.
+        """
+        try:
+            stdout, stderr, rc = await self._run(
+                "diff",
+                "--output-a", output_a,
+                "--output-b", output_b,
+                "--normalizer", normalizer,
+            )
+            return json.loads(stdout)
+        except Exception as e:
+            return {"is_different": False, "error": str(e)[:200]}
+
     # ─── Health Check ───
 
     async def health_check(self) -> bool:

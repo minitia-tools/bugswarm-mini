@@ -3,6 +3,7 @@ pub mod container;
 pub mod daemon;
 pub mod danger_map;
 pub mod delta;
+pub mod differential;
 pub mod error;
 pub mod fuzzer;
 pub mod sanitizer_report;

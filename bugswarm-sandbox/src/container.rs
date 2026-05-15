@@ -802,6 +802,16 @@ impl ContainerManager {
         })
     }
 
+    pub async fn diff_execute(&self, input: &str, reference_input: &str) -> SandboxResult<crate::differential::DiffExecution> {
+        let receipt_a = self.execute(input, &HashMap::new(), false).await?;
+        let output_a = format!("stdout:{}\nstderr:{}", receipt_a.stdout_truncated, receipt_a.stderr_truncated);
+
+        let receipt_b = self.execute(reference_input, &HashMap::new(), false).await?;
+        let output_b = format!("stdout:{}\nstderr:{}", receipt_b.stdout_truncated, receipt_b.stderr_truncated);
+
+        Ok(crate::differential::compute_diff(&output_a, &output_b, crate::differential::OutputNormalizer::Text, 0.01))
+    }
+
     pub async fn execute_causal_intervention(
         &self, poc_content: &str, env_vars: &HashMap<String, String>,
         intervention: crate::config::CausalIntervention,
