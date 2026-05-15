@@ -2,6 +2,6 @@
 members = [
     "bugswarm-sandbox",
     "bugswarm-cpg",
-    "bugswarm-evidence",
+    "bugswarm-evidence", "bugswarm-symbolic",
 ]
 resolver = "2"

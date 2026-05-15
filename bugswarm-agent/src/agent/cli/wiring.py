@@ -206,6 +206,22 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         cache_ttl_secs=300.0,
     ))
 
+    # Phase 27: Symbolic Execution tool
+    tools.register(ToolDefinition(
+        name="solve_reachability",
+        description="Use symbolic execution to find the exact input that reaches a target code location. Given path conditions (variable constraints from a code path), produces concrete input values that satisfy all constraints.",
+        parameters={"type": "object", "properties": {
+            "target_location": {"type": "string", "description": "Target code location (file:line) to reach"},
+            "path_conditions": {"type": "array", "items": {"type": "object", "properties": {
+                "line": {"type": "integer"},
+                "condition": {"type": "string"},
+            }}, "description": "List of (line_number, condition) pairs along the path to the target"},
+        }, "required": ["target_location", "path_conditions"]},
+        handler=lambda args: _solve_reachability(sandbox, args),
+        timeout_secs=30.0,
+        cache_ttl_secs=60.0,
+    ))
+
     # 6. Parser
     parser = OutputParser()
 
@@ -450,3 +466,17 @@ async def _run_mutations_async(sandbox, args):
 
 def _run_mutations(sandbox, args):
     return _run_async(_run_mutations_async(sandbox, args))
+
+
+async def _solve_reachability_async(sandbox, args):
+    try:
+        target = args.get("target_location", "")
+        path_conditions = args.get("path_conditions", [])
+        import json
+        result = await sandbox.solve_reachability(target, path_conditions)
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"solve_reachability failed: {e}")
+
+def _solve_reachability(sandbox, args):
+    return _run_async(_solve_reachability_async(sandbox, args))

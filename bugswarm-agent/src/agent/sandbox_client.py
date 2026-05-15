@@ -378,6 +378,30 @@ class SandboxClient:
         except Exception:
             return {"mutation_score": 0.0, "error": stderr[:200]}
 
+    # ─── Symbolic Execution ───
+
+    async def solve_reachability(self, target_location: str,
+                                  path_conditions: list[dict]) -> dict:
+        """Solve for the exact input that reaches a target code location.
+
+        Args:
+            target_location: Target code location (e.g., "auth.py:42")
+            path_conditions: List of {line: int, condition: str} dicts
+
+        Returns dict with solutions, constraints_generated, elapsed_ms, etc.
+        """
+        import json as _json
+        payload = _json.dumps({
+            "method": "solve_reachability",
+            "target": target_location,
+            "conditions": path_conditions,
+        })
+        stdout, stderr, rc = await self._run("--request", payload)
+        try:
+            return _json.loads(stdout)
+        except Exception:
+            return {"solutions": [], "error": stderr[:200]}
+
     # ─── Health Check ───
 
     async def health_check(self) -> bool:

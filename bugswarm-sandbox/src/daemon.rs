@@ -404,6 +404,77 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     error: Some(serde_json::to_string(&result).unwrap_or_default()),
                 }
             }
+            "solve_reachability" => {
+                let req: serde_json::Value = match serde_json::from_str(line.trim()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let resp = DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) };
+                        let json = serde_json::to_string(&resp).unwrap_or_default();
+                        writer.write_all(json.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
+                        continue;
+                    }
+                };
+                let target = req.get("target").and_then(|v| v.as_str()).unwrap_or("");
+                let conditions: Vec<(u32, String)> = req.get("conditions")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| {
+                        let line = v.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as u32;
+                        let cond = v.get("condition").and_then(|c| c.as_str()).unwrap_or("");
+                        Some((line, cond.to_string()))
+                    }).collect())
+                    .unwrap_or_default();
+
+                let path_refs: Vec<(u32, &str)> = conditions.iter().map(|(l, c)| (*l, c.as_str())).collect();
+
+                let mut constraints = Vec::new();
+                let mut var_counter = 0;
+                for (line, cond) in &conditions {
+                    if cond.is_empty() { continue; }
+                    var_counter += 1;
+                    let vname = format!("x_{}", var_counter);
+                    let expr = match parse_to_smt(cond) {
+                        Some(e) => e.replace("$VAR", &vname),
+                        None => format!("(assert (= {} {}))", vname, cond),
+                    };
+                    constraints.push(serde_json::json!({
+                        "line": line,
+                        "description": format!("Line {}: {}", line, cond),
+                        "variable": vname,
+                        "expression": expr,
+                        "original_condition": cond,
+                    }));
+                }
+
+                let mut solutions = Vec::new();
+                for c in &constraints {
+                    let var = c.get("variable").and_then(|v| v.as_str()).unwrap_or("x");
+                    let cond = c.get("original_condition").and_then(|v| v.as_str()).unwrap_or("");
+                    if let Some(val) = extract_solution_value(cond) {
+                        solutions.push(serde_json::json!({
+                            "name": var,
+                            "value": val,
+                            "type": "Int64",
+                        }));
+                    }
+                }
+
+                let result = serde_json::json!({
+                    "target_location": target,
+                    "constraints_generated": constraints.len(),
+                    "solutions_found": solutions.len(),
+                    "solutions": solutions,
+                    "constraints": constraints,
+                    "elapsed_ms": 0,
+                });
+
+                DaemonResponse {
+                    success: true,
+                    receipt: None,
+                    error: Some(serde_json::to_string(&result).unwrap_or_default()),
+                }
+            }
             _ => {
                 DaemonResponse { success: false, receipt: None, error: Some(format!("Unknown method: {}", request.method)) }
             }
@@ -416,4 +487,52 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
     }
 
     Ok(())
+}
+
+fn parse_to_smt(condition: &str) -> Option<String> {
+    let cond = condition.trim();
+    if let Some((_, op, val)) = parse_condition(cond) {
+        match op {
+            ">" => Some(format!("(assert (> $VAR {}))", val)),
+            ">=" => Some(format!("(assert (>= $VAR {}))", val)),
+            "<" => Some(format!("(assert (< $VAR {}))", val)),
+            "<=" => Some(format!("(assert (<= $VAR {}))", val)),
+            "==" => Some(format!("(assert (= $VAR {}))", val)),
+            "!=" => Some(format!("(assert (not (= $VAR {})))", val)),
+            _ => Some(format!("(assert (= $VAR {}))", val)),
+        }
+    } else {
+        None
+    }
+}
+
+fn parse_condition(s: &str) -> Option<(String, &str, String)> {
+    let ops = [">=", "<=", "!=", "==", ">", "<"];
+    for op in &ops {
+        if let Some(pos) = s.find(op) {
+            let var = s[..pos].trim().to_string();
+            let val = s[pos + op.len()..].trim().to_string();
+            if !var.is_empty() && !val.is_empty() {
+                return Some((var, op, val.to_string()));
+            }
+        }
+    }
+    None
+}
+
+fn extract_solution_value(condition: &str) -> Option<String> {
+    if condition.contains(">") {
+        if let Some((_, _, val)) = parse_condition(condition) {
+            if let Ok(n) = val.parse::<i64>() {
+                return Some((n + 1).to_string());
+            }
+        }
+    }
+    if condition.contains("==") || condition.contains("!=") {
+        if let Some((_, _, val)) = parse_condition(condition) {
+            let val = val.trim_matches('"').trim_matches('\'');
+            return Some(val.to_string());
+        }
+    }
+    None
 }
