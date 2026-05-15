@@ -172,7 +172,7 @@ fn completeness_zero_conditions() {
         "expected 0.0, got {}", m.completeness_score);
 }
 
-/// All 7 scored dimensions covered → hits completeness min-floor with single-condition density.
+/// All 7 scored dimensions covered — hits ~0.111 with single-condition density.
 #[test]
 fn completeness_all_seven_scored() {
     let mut m = TriggerMatrix::new("BUG-SCORE-02");
@@ -188,13 +188,13 @@ fn completeness_all_seven_scored() {
     for dim in &scored_dims {
         m.add_condition(TriggerCondition::new("BUG-SCORE-02", *dim, "test", ContributionLayer::Agent));
     }
-    // With 1 cond per dim (density 1/3) and 1 layer (layer_bonus 1/3): effective ≈ 0.097
-    // floors to COMPLETENESS_MIN_FLOOR = 0.1
-    assert!((m.completeness_score - 0.1).abs() < 0.001,
-        "all 7 scored dims with 1 cond each → min floor 0.1, got {}", m.completeness_score);
+    // With 1 cond per dim (density 1/3 each, OsArch excluded) and 1 layer (1/3):
+    // base=1.0, density_avg=(7*1/3)/7=0.333, layer=1/3, effective=1.0*0.333*0.333=0.111
+    assert!((m.completeness_score - 0.111).abs() < 0.001,
+        "all 7 scored dims with 1 cond each → ~0.111, got {}", m.completeness_score);
 }
 
-/// OsArch bonus dimension added — completeness rises but stays well below 1.0.
+/// OsArch bonus dimension added — completeness unchanged (OsArch excluded from density).
 #[test]
 fn completeness_osarch_bonus_does_not_exceed_one() {
     let mut m = TriggerMatrix::new("BUG-SCORE-03");
@@ -207,16 +207,15 @@ fn completeness_osarch_bonus_does_not_exceed_one() {
         m.add_condition(TriggerCondition::new("BUG-SCORE-03", *dim, "test", ContributionLayer::Agent));
     }
     let before = m.completeness_score;
-    // 7 dims, 1 cond each, 1 layer → floor at 0.1
-    assert!((before - 0.1).abs() < 0.001, "should be 0.1 (min floor) before OsArch, got {}", before);
+    // 7 dims, 1 cond each, 1 layer, OsArch excluded from density → ~0.111
+    assert!((before - 0.111).abs() < 0.001, "should be ~0.111 before OsArch, got {}", before);
 
-    // Add OsArch dimension
+    // Add OsArch dimension — density unchanged (OsArch excluded), score stays ~0.111
     m.add_condition(TriggerCondition::new("BUG-SCORE-03", TriggerDimension::OsArch,
         "linux x86_64", ContributionLayer::Agent));
     let after = m.completeness_score;
-    // density bonus increases slightly with OsArch dim counted, effective ≈ 0.111
-    assert!((after - 0.11111).abs() < 0.001,
-        "completeness rises slightly with OsArch bonus, got {}", after);
+    assert!((after - 0.111).abs() < 0.001,
+        "completeness unchanged with OsArch bonus, got {}", after);
     assert!(after <= 1.0 + f32::EPSILON,
         "completeness should never exceed 1.0, got {}", after);
 }
@@ -365,8 +364,7 @@ fn trigger_manager_data_integrity_sequential() {
     assert_eq!(matrix.bug_id, "BUG-INTEG");
 
     // Phase 3: Add more after reads
-    // "charlie condition" + "oscar condition" both on Timing dim → JW dedup
-    // So total = 14 instead of 15
+    // With raised JW threshold (0.90), no false dedup among these distinct words
     for i in 10..15 {
         let dim = TriggerDimension::all()[(i * 3) % 8];
         tm.add_condition(TriggerCondition::new(
@@ -376,9 +374,9 @@ fn trigger_manager_data_integrity_sequential() {
         ));
     }
 
-    // Phase 4: Verify no corruption (one dedup due to JW similarity)
+    // Phase 4: Verify no corruption (all distinct, no JW dedup at 0.90 threshold)
     let matrix2 = tm.get("BUG-INTEG").expect("matrix should still exist");
-    assert_eq!(matrix2.conditions.len(), 14, "should have 14 conditions (one JW dedup)");
+    assert_eq!(matrix2.conditions.len(), 15, "should have 15 conditions (all distinct)");
     assert!(matrix2.contributing_layers.contains(&ContributionLayer::Agent));
     assert!(matrix2.contributing_layers.contains(&ContributionLayer::Fuzzer));
 }
@@ -610,12 +608,10 @@ fn plan_conformance_normalize_preserves_semantic_differences() {
     assert!(!is_semantically_equivalent(&b, &c));
     assert!(!is_semantically_equivalent(&a, &c));
 
-    // But "SQL injection" and "SQL injection in login page" should be equivalent
-    // because the second contains the first
-    let d = normalize_description("SQL injection");
-    // After normalization: "sql injection in login page" contains "sql injection" → true
+    // Use "SQL injection in login" vs "SQL injection in login page" — similar lengths, high JW
+    let d = normalize_description("SQL injection in login");
     assert!(is_semantically_equivalent(&a, &d),
-        "'SQL injection in login page' should be equivalent to 'SQL injection' via containment");
+        "'SQL injection in login page' should be equivalent to 'SQL injection in login' via JW");
 }
 
 /// TriggerCondition::new generates unique IDs for different conditions.
@@ -649,24 +645,28 @@ fn plan_conformance_unique_ids() {
 /// Condition with severity_specific = Some(0) vs Some(10) vs None.
 #[test]
 fn boundary_severity_specific_values() {
-    // severity_specific is just stored, not used in dedup/scoring
     let mut tc_none = TriggerCondition::new("BUG-SEV", TriggerDimension::Input,
         "test", ContributionLayer::Fuzzer);
     assert!(tc_none.severity_specific.is_none(), "default should be None");
 
-    tc_none.severity_specific = Some(0);
-    assert_eq!(tc_none.severity_specific, Some(0), "should accept Some(0)");
+    tc_none.severity_specific = Some(SeveritySpecific::new(0, 0));
+    assert_eq!(tc_none.severity_specific.as_ref().unwrap().min_severity, 1, "0 should clamp to 1");
 
-    tc_none.severity_specific = Some(10);
-    assert_eq!(tc_none.severity_specific, Some(10), "should accept Some(10)");
+    tc_none.severity_specific = Some(SeveritySpecific::new(10, 10));
+    assert_eq!(tc_none.severity_specific.as_ref().unwrap().max_severity, 10, "should accept Some(10)");
 
-    tc_none.severity_specific = Some(255);
-    assert_eq!(tc_none.severity_specific, Some(255), "should accept u8 max value");
+    tc_none.severity_specific = Some(SeveritySpecific::new(1, 10));
+    assert_eq!(tc_none.severity_specific.as_ref().unwrap().min_severity, 1);
+    assert_eq!(tc_none.severity_specific.as_ref().unwrap().max_severity, 10);
+
+    tc_none.severity_specific = Some(SeveritySpecific::new(8, 5));
+    assert_eq!(tc_none.severity_specific.as_ref().unwrap().max_severity, 8, "max should clamp to min");
 
     // Verify it survives serde roundtrip
     let json = serde_json::to_string(&tc_none).expect("serialize");
     let deser: TriggerCondition = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(deser.severity_specific, Some(255));
+    assert_eq!(deser.severity_specific.as_ref().unwrap().min_severity, 8);
+    assert_eq!(deser.severity_specific.as_ref().unwrap().max_severity, 8);
 
     tc_none.severity_specific = None;
     let json2 = serde_json::to_string(&tc_none).expect("serialize null");
@@ -678,7 +678,7 @@ fn boundary_severity_specific_values() {
 #[test]
 fn boundary_float_precision_completeness() {
     let mut m = TriggerMatrix::new("BUG-FLOAT");
-    // Add all scored dimensions — with 1 cond each, density bonus low → floor at 0.1
+    // Add all scored dimensions — with 1 cond each, OsArch excluded from density → ~0.111
     for dim in TriggerDimension::all() {
         if dim != TriggerDimension::OsArch {
             m.add_condition(TriggerCondition::new("BUG-FLOAT", dim,
@@ -686,9 +686,9 @@ fn boundary_float_precision_completeness() {
         }
     }
     let score = m.completeness_score;
-    // base = 1.0, density = (7 * 1/3) / 8 ≈ 0.292, layer = 1/3, effective ≈ 0.097 → floor 0.1
-    assert!((score - 0.1).abs() < 0.001,
-        "full coverage + low density should floor to 0.1, got {:.10}", score);
+    // base=1.0, density_avg=(7*1/3)/7=0.333, layer=1/3, effective=0.111
+    assert!((score - 0.111).abs() < 0.001,
+        "full coverage + low density should be ~0.111, got {:.10}", score);
 
     // Clamp: score.min(1.0) ensures it never exceeds 1.0
     assert!(score <= 1.0 + f32::EPSILON,

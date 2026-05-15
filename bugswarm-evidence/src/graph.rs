@@ -628,12 +628,12 @@ impl Default for EvidenceGraph {
 impl EvidenceGraph {
     pub fn save_triggers(&self, path: &std::path::Path) -> anyhow::Result<usize> {
         let tm = self.trigger_manager.read();
-        tm.save(path)
+        tm.save(path).map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     pub fn load_triggers(&self, path: &std::path::Path) -> anyhow::Result<usize> {
         let mut tm = self.trigger_manager.write();
-        tm.load(path)
+        tm.load(path).map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     pub fn rebuild_trigger_manager(&self) -> anyhow::Result<usize> {

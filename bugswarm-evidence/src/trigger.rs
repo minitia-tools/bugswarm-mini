@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
@@ -75,6 +76,10 @@ pub fn check_equivalence(a: &str, b: &str) -> EquivalenceResult {
     if a.len() < crate::spec::DEDUP_MIN_FUZZY_LENGTH || b.len() < crate::spec::DEDUP_MIN_FUZZY_LENGTH {
         return EquivalenceResult::NotEquivalent;
     }
+    let len_ratio = a.len().min(b.len()) as f64 / a.len().max(b.len()) as f64;
+    if len_ratio < 0.5 {
+        return EquivalenceResult::NotEquivalent;
+    }
     let max_len = crate::spec::DEDUP_MAX_DESCRIPTION_CHARS;
     let a_trunc = &a[..a.len().min(max_len)];
     let b_trunc = &b[..b.len().min(max_len)];
@@ -91,6 +96,10 @@ pub fn check_equivalence(a: &str, b: &str) -> EquivalenceResult {
 fn compute_similarity(a: &str, b: &str) -> f64 {
     if a.is_empty() || b.is_empty() { return 0.0; }
     if a.len() < crate::spec::DEDUP_MIN_FUZZY_LENGTH || b.len() < crate::spec::DEDUP_MIN_FUZZY_LENGTH {
+        return 0.0;
+    }
+    let len_ratio = a.len().min(b.len()) as f64 / a.len().max(b.len()) as f64;
+    if len_ratio < 0.5 {
         return 0.0;
     }
     let max_len = crate::spec::DEDUP_MAX_DESCRIPTION_CHARS;
@@ -138,6 +147,21 @@ pub struct ReviewCandidate {
     pub schema_version: u32,
 }
 
+// ------ SeveritySpecific ------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SeveritySpecific {
+    pub min_severity: u8,
+    pub max_severity: u8,
+}
+
+impl SeveritySpecific {
+    pub fn new(min: u8, max: u8) -> Self {
+        let min = min.clamp(1, 10);
+        Self { min_severity: min, max_severity: max.clamp(min, 10) }
+    }
+}
+
 /// A single trigger condition contributed by a layer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriggerCondition {
@@ -157,7 +181,7 @@ pub struct TriggerCondition {
     pub layer: ContributionLayer,
     #[serde(default)]
     pub contributed_by: Vec<ContributionLayer>,
-    pub severity_specific: Option<u8>,
+    pub severity_specific: Option<SeveritySpecific>,
     pub verified: bool,
     pub contributed_at: DateTime<Utc>,
     #[serde(default = "crate::spec::default_schema_version")]
@@ -441,6 +465,26 @@ impl TriggerMatrix {
         self.recompute_completeness();
     }
 
+    pub fn staleness(&self) -> f32 {
+        let now = Utc::now();
+        let age_days = (now - self.last_updated).num_days() as f32;
+        (age_days / crate::spec::STALENESS_WINDOW_DAYS as f32).clamp(0.0, 1.0)
+    }
+
+    pub fn investigation_priority(&self, severity: Option<u8>) -> f32 {
+        let sev = match severity {
+            Some(s) if s > 0 => (s as f32 / 10.0).clamp(0.1, 1.0),
+            _ => 0.5,
+        };
+        let incompleteness = 1.0 - self.completeness_score;
+        let staleness = self.staleness();
+        let staleness_urgency = 1.0 - staleness;
+        let priority = crate::spec::PRIORITY_SEVERITY_WEIGHT as f32 * sev
+                     + crate::spec::PRIORITY_INCOMPLETENESS_WEIGHT as f32 * incompleteness
+                     + crate::spec::PRIORITY_STALENESS_WEIGHT as f32 * staleness_urgency;
+        priority.clamp(0.0, 1.0)
+    }
+
     /// Recompute the weighted completeness score.
     pub fn recompute_completeness(&mut self) {
         use crate::spec::{DENSITY_BONUS_SATURATION, LAYER_BONUS_SATURATION, COMPLETENESS_MIN_FLOOR};
@@ -459,6 +503,7 @@ impl TriggerMatrix {
 
         let density_bonus: f64 = {
             let dc: Vec<f64> = TriggerDimension::all().iter()
+                .filter(|d| **d != TriggerDimension::OsArch)
                 .map(|dim| {
                     let cnt = self.conditions.iter().filter(|c| c.dimension == *dim).count();
                     (cnt as f64 / DENSITY_BONUS_SATURATION as f64).min(1.0)
@@ -565,14 +610,46 @@ pub fn is_semantically_equivalent(a: &str, b: &str) -> bool {
     matches!(check_equivalence(a, b), EquivalenceResult::Exact)
 }
 
+/// Global metrics for trigger operations.
+pub struct TriggerMetrics {
+    pub trigger_rows_total: AtomicU64,
+    pub trigger_dedup_total: AtomicU64,
+    pub evictions_total: AtomicU64,
+    pub queries_total: AtomicU64,
+}
+
+impl TriggerMetrics {
+    pub fn new() -> Self {
+        Self {
+            trigger_rows_total: AtomicU64::new(0),
+            trigger_dedup_total: AtomicU64::new(0),
+            evictions_total: AtomicU64::new(0),
+            queries_total: AtomicU64::new(0),
+        }
+    }
+    pub fn inc_rows(&self) { self.trigger_rows_total.fetch_add(1, Ordering::Relaxed); }
+    pub fn inc_dedup(&self) { self.trigger_dedup_total.fetch_add(1, Ordering::Relaxed); }
+    pub fn inc_evictions(&self) { self.evictions_total.fetch_add(1, Ordering::Relaxed); }
+    pub fn inc_queries(&self) { self.queries_total.fetch_add(1, Ordering::Relaxed); }
+    pub fn snapshot(&self) -> HashMap<String, u64> {
+        let mut m = HashMap::new();
+        m.insert("trigger_rows_total".into(), self.trigger_rows_total.load(Ordering::Relaxed));
+        m.insert("trigger_dedup_total".into(), self.trigger_dedup_total.load(Ordering::Relaxed));
+        m.insert("evictions_total".into(), self.evictions_total.load(Ordering::Relaxed));
+        m.insert("queries_total".into(), self.queries_total.load(Ordering::Relaxed));
+        m
+    }
+}
+
 /// Trigger Matrix Manager — stores all matrices indexed by bug_id.
 pub struct TriggerManager {
     matrices: HashMap<String, TriggerMatrix>,
+    pub metrics: TriggerMetrics,
 }
 
 impl TriggerManager {
     pub fn new() -> Self {
-        Self { matrices: HashMap::new() }
+        Self { matrices: HashMap::new(), metrics: TriggerMetrics::new() }
     }
 
     pub fn get_or_create(&mut self, bug_id: &str) -> &mut TriggerMatrix {
@@ -583,10 +660,24 @@ impl TriggerManager {
     pub fn add_condition(&mut self, condition: TriggerCondition) -> bool {
         let bug_id = condition.bug_id.clone();
         let matrix = self.get_or_create(&bug_id);
-        matrix.add_condition(condition)
+        let before = matrix.conditions.len();
+        let is_new = matrix.add_condition(condition);
+        let after = matrix.conditions.len();
+
+        if is_new {
+            self.metrics.inc_rows();
+            let evictions = (before + 1).saturating_sub(after);
+            for _ in 0..evictions {
+                self.metrics.inc_evictions();
+            }
+        } else {
+            self.metrics.inc_dedup();
+        }
+        is_new
     }
 
     pub fn get(&self, bug_id: &str) -> Option<&TriggerMatrix> {
+        self.metrics.inc_queries();
         self.matrices.get(bug_id)
     }
 
@@ -602,12 +693,42 @@ impl TriggerManager {
         self.matrices.len()
     }
 
-    pub fn save(&self, _path: &std::path::Path) -> Result<usize, anyhow::Error> {
-        Ok(self.matrices.len())
+    pub fn save(&self, path: &std::path::Path) -> Result<usize, String> {
+        let matrices: Vec<&TriggerMatrix> = self.matrices.values().collect();
+        let count = matrices.len();
+        let json = serde_json::to_string_pretty(&matrices).map_err(|e| format!("serialize: {}", e))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &json).map_err(|e| format!("write: {}", e))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("rename: {}", e))?;
+        Ok(count)
     }
 
-    pub fn load(&mut self, _path: &std::path::Path) -> Result<usize, anyhow::Error> {
-        Ok(0)
+    pub fn load(&mut self, path: &std::path::Path) -> Result<usize, String> {
+        if !path.exists() {
+            let bak = path.with_extension("bak");
+            if !bak.exists() { return Ok(0); }
+            let json = std::fs::read_to_string(&bak).map_err(|e| format!("read bak: {}", e))?;
+            let matrices: Vec<TriggerMatrix> = serde_json::from_str(&json).map_err(|e| format!("deserialize: {}", e))?;
+            let count = matrices.len();
+            for mut m in matrices { m.rebuild_indices(); self.matrices.insert(m.bug_id.clone(), m); }
+            return Ok(count);
+        }
+        let json = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
+        let matrices: Vec<TriggerMatrix> = serde_json::from_str(&json).map_err(|e| format!("deserialize: {}", e))?;
+        let count = matrices.len();
+        for mut m in matrices {
+            m.rebuild_indices();
+            if let Some(existing) = self.matrices.get_mut(&m.bug_id) {
+                for cond in m.conditions {
+                    existing.conditions.push(cond);
+                }
+                existing.rebuild_indices();
+                existing.recompute_completeness();
+            } else {
+                self.matrices.insert(m.bug_id.clone(), m);
+            }
+        }
+        Ok(count)
     }
 }
 

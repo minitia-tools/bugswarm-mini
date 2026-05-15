@@ -22,7 +22,7 @@ pub const PHASE30_MIN_ROWS: usize = 5;
 pub const PHASE30_MIN_LAYERS: usize = 3;
 
 /// Dedup algorithm threshold (Jaro-Winkler).
-pub const DEDUP_JARO_WINKLER_THRESHOLD: f64 = 0.85;
+pub const DEDUP_JARO_WINKLER_THRESHOLD: f64 = 0.90;
 
 /// Minimum string length for fuzzy matching (shorter = exact match only).
 pub const DEDUP_MIN_FUZZY_LENGTH: usize = 4;
