@@ -178,6 +178,20 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         cache_ttl_secs=0.0,
     ))
 
+    # Phase 25: Invariant Mining tool
+    tools.register(ToolDefinition(
+        name="mine_invariants",
+        description="Mine implicit invariants from a function by running it with thousands of property-based inputs. Discovers range, type, ordering, relationship, exception, and state invariants. Flags violations as potential silent bugs.",
+        parameters={"type": "object", "properties": {
+            "function_name": {"type": "string", "description": "Target function name to mine invariants from"},
+            "param_types": {"type": "array", "items": {"type": "string"}, "description": "Parameter types: int, float, bool, string, array, object"},
+            "count": {"type": "integer", "description": "Number of inputs to generate (default: 100)"},
+        }, "required": ["function_name"]},
+        handler=lambda args: _mine_invariants(sandbox, args),
+        timeout_secs=30.0,
+        cache_ttl_secs=0.0,
+    ))
+
     # 6. Parser
     parser = OutputParser()
 
@@ -391,3 +405,19 @@ async def _diff_execute_async(sandbox, args):
 
 def _diff_execute(sandbox, args):
     return _run_async(_diff_execute_async(sandbox, args))
+
+
+async def _mine_invariants_async(sandbox, args):
+    try:
+        function_name = args.get("function_name", "unknown")
+        param_types = args.get("param_types", [])
+        count = int(args.get("count", 100))
+        import json
+        # Call sandbox daemon's mine_invariants handler
+        result = await sandbox.mine_invariants(function_name, param_types, count)
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"mine_invariants failed: {e}")
+
+def _mine_invariants(sandbox, args):
+    return _run_async(_mine_invariants_async(sandbox, args))

@@ -326,6 +326,32 @@ class SandboxClient:
         except Exception as e:
             return {"is_different": False, "error": str(e)[:200]}
 
+    # ─── Invariant Mining ───
+
+    async def mine_invariants(self, function_name: str, param_types: list[str],
+                               count: int = 100) -> dict:
+        """Mine invariants from function execution traces.
+        
+        Args:
+            function_name: Target function name
+            param_types: List of parameter type hints
+            count: Number of inputs to generate
+            
+        Returns dict with invariants_found, violations, etc.
+        """
+        import json as _json
+        payload = _json.dumps({
+            "method": "mine_invariants",
+            "function": function_name,
+            "param_types": param_types,
+            "count": count,
+        })
+        stdout, stderr, rc = await self._run("--request", payload)
+        try:
+            return _json.loads(stdout)
+        except Exception:
+            return {"invariants_found": 0, "violations_found": 0, "error": stderr[:200]}
+
     # ─── Health Check ───
 
     async def health_check(self) -> bool:

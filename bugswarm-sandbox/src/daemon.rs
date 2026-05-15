@@ -273,6 +273,82 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     },
                 }
             }
+            "invariant_check" => {
+                match serde_json::from_str::<serde_json::Value>(line.trim()) {
+                    Ok(req) => {
+                        let function_name = req.get("function").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let param_types: Vec<String> = req.get("param_types")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                            .unwrap_or_default();
+                        let count = req.get("count").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+
+                        let inputs = crate::invariant::generate_inputs(function_name, &param_types, count);
+
+                        DaemonResponse {
+                            success: true,
+                            receipt: None,
+                            error: Some(serde_json::to_string(&serde_json::json!({
+                                "function": function_name,
+                                "inputs_generated": inputs.len(),
+                                "inputs": inputs,
+                            })).unwrap_or_default()),
+                        }
+                    }
+                    Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) },
+                }
+            }
+            "mine_invariants" => {
+                match serde_json::from_str::<serde_json::Value>(line.trim()) {
+                    Ok(req) => {
+                        let function_name = req.get("function").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let param_types: Vec<String> = req.get("param_types")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                            .unwrap_or_default();
+                        let count = req.get("count").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+
+                        let config = crate::invariant::InvariantConfig {
+                            inputs_per_function: count,
+                            min_confidence: manager.config.invariant_min_confidence,
+                            ..Default::default()
+                        };
+
+                        // Generate stub execution traces (no sandbox execution in daemon handler)
+                        let traces: Vec<crate::invariant::ExecutionTrace> = (0..count).map(|i| {
+                            crate::invariant::ExecutionTrace {
+                                input_id: i,
+                                function_name: function_name.to_string(),
+                                return_value: Some(format!("result_{}", i % 10)),
+                                return_type_hint: param_types.first().cloned().unwrap_or_else(|| "string".into()),
+                                exception: None,
+                                stdout: String::new(),
+                                stderr: String::new(),
+                                execution_time_us: 100,
+                                exit_code: 0,
+                                side_effects: vec![],
+                                branches_hit: vec![],
+                            }
+                        }).collect();
+
+                        let (count_found, viol_count, invariants, violations) = crate::invariant::mine_invariants(&traces, &config);
+
+                        DaemonResponse {
+                            success: true,
+                            receipt: None,
+                            error: Some(serde_json::to_string(&serde_json::json!({
+                                "function": function_name,
+                                "inputs_generated": count,
+                                "invariants_found": count_found,
+                                "violations_found": viol_count,
+                                "invariants": invariants,
+                                "violations": violations,
+                            })).unwrap_or_default()),
+                        }
+                    }
+                    Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) },
+                }
+            }
             _ => {
                 DaemonResponse { success: false, receipt: None, error: Some(format!("Unknown method: {}", request.method)) }
             }

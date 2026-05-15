@@ -172,6 +172,16 @@ pub struct SandboxConfig {
     /// Timeout per differential execution in seconds.
     #[serde(default = "default_diff_exec_timeout")]
     pub differential_exec_timeout_secs: u64,
+
+    /// Enable invariant mining subsystem.
+    #[serde(default)]
+    pub invariant_enabled: bool,
+    /// Number of inputs per function for invariant mining.
+    #[serde(default = "default_invariant_inputs")]
+    pub invariant_inputs_per_function: usize,
+    /// Minimum confidence threshold for invariant acceptance.
+    #[serde(default = "default_invariant_confidence")]
+    pub invariant_min_confidence: f64,
 }
 
 fn default_fuzz_danger_decay() -> f32 { 0.7 }
@@ -200,6 +210,8 @@ fn default_delta_max_iterations() -> u32 { 200 }
 fn default_delta_timeout() -> u64 { 30 }
 fn default_diff_workers() -> usize { 8 }
 fn default_diff_exec_timeout() -> u64 { 10 }
+fn default_invariant_inputs() -> usize { 1000 }
+fn default_invariant_confidence() -> f64 { 0.99 }
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -242,6 +254,9 @@ impl Default for SandboxConfig {
             differential_enabled: false,
             differential_parallel_workers: default_diff_workers(),
             differential_exec_timeout_secs: default_diff_exec_timeout(),
+            invariant_enabled: false,
+            invariant_inputs_per_function: default_invariant_inputs(),
+            invariant_min_confidence: default_invariant_confidence(),
         }
     }
 }
