@@ -78,3 +78,18 @@ class EvidenceClient:
             return result.get("success", False)
         except Exception:
             return False
+
+    async def suggest_chain(self, bug_ids: list[str], max_hops: int = 10) -> dict:
+        """Analyze bugs and discover exploit chains.
+        
+        Args:
+            bug_ids: List of confirmed bug IDs to analyze
+            max_hops: Maximum chain length
+            
+        Returns dict with chains, severity escalations, etc.
+        """
+        return await self._send_json({
+            "method": "suggest_chain",
+            "bug_ids": bug_ids,
+            "max_hops": max_hops,
+        })

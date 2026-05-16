@@ -77,6 +77,8 @@ pub enum EdgeKind {
     ContributedBy,
     /// Two trigger conditions are semantically equivalent.
     ConditionEquivalent,
+    /// Bug A's effects satisfy Bug B's preconditions (Phase 29 chain).
+    Enables,
 }
 
 /// An edge in the evidence graph.

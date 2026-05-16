@@ -4,6 +4,7 @@
 /// Methods: add_claim, add_sandbox_run, link_result, confirm_bug, stats, query,
 ///          score_agent, verify, health.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info};
 
+use crate::chain;
 use crate::graph::EvidenceGraph;
 use crate::trigger;
 use crate::types::{EvidenceQuery, NodeKind};
@@ -54,6 +56,10 @@ struct DaemonRequest {
     dimension: String,
     #[serde(default)]
     layer: String,
+    #[serde(default)]
+    bug_ids: Vec<String>,
+    #[serde(default)]
+    max_hops: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -220,6 +226,46 @@ fn process(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
                     error: None,
                 }
             }
+        }
+
+        "suggest_chain" => {
+            let bug_ids: Vec<String> = req.bug_ids.clone();
+            let max_hops = req.max_hops.unwrap_or(10);
+
+            let nodes = graph.nodes.read();
+            let mut severities = HashMap::new();
+            let mut effects = Vec::new();
+            let mut preconditions = Vec::new();
+
+            for id in &bug_ids {
+                for node in nodes.iter() {
+                    if node.label == *id && node.kind == NodeKind::ConfirmedBug {
+                        let sev = node.severity.unwrap_or(5);
+                        severities.insert(id.clone(), sev);
+                        let desc = &node.description;
+                        effects.extend(chain::extract_effects(id, desc, sev));
+                        preconditions.extend(chain::extract_preconditions(id, desc, sev));
+                    }
+                }
+            }
+            drop(nodes);
+
+            let matcher = chain::ChainSemanticMatcher::new(0.3);
+            let matches = matcher.find_matches(&effects, &preconditions);
+
+            let chain_graph = chain::build_chain_graph(&matches);
+            let chains = chain::detect_chains(&chain_graph, &severities, max_hops);
+            let escalated = chain::escalate_severities(&chains, &severities);
+
+            let result = serde_json::json!({
+                "matches_found": matches.len(),
+                "chains_found": chains.len(),
+                "chains": chains,
+                "original_severities": severities,
+                "escalated_severities": escalated,
+            });
+
+            DaemonResponse { success: true, data: Some(result), error: None }
         }
 
         _ => DaemonResponse { success: false, data: None, error: Some(format!("Unknown method: {}", req.method)) },

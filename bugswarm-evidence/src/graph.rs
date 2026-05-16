@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use parking_lot::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::trigger;
 use crate::types::{
@@ -16,7 +16,7 @@ use crate::types::{
 /// - Every ConfirmedBug node must have at least one Confirms edge from a SandboxRun.
 /// - Node IDs are monotonically increasing.
 pub struct EvidenceGraph {
-    nodes: RwLock<Vec<EvidenceNode>>,
+    pub nodes: RwLock<Vec<EvidenceNode>>,
     edges: RwLock<Vec<EvidenceEdge>>,
     /// Adjacency list: node_id → list of (edge_index, target_node_id)
     out_edges: RwLock<HashMap<NodeId, Vec<(usize, NodeId)>>>,

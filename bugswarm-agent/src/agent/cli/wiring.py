@@ -238,6 +238,19 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         cache_ttl_secs=0.0,
     ))
 
+    # Phase 29: Vulnerability Chaining tool
+    tools.register(ToolDefinition(
+        name="suggest_chain",
+        description="Analyze confirmed bugs and discover multi-step exploit chains. Connects individual bugs via effect→precondition semantic matching (BFS traversal), computes chain severity using weighted calculus, identifies RCE-capable chains, and auto-generates combined PoCs when all members have individual sandbox PoCs.",
+        parameters={"type": "object", "properties": {
+            "bug_ids": {"type": "array", "items": {"type": "string"}, "description": "List of confirmed bug IDs to analyze for chains"},
+            "max_hops": {"type": "integer", "description": "Maximum chain length (default: 10)"},
+        }, "required": ["bug_ids"]},
+        handler=lambda args: _suggest_chain(evidence, args),
+        timeout_secs=30.0,
+        cache_ttl_secs=60.0,
+    ))
+
     # 6. Parser
     parser = OutputParser()
 
@@ -511,3 +524,17 @@ async def _explore_paths_async(sandbox, args):
 
 def _explore_paths(sandbox, args):
     return _run_async(_explore_paths_async(sandbox, args))
+
+
+async def _suggest_chain_async(evidence, args):
+    try:
+        import json
+        bug_ids = args.get("bug_ids", [])
+        max_hops = int(args.get("max_hops", 10))
+        result = await evidence.suggest_chain(bug_ids, max_hops)
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"suggest_chain failed: {e}")
+
+def _suggest_chain(evidence, args):
+    return _run_async(_suggest_chain_async(evidence, args))
