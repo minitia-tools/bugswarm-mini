@@ -60,6 +60,18 @@ struct DaemonRequest {
     bug_ids: Vec<String>,
     #[serde(default)]
     max_hops: Option<usize>,
+    #[serde(default)]
+    original_line: String,
+    #[serde(default)]
+    replacement_line: String,
+    #[serde(default)]
+    function: String,
+    #[serde(default)]
+    line_number: Option<u32>,
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    file_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -266,6 +278,57 @@ fn process(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
             });
 
             DaemonResponse { success: true, data: Some(result), error: None }
+        }
+
+        "predict_fix_impact" => {
+            let fix = match serde_json::from_value::<crate::fix_predict::FixProposal>(
+                serde_json::json!({
+                    "bug_id": req.bug_id,
+                    "file_path": req.file_path.clone().unwrap_or_default(),
+                    "function_name": req.function.clone(),
+                    "original_line": req.original_line.clone(),
+                    "replacement_line": req.replacement_line.clone(),
+                    "line_number": req.line_number.unwrap_or(0),
+                    "description": req.description.clone(),
+                    "language": if req.language.is_empty() { "python".into() } else { req.language.clone() },
+                })
+            ) {
+                Ok(f) => f,
+                Err(e) => {
+                    return DaemonResponse { success: false, data: None, error: Some(format!("Invalid FixProposal: {}", e)) };
+                }
+            };
+            
+            let call_graph: std::collections::HashMap<String, Vec<String>> = {
+                let nodes = graph.nodes.read();
+                let mut cg: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+                for node in nodes.iter() {
+                    if node.kind == NodeKind::Agent || node.kind == NodeKind::Claim {
+                        cg.entry(node.label.clone()).or_default();
+                    }
+                }
+                cg.entry(fix.function_name.clone()).or_default();
+                let out_edges = graph.out_edges.read();
+                for (source_id, edges) in out_edges.iter() {
+                    for (_, target_id) in edges {
+                        if let Some(source_node) = nodes.get(*source_id) {
+                            if let Some(target_node) = nodes.get(*target_id) {
+                                cg.entry(source_node.label.clone()).or_default().push(target_node.label.clone());
+                            }
+                        }
+                    }
+                }
+                cg
+            };
+            
+            let priors = crate::fix_predict::LanguagePriors::default();
+            let report = crate::fix_predict::predict_fix_impact(fix, &call_graph, &priors, 5);
+            
+            DaemonResponse {
+                success: true,
+                data: Some(serde_json::to_value(&report).unwrap_or_default()),
+                error: None,
+            }
         }
 
         _ => DaemonResponse { success: false, data: None, error: Some(format!("Unknown method: {}", req.method)) },

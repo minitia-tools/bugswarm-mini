@@ -93,3 +93,25 @@ class EvidenceClient:
             "bug_ids": bug_ids,
             "max_hops": max_hops,
         })
+
+    async def predict_fix_impact(self, bug_id: str, function_name: str,
+                                  file_path: str, original_line: str,
+                                  replacement_line: str, line_number: int = 0,
+                                  language: str = "python",
+                                  description: str = "") -> dict:
+        """Predict whether a proposed fix will introduce new bugs.
+        
+        Returns FixImpactReport with affected callers, confidence score,
+        regression tests, and recommendation.
+        """
+        return await self._send_json({
+            "method": "predict_fix_impact",
+            "bug_id": bug_id,
+            "function": function_name,
+            "file_path": file_path,
+            "original_line": original_line,
+            "replacement_line": replacement_line,
+            "line_number": line_number,
+            "language": language,
+            "description": description,
+        })

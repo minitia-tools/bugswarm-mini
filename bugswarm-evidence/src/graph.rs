@@ -19,7 +19,7 @@ pub struct EvidenceGraph {
     pub nodes: RwLock<Vec<EvidenceNode>>,
     edges: RwLock<Vec<EvidenceEdge>>,
     /// Adjacency list: node_id → list of (edge_index, target_node_id)
-    out_edges: RwLock<HashMap<NodeId, Vec<(usize, NodeId)>>>,
+    pub out_edges: RwLock<HashMap<NodeId, Vec<(usize, NodeId)>>>,
     /// Reverse adjacency: node_id → list of (edge_index, source_node_id)
     in_edges: RwLock<HashMap<NodeId, Vec<(usize, NodeId)>>>,
     pub trigger_manager: RwLock<crate::trigger::TriggerManager>,

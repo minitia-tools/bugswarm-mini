@@ -251,6 +251,25 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         cache_ttl_secs=60.0,
     ))
 
+    # Phase 30: Fix-Induced Bug Prediction tool (CAPSTONE)
+    tools.register(ToolDefinition(
+        name="predict_fix_impact",
+        description="Predict whether a proposed bug fix will introduce new bugs. Analyzes all callers via CPG call graph, computes value range overlap, generates regression tests for flagged callers, and produces a Bayesian confidence score. The final safety net before merging any fix.",
+        parameters={"type": "object", "properties": {
+            "bug_id": {"type": "string", "description": "The bug being fixed"},
+            "function_name": {"type": "string", "description": "The function being changed"},
+            "file_path": {"type": "string", "description": "File path of the changed function"},
+            "original_line": {"type": "string", "description": "The original code line"},
+            "replacement_line": {"type": "string", "description": "The proposed replacement line"},
+            "line_number": {"type": "integer", "description": "Line number of the change"},
+            "language": {"type": "string", "description": "Programming language (python, c, rust, etc.)"},
+            "description": {"type": "string", "description": "Description of the fix"},
+        }, "required": ["bug_id", "function_name", "original_line", "replacement_line"]},
+        handler=lambda args: _predict_fix_impact(evidence, args),
+        timeout_secs=30.0,
+        cache_ttl_secs=0.0,
+    ))
+
     # 6. Parser
     parser = OutputParser()
 
@@ -538,3 +557,27 @@ async def _suggest_chain_async(evidence, args):
 
 def _suggest_chain(evidence, args):
     return _run_async(_suggest_chain_async(evidence, args))
+
+
+async def _predict_fix_impact_async(evidence, args):
+    try:
+        import json
+        bug_id = args.get("bug_id", "unknown")
+        function_name = args.get("function_name", "")
+        file_path = args.get("file_path", "")
+        original = args.get("original_line", "")
+        replacement = args.get("replacement_line", "")
+        line_number = int(args.get("line_number", 0))
+        language = args.get("language", "python")
+        description = args.get("description", "")
+        
+        result = await evidence.predict_fix_impact(
+            bug_id, function_name, file_path, original, replacement,
+            line_number, language, description
+        )
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"predict_fix_impact failed: {e}")
+
+def _predict_fix_impact(evidence, args):
+    return _run_async(_predict_fix_impact_async(evidence, args))
