@@ -17,6 +17,7 @@ use crate::container::ContainerManager;
 use crate::delta::{DeltaConfig, DeltaMinimizer, OracleFn};
 use crate::error::SandboxResult;
 use crate::fuzzer::{FuzzRequest, FuzzResponse};
+use bugswarm_symbolic::concolic::{ConcolicConfig, ConcolicEngine};
 
 #[derive(Debug, Deserialize)]
 struct DaemonRequest {
@@ -473,6 +474,81 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     success: true,
                     receipt: None,
                     error: Some(serde_json::to_string(&result).unwrap_or_default()),
+                }
+            }
+            "explore_paths" => {
+                let req: serde_json::Value = match serde_json::from_str(line.trim()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let resp = DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) };
+                        let json = serde_json::to_string(&resp).unwrap_or_default();
+                        writer.write_all(json.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
+                        continue;
+                    }
+                };
+                let seed_input = req.get("seed_input").and_then(|v| v.as_str()).unwrap_or("");
+                let max_queries = req.get("max_queries").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
+                let function_name = req.get("function").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+                let conditions: Vec<(u32, String)> = req.get("conditions")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| {
+                        let line = v.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as u32;
+                        let cond = v.get("condition").and_then(|c| c.as_str()).unwrap_or("");
+                        Some((line, cond.to_string()))
+                    }).collect())
+                    .unwrap_or_default();
+
+                let solver_timeout = req.get("solver_timeout_ms").and_then(|v| v.as_u64()).unwrap_or(5000);
+                let window_size = req.get("window_size").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+                let config = ConcolicConfig {
+                    max_queries,
+                    solver_timeout_ms: solver_timeout,
+                    constraint_window_size: window_size,
+                    ..Default::default()
+                };
+
+                let path_refs: Vec<(u32, &str)> = conditions.iter().map(|(l, c)| (*l, c.as_str())).collect();
+
+                let mut engine = ConcolicEngine::new(config);
+                let result = engine.explore_paths(seed_input, &path_refs, max_queries);
+
+                let output = serde_json::json!({
+                    "function": function_name,
+                    "total_queries": result.total_queries,
+                    "total_runs": result.total_runs,
+                    "sat_count": result.sat_count,
+                    "unsat_count": result.unsat_count,
+                    "timeout_count": result.timeout_count,
+                    "coverage_percent": result.coverage_percent,
+                    "covered_branches": result.covered_branches,
+                    "uncovered_branches": result.uncovered_branches.iter().map(|ub| {
+                        serde_json::json!({
+                            "branch_id": ub.branch_id,
+                            "line": ub.source_line,
+                            "condition": ub.condition,
+                            "reason": format!("{:?}", ub.reason),
+                        })
+                    }).collect::<Vec<_>>(),
+                    "is_complete": result.is_complete,
+                    "starvation_detected": result.starvation_detected,
+                    "solver_latency": {
+                        "p50": result.solver_latency.p50(),
+                        "p95": result.solver_latency.p95(),
+                        "p99": result.solver_latency.p99(),
+                        "mean": result.solver_latency.mean(),
+                        "count": result.solver_latency.count(),
+                    },
+                    "total_solver_time_ms": result.total_solver_time_ms,
+                });
+
+                DaemonResponse {
+                    success: true,
+                    receipt: None,
+                    error: Some(serde_json::to_string(&output).unwrap_or_default()),
                 }
             }
             _ => {

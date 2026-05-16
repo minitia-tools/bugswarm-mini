@@ -250,7 +250,7 @@ fn process(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
             }
             drop(nodes);
 
-            let matcher = chain::ChainSemanticMatcher::new(0.3);
+            let mut matcher = chain::ChainSemanticMatcher::new(0.3);
             let matches = matcher.find_matches(&effects, &preconditions);
 
             let chain_graph = chain::build_chain_graph(&matches);
