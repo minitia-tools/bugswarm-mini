@@ -18,6 +18,7 @@ tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macro
 parking_lot = "0.12"
 fxhash = "0.2"
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 rstest = "0.23"

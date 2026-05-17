@@ -8,7 +8,8 @@ description = "Bug Swarm CLI — Execution Sandbox Daemon. Isolated PoC executio
 bugswarm-evidence = { path = "../bugswarm-evidence" }
 bugswarm-symbolic = { path = "../bugswarm-symbolic" }
 tokio = { version = "1.41", features = ["full"] }
-bollard = "0.17"
+# bollard 0.18+ may require Docker API version bump
+bollard = ">=0.17, <0.18"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

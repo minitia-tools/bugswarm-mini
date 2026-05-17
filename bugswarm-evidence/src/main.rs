@@ -2,12 +2,21 @@ use bugswarm_evidence::graph::EvidenceGraph;
 use bugswarm_evidence::types::{EvidenceNode, NodeKind, EvidenceEdge, EdgeKind, EvidenceQuery};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use tracing::info;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Parser)]
 #[command(name = "bugswarm-evidence", version, about = "Bug Swarm Evidence Graph CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Write logs to a file (in addition to stdout).
+    #[arg(long)]
+    log_file: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -20,16 +29,49 @@ enum Commands {
     Verify,
     /// Run Phase 5 Gate tests.
     Test,
+    /// Run as a daemon listening on a Unix socket.
+    RunServer {
+        /// Unix socket path.
+        #[arg(short, long, default_value = "/var/run/bugswarm/evidence.sock")]
+        socket: PathBuf,
+    },
 }
 
 fn main() {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_layer = fmt::layer().with_target(true).with_thread_ids(true).json();
+    
     let cli = Cli::parse();
+
+    let subscriber = tracing_subscriber::registry().with(env_filter).with(fmt_layer);
+    if let Some(ref path) = cli.log_file {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("Failed to open log file");
+        let file_layer = fmt::layer()
+            .with_writer(std::sync::Mutex::new(file))
+            .json();
+        subscriber.with(file_layer).try_init().ok();
+    } else {
+        subscriber.try_init().ok();
+    }
 
     match cli.command {
         Commands::Demo => run_demo(),
         Commands::Stats => run_stats(),
         Commands::Verify => run_verify(),
         Commands::Test => run_gate_tests(),
+        Commands::RunServer { socket } => {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                info!("Starting evidence daemon on {}", socket.display());
+                bugswarm_evidence::daemon::run_daemon(socket).await
+                    .expect("Evidence daemon failed");
+            });
+        }
     }
 }
 

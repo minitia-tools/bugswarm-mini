@@ -73,6 +73,28 @@ CRITICAL: Every response MUST contain exactly one JSON block. Freeform text with
 
 
 # ═══════════════════════════════════════════════════════════════
+# Tool Permissions — Capability Gating
+# ═══════════════════════════════════════════════════════════════
+
+TOOL_PERMISSIONS = {
+    "read_file": "read",
+    "list_dir": "read",
+    "query_cpg": "read",
+    "trace_dependency": "read",
+    "exec_sandbox": "execute",
+    "delta_debug": "execute",
+    "diff_execute": "read",
+    "mine_invariants": "analyze",
+    "run_mutations": "analyze",
+    "solve_reachability": "analyze",
+    "explore_paths": "analyze",
+    "describe_trigger": "write",
+    "suggest_chain": "read",
+    "predict_fix_impact": "read",
+}
+
+
+# ═══════════════════════════════════════════════════════════════
 # Tool Definitions
 # ═══════════════════════════════════════════════════════════════
 
@@ -102,6 +124,15 @@ class ToolDispatcher:
 
     async def dispatch(self, tool_name: str, args: dict) -> ToolResult:
         self.tool_history.append({"tool": tool_name, "args": args, "time": time.time()})
+
+        permission = TOOL_PERMISSIONS.get(tool_name)
+        if permission is None:
+            return ToolResult(False, f"Unknown tool: {tool_name}")
+
+        if permission == "execute":
+            exec_count = sum(1 for t in self.tool_history if TOOL_PERMISSIONS.get(t["tool"]) == "execute")
+            if exec_count > 20:
+                return ToolResult(False, "Execute rate limit exceeded — too many executions in one session")
 
         if tool_name == "query_cpg":
             return await self._query_cpg(args)
@@ -143,6 +174,12 @@ class ToolDispatcher:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
                 data = json.loads(stdout.decode())
                 return ToolResult(True, json.dumps(data, indent=2), {"source": "cpg"})
+        except asyncio.TimeoutError:
+            return ToolResult(False, "CPG query timed out (30s)")
+        except (ConnectionError, OSError) as e:
+            return ToolResult(False, f"CPG service unavailable: {e}")
+        except json.JSONDecodeError as e:
+            return ToolResult(False, f"CPG invalid response: {e}")
         except Exception as e:
             return ToolResult(False, f"CPG query failed: {e}")
 
@@ -163,6 +200,10 @@ class ToolDispatcher:
                 lines = [l for l in text.split('\n') if func in l]
                 return ToolResult(True, '\n'.join(lines[:20]), {"function": func, "radius": radius})
             return ToolResult(True, text[:2000], {"function": func, "radius": radius})
+        except asyncio.TimeoutError:
+            return ToolResult(False, "Trace dependency timed out (30s)")
+        except (ConnectionError, OSError) as e:
+            return ToolResult(False, f"Trace service unavailable: {e}")
         except Exception as e:
             return ToolResult(False, f"Trace dependency failed: {e}")
 
@@ -179,6 +220,10 @@ class ToolDispatcher:
                 entries.append(f"  [{t}] {entry.name}")
             entries.insert(0, f"Contents of {target}:")
             return ToolResult(True, '\n'.join(entries))
+        except PermissionError as e:
+            return ToolResult(False, f"Permission denied: {e}")
+        except OSError as e:
+            return ToolResult(False, f"List dir failed: {e}")
         except Exception as e:
             return ToolResult(False, f"List dir failed: {e}")
 
@@ -225,6 +270,8 @@ class ToolDispatcher:
                 return ToolResult(True, cleaned_output[:2000], {"raw": True})
         except asyncio.TimeoutError:
             return ToolResult(False, "Sandbox execution timed out (130s)")
+        except (ConnectionError, OSError) as e:
+            return ToolResult(False, f"Sandbox infrastructure error: {e}")
         except Exception as e:
             return ToolResult(False, f"Sandbox execution failed: {e}")
         finally:
@@ -276,6 +323,12 @@ class ToolDispatcher:
                 "file": str(full_path), "lines": f"{start}-{end}",
                 "total_lines": len(lines), "pii_redactions": pii_count,
             })
+        except FileNotFoundError:
+            return ToolResult(False, f"File not found: {path}")
+        except PermissionError:
+            return ToolResult(False, f"Permission denied: {path}")
+        except OSError as e:
+            return ToolResult(False, f"File read failed: {e}")
         except Exception as e:
             return ToolResult(False, f"File read failed: {e}")
 
@@ -529,6 +582,15 @@ class BugSwarmAgent:
 
         try:
             response = await self.gateway.chat(request, self.config.provider)
+        except asyncio.TimeoutError:
+            print(f"  LLM timeout")
+            return None
+        except (ConnectionError, OSError) as e:
+            print(f"  LLM infrastructure error: {e}")
+            return None
+        except ValueError as e:
+            print(f"  LLM invalid request: {e}")
+            return None
         except Exception as e:
             print(f"  LLM error: {e}")
             return None
@@ -659,8 +721,12 @@ class BugSwarmAgent:
 
             result = await self.tools.dispatch(tool_name, args)
             return result
+        except (ValueError, IndexError, KeyError) as e:
+            return ToolResult(False, f"Tool format error: {e}")
+        except json.JSONDecodeError as e:
+            return ToolResult(False, f"Tool JSON parse error: {e}")
         except Exception as e:
-            return ToolResult(False, f"Tool parse error: {e}")
+            return ToolResult(False, f"Tool dispatch error: {e}")
 
     async def _execute_poc_from_content(self, content: str) -> ToolResult:
         """Execute PoC embedded in the content."""
@@ -679,6 +745,8 @@ class BugSwarmAgent:
             poc_code = data.get("code", "")
             if poc_code:
                 return await self.tools.dispatch("exec_sandbox", {"poc_code": poc_code})
+        except (ValueError, IndexError, json.JSONDecodeError):
+            pass
         except Exception:
             pass
         return ToolResult(False, "Failed to parse PoC")

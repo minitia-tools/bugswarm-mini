@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use bugswarm_cpg::graph::CodePropertyGraph;
 use bugswarm_cpg::parser;
@@ -15,6 +17,10 @@ use bugswarm_cpg::parser;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Write logs to a file (in addition to stdout).
+    #[arg(long)]
+    log_file: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -92,17 +98,35 @@ enum Commands {
         /// Unix socket path.
         #[arg(short, long, default_value = "/var/run/bugswarm/cpg.sock")]
         socket: PathBuf,
+
+        /// PID file path.
+        #[arg(long, default_value = "/var/run/bugswarm/cpg.pid")]
+        pid_file: PathBuf,
     },
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .json()
-        .init();
-
     let cli = Cli::parse();
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_layer = fmt::layer().with_target(true).with_thread_ids(true).json();
+    let subscriber = tracing_subscriber::registry().with(env_filter).with(fmt_layer);
+
+    if let Some(ref path) = cli.log_file {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("Failed to open log file");
+        let file_layer = fmt::layer()
+            .with_writer(std::sync::Mutex::new(file))
+            .json();
+        subscriber.with(file_layer).try_init().ok();
+    } else {
+        subscriber.try_init().ok();
+    }
 
     match cli.command {
         Commands::Index { repo, output, prune } => {
@@ -205,8 +229,18 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&stats)?);
         }
 
-        Commands::RunServer { socket } => {
+        Commands::RunServer { socket, pid_file } => {
             info!("Starting CPG daemon on {}", socket.display());
+            // Create PID file (cleaned up on drop)
+            struct PidGuard(std::path::PathBuf);
+            impl Drop for PidGuard {
+                fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+            }
+            if let Some(parent) = pid_file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&pid_file, std::process::id().to_string())?;
+            let _pid = PidGuard(pid_file);
             bugswarm_cpg::daemon::run_daemon(socket).await?;
         }
     }

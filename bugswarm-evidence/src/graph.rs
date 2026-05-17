@@ -613,6 +613,40 @@ impl EvidenceGraph {
     pub fn edge_count(&self) -> usize {
         self.edges.read().len()
     }
+
+    /// Save graph nodes and edges to a JSON file.
+    pub fn save_graph(&self, path: &std::path::Path) -> Result<usize, String> {
+        let nodes = self.nodes.read();
+        let edges = self.edges.read();
+        let data = serde_json::json!({
+            "nodes": nodes.as_slice(),
+            "edges": edges.as_slice(),
+        });
+        let json = serde_json::to_string_pretty(&data).map_err(|e| format!("serialize: {}", e))?;
+        std::fs::write(path, &json).map_err(|e| format!("write: {}", e))?;
+        Ok(nodes.len())
+    }
+
+    /// Load graph nodes and edges from a JSON file, replacing current state.
+    pub fn load_graph(&self, path: &std::path::Path) -> Result<usize, String> {
+        let json = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
+        let data: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("deserialize: {}", e))?;
+        let loaded_nodes: Vec<EvidenceNode> = serde_json::from_value(data["nodes"].clone()).map_err(|e| format!("nodes: {}", e))?;
+        let loaded_edges: Vec<EvidenceEdge> = serde_json::from_value(data["edges"].clone()).map_err(|e| format!("edges: {}", e))?;
+        let count = loaded_nodes.len();
+        *self.nodes.write() = loaded_nodes;
+        *self.edges.write() = loaded_edges;
+        // Rebuild adjacency
+        let mut out = self.out_edges.write();
+        let mut inp = self.in_edges.write();
+        out.clear();
+        inp.clear();
+        for (i, edge) in self.edges.read().iter().enumerate() {
+            out.entry(edge.from).or_default().push((i, edge.to));
+            inp.entry(edge.to).or_default().push((i, edge.from));
+        }
+        Ok(count)
+    }
 }
 
 impl Default for EvidenceGraph {

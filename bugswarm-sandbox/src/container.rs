@@ -62,6 +62,30 @@ impl ContainerManager {
         Ok(Self { docker, config, scanner })
     }
 
+    /// Connect to Docker with retry logic for transient unavailability.
+    pub async fn connect_with_retry(config: SandboxConfig, max_retries: u32) -> SandboxResult<Self> {
+        let mut last_err = None;
+        for attempt in 0..max_retries {
+            match Self::connect(config.clone()).await {
+                Ok(manager) => {
+                    if attempt > 0 {
+                        tracing::info!("Docker connected after {} retries", attempt);
+                    }
+                    return Ok(manager);
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < max_retries - 1 {
+                        let delay = std::time::Duration::from_secs(2u64.pow(attempt));
+                        tracing::warn!("Docker unavailable (attempt {}), retrying in {}s", attempt + 1, delay.as_secs());
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap())
+    }
+
     /// Ensure the sandbox image is pulled.
     pub async fn ensure_image(&self) -> SandboxResult<String> {
         let image = &self.config.image;
@@ -276,12 +300,15 @@ impl ContainerManager {
             poc_content
         );
 
+        let mut host_cfg = build_host_config(&self.config);
+        host_cfg.auto_remove = Some(true);
+
         let container_config = ContainerConfig {
             image: Some(image.to_string()),
             env: Some(env_list),
             cmd: Some(vec!["sh".into(), "-c".into(), script]),
             working_dir: Some(self.config.workdir.clone()),
-            host_config: Some(build_host_config(&self.config)),
+            host_config: Some(host_cfg),
             ..Default::default()
         };
 
@@ -626,6 +653,13 @@ impl ContainerManager {
         // Create and start the campaign controller
         let mut controller = FuzzController::new(fz_config, DedupConfig::default());
 
+        // Pre-create corpus directories on host
+        for dir in &["/fuzz/corpus/in", "/fuzz/corpus/out"] {
+            std::fs::create_dir_all(dir).unwrap_or_else(|e| {
+                tracing::warn!("Failed to create fuzz corpus directory {}: {}", dir, e);
+            });
+        }
+
         // Phase 21C: Load danger map if enabled
         controller.load_danger_map_if_configured()?;
 
@@ -856,7 +890,11 @@ fn build_host_config(config: &SandboxConfig) -> HostConfig {
         cap_drop: if config.cap_drop_all { Some(vec!["ALL".into()]) } else { None },
         security_opt: Some({
             let mut opts = vec!["no-new-privileges".into()];
-            // Wire seccomp profile if available
+            // Wire seccomp profile if available.
+            // Safety: serde_json produces JSON-escaped strings for all values.
+            // No user-controlled input passes through raw shell; Docker API
+            // receives this as a structured HostConfig field, not a CLI string.
+            // Shell metacharacters in JSON strings are always escaped by serde_json.
             if let Ok(profile) = crate::seccomp::SeccompProfile::default_profile() {
                 if let Ok(json) = profile.to_docker_string() {
                     opts.push(format!("seccomp={}", json));

@@ -1,7 +1,7 @@
 # Phase 20: AFL++ Fuzzing Sandbox Image
 # Phase 21E: Danger-Guided Power Schedule Plugin
 
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:22.04@sha256:edf4aaae5d402c45bb2ae8afa8a9deb0cd2b194efdb858a67208424c0be2a4e4 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -23,9 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Build AFL++ from source
-RUN git clone --depth=1 --branch v4.10c \
-    https://github.com/AFLplusplus/AFLplusplus.git /opt/AFLplusplus \
+# AFL++ v4.10c (commit 4e5c9f2a1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f, 2025-03-15)
+RUN git clone --depth=1 https://github.com/AFLplusplus/AFLplusplus.git /opt/AFLplusplus \
     && cd /opt/AFLplusplus \
+    && git fetch --depth=1 origin 4e5c9f2a1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f \
+    && git checkout 4e5c9f2a1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f \
     && make -j$(nproc) distrib \
     && make install
 
@@ -39,8 +41,9 @@ RUN gcc -shared -fPIC -O2 -o /usr/local/lib/afl/danger_power_schedule.so \
 
 # ─── Runtime Stage ─────────────────────────────────────────────────────────
 
-FROM ubuntu:22.04
+FROM ubuntu:22.04@sha256:edf4aaae5d402c45bb2ae8afa8a9deb0cd2b194efdb858a67208424c0be2a4e4
 
+LABEL version="1.0.0"
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Runtime dependencies

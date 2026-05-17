@@ -472,6 +472,19 @@ class SwarmOrchestrator:
                                sum(1 for f in all_findings if f.get("verified") and f.get("agent") == aid))
             logger.info("learning_persisted", patterns=pdb.count, hotspots=len(ht.entries), agents=len(ah.records))
 
+            # Also push trigger conditions to Rust evidence daemon
+            try:
+                from agent.evidence_client import EvidenceClient
+                ev_client = EvidenceClient()
+                for finding in all_findings:
+                    if finding.get("verified"):
+                        bug_id = finding.get("id", hashlib.sha256(finding.get("claim", "").encode()).hexdigest()[:12])
+                        asyncio.ensure_future(ev_client.add_trigger_condition(
+                            bug_id, "Input", f"Agent: {finding.get('claim', '')[:200]}", "agent"
+                        ))
+            except Exception:
+                pass
+
             # Phase 19: Trigger retrain if enough new bugs accumulated
             if pdb.count_since_last_train >= 50:
                 self._maybe_retrain_model(pdb, ht)

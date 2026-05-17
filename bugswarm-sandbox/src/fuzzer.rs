@@ -1014,11 +1014,17 @@ impl AFLStatsParser {
 // ---------------------------------------------------------------------------
 
 fn parse_u64(s: &str) -> Option<u64> {
-    s.parse().ok()
+    s.parse::<u64>().ok().or_else(|| {
+        log::warn!("fuzzer_stats: unexpected non-u64 value: '{}'", s);
+        None
+    })
 }
 
 fn parse_f64(s: &str) -> Option<f64> {
-    s.parse().ok()
+    s.parse::<f64>().ok().or_else(|| {
+        log::warn!("fuzzer_stats: unexpected non-f64 value: '{}'", s);
+        None
+    })
 }
 
 fn parse_percentage(s: &str) -> Option<f64> {

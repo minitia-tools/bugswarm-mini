@@ -1,5 +1,5 @@
 # Sandbox Python ASAN Image — Python with AddressSanitizer + UndefinedBehaviorSanitizer
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:8643fa14d31121b2adb22f374ddf0455c41eb18a79fb414015f26117956eb40c
 
 # Install build dependencies for ASAN-instrumented Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,6 +21,10 @@ RUN pip install --no-cache-dir cffi
 WORKDIR /sandbox
 RUN mkdir -p /tmp/sandbox
 
-# Label
+# Labels
+LABEL version="1.0.0"
+LABEL org.opencontainers.image.version="1.0.0"
 LABEL com.bugswarm.sanitizer="asan+ubsan"
 LABEL com.bugswarm.phase="16"
+
+CMD ["python3", "-c", "print('BugSwarm ASAN sandbox ready')"]

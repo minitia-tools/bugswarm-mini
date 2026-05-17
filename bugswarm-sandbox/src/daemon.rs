@@ -65,11 +65,20 @@ struct DaemonResponse {
 }
 
 /// Start the sandbox daemon on a Unix socket.
-pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig) -> SandboxResult<()> {
-    // Remove stale socket file if it exists
+pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig, http_port: Option<u16>) -> SandboxResult<()> {
+    // Before removing stale socket, check if another instance is running
     if socket_path.exists() {
-        if let Err(e) = std::fs::remove_file(&socket_path) {
-            tracing::warn!("Failed to remove stale socket {}: {}", socket_path.display(), e);
+        match tokio::net::UnixStream::connect(&socket_path).await {
+            Ok(_) => {
+                tracing::error!("Another daemon instance is already running on {}. Refusing to start.", socket_path.display());
+                return Err(crate::error::SandboxError::Other(format!("Daemon already running on {}", socket_path.display())));
+            }
+            Err(_) => {
+                tracing::info!("Removing stale socket file: {}", socket_path.display());
+                std::fs::remove_file(&socket_path).map_err(|e| {
+                    crate::error::SandboxError::Other(format!("Failed to remove stale socket {}: {}", socket_path.display(), e))
+                })?;
+            }
         }
     }
 
@@ -94,6 +103,36 @@ pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig) -> SandboxR
     }
 
     info!("Sandbox daemon listening on {}", socket_path.display());
+
+    // Spawn HTTP health endpoint if configured
+    if let Some(port) = http_port {
+        tokio::spawn(async move {
+            let addr = format!("0.0.0.0:{}", port);
+            match tokio::net::TcpListener::bind(&addr).await {
+                Ok(listener) => {
+                    tracing::info!("HTTP health endpoint listening on {}", addr);
+                    loop {
+                        match listener.accept().await {
+                            Ok((mut tcp_socket, _)) => {
+                                tokio::spawn(async move {
+                                    let mut buf = [0u8; 1024];
+                                    let _ = tokio::io::AsyncReadExt::read(&mut tcp_socket, &mut buf).await;
+                                    let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\n\r\n{\"status\":\"healthy\"}";
+                                    let _ = tokio::io::AsyncWriteExt::write_all(&mut tcp_socket, response).await;
+                                });
+                            }
+                            Err(e) => {
+                                tracing::warn!("HTTP health accept error: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to bind HTTP health endpoint on {}: {}", addr, e);
+                }
+            }
+        });
+    }
 
     let manager = std::sync::Arc::new(ContainerManager::connect(config).await?);
     manager.ensure_image().await?;

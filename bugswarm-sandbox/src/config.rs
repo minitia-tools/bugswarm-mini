@@ -205,11 +205,11 @@ fn default_nofile() -> u64 { 256 }
 fn default_storage_size() -> u64 { DEFAULT_STORAGE_SIZE_GB }
 fn default_cpus() -> f64 { 1.0 }
 fn default_true() -> bool { true }
-fn default_image() -> String { "bugswarm/sandbox-base:latest".into() }
+fn default_image() -> String { format!("bugswarm/sandbox-base:{}", option_env!("BUGSWARM_VERSION").unwrap_or("1.0.0")) }
 fn default_workdir() -> String { "/sandbox".into() }
 fn default_reruns() -> u32 { DEFAULT_RERUN_COUNT }
 fn default_flaky_rate() -> f64 { MIN_FLAKY_FAILURE_RATE }
-fn default_fuzz_image() -> String { "bugswarm/sandbox-fuzz:latest".into() }
+fn default_fuzz_image() -> String { format!("bugswarm/sandbox-fuzz:{}", option_env!("BUGSWARM_VERSION").unwrap_or("1.0.0")) }
 fn default_fuzz_timeout() -> u64 { 1000 }
 fn default_fuzz_memory() -> u64 { 2048 }
 fn default_fuzz_duration() -> u64 { 3600 }

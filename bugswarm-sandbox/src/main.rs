@@ -8,8 +8,8 @@ use tracing_subscriber::EnvFilter;
 use bugswarm_sandbox::config::{
     CausalIntervention, ExecutionReceipt, SandboxConfig,
 };
-use bugswarm_sandbox::error::SandboxError;
 use bugswarm_sandbox::container::ContainerManager;
+use bugswarm_sandbox::error::SandboxError;
 use bugswarm_sandbox::error::SandboxResult;
 use bugswarm_sandbox::seccomp::SeccompProfile;
 
@@ -30,6 +30,10 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Write logs to a file (in addition to stdout).
+    #[arg(long)]
+    log_file: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -141,6 +145,14 @@ enum Commands {
         /// Unix socket path.
         #[arg(short, long, default_value = "/var/run/bugswarm/sandbox.sock")]
         socket: PathBuf,
+
+        /// HTTP health endpoint port (default: none).
+        #[arg(long)]
+        http_port: Option<u16>,
+
+        /// PID file path.
+        #[arg(long, default_value = "/var/run/bugswarm/sandbox.pid")]
+        pid_file: PathBuf,
     },
 
     /// Print the default configuration.
@@ -300,9 +312,11 @@ async fn run_command(cli: Cli) -> SandboxResult<()> {
                 profile.allowed_count());
         }
 
-        Commands::RunServer { socket } => {
+        Commands::RunServer { socket, http_port, pid_file } => {
             info!("Starting sandbox daemon on {}", socket.display());
-            bugswarm_sandbox::daemon::run_daemon(socket, config).await?;
+            let _pid = bugswarm_sandbox::pidfile::PidFile::create(&pid_file)
+                .map_err(|e| SandboxError::Other(format!("Failed to create PID file {}: {}", pid_file.display(), e)))?;
+            bugswarm_sandbox::daemon::run_daemon(socket, config, http_port).await?;
         }
 
         Commands::DefaultConfig => {

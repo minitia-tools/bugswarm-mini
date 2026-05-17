@@ -321,14 +321,16 @@ class SandboxClient:
             
         Returns DiffExecution dict with is_different, diff_magnitude, etc.
         """
+        import json as _json
+        payload = _json.dumps({
+            "method": "diff",
+            "input": output_a,
+            "reference": output_b,
+            "normalizer": normalizer,
+        })
         try:
-            stdout, stderr, rc = await self._run(
-                "diff",
-                "--output-a", output_a,
-                "--output-b", output_b,
-                "--normalizer", normalizer,
-            )
-            return json.loads(stdout)
+            stdout, stderr, rc = await self._run("--request", payload)
+            return _json.loads(stdout)
         except Exception as e:
             return {"is_different": False, "error": str(e)[:200]}
 

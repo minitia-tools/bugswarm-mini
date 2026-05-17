@@ -79,8 +79,15 @@ impl CpgCache {
 
 pub async fn run_daemon(socket_path: PathBuf) -> anyhow::Result<()> {
     if socket_path.exists() {
-        if let Err(e) = std::fs::remove_file(&socket_path) {
-            tracing::warn!("Failed to remove stale socket {}: {}", socket_path.display(), e);
+        match tokio::net::UnixStream::connect(&socket_path).await {
+            Ok(_) => {
+                tracing::error!("Another daemon instance is already running on {}. Refusing to start.", socket_path.display());
+                return Err(anyhow::anyhow!("Daemon already running on {}", socket_path.display()));
+            }
+            Err(_) => {
+                tracing::info!("Removing stale socket file: {}", socket_path.display());
+                std::fs::remove_file(&socket_path)?;
+            }
         }
     }
     if let Some(parent) = socket_path.parent() {

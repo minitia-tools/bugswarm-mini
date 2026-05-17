@@ -8,3 +8,6 @@ __pycache__/
 *.db
 node_modules/
 dist/
+
+# Per-crate lock files — keep only workspace root Cargo.lock
+bugswarm-*/Cargo.lock
