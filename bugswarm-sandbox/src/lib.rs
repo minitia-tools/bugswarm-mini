@@ -10,6 +10,7 @@ pub mod error;
 pub mod fuzzer;
 pub mod invariant;
 pub mod logging;
+pub mod metrics;
 pub mod mutation;
 pub mod pidfile;
 pub mod request_id;

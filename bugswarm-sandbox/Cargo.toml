@@ -13,6 +13,8 @@ telemetry = ["opentelemetry", "tracing-opentelemetry", "opentelemetry-otlp"]
 bugswarm-evidence = { path = "../bugswarm-evidence" }
 bugswarm-symbolic = { path = "../bugswarm-symbolic", optional = true }
 tokio = { version = "1.41", features = ["full"] }
+axum = "0.7"
+hyper = { version = "1", features = ["server"] }
 # bollard 0.18+ may require Docker API version bump
 bollard = ">=0.17, <0.18"
 serde = { workspace = true }
