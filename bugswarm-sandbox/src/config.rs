@@ -205,7 +205,7 @@ fn default_nofile() -> u64 { 256 }
 fn default_storage_size() -> u64 { DEFAULT_STORAGE_SIZE_GB }
 fn default_cpus() -> f64 { 1.0 }
 fn default_true() -> bool { true }
-fn default_image() -> String { "bugswarm/sandbox-python:latest".into() }
+fn default_image() -> String { "bugswarm/sandbox-base:latest".into() }
 fn default_workdir() -> String { "/sandbox".into() }
 fn default_reruns() -> u32 { DEFAULT_RERUN_COUNT }
 fn default_flaky_rate() -> f64 { MIN_FLAKY_FAILURE_RATE }
@@ -343,7 +343,7 @@ pub const PII_PATTERNS: &[(&str, &str)] = &[
     ("phone", r"\b\+?\d{1,3}?[- .]?\(?\d{3}\)?[- .]?\d{3}[- .]?\d{4}\b"),
     ("ipv4", r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
     ("aws_key", r"\bAKIA[0-9A-Z]{16}\b"),
-    ("aws_secret", r"\b[0-9a-zA-Z/+]{40}\b"),
+    ("aws_secret", r"(?i)(aws.?secret|secret.?key|secret.?access).{0,20}([0-9a-zA-Z/+]{40})"),
     ("github_token", r"\bgh[pousr]_[A-Za-z0-9_]{36,}\b"),
     ("jwt", r"\beyJ[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_.+/=]*\b"),
     ("private_key_header", r"-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----"),

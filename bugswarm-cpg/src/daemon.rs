@@ -79,17 +79,24 @@ impl CpgCache {
 
 pub async fn run_daemon(socket_path: PathBuf) -> anyhow::Result<()> {
     if socket_path.exists() {
-        std::fs::remove_file(&socket_path).ok();
+        if let Err(e) = std::fs::remove_file(&socket_path) {
+            tracing::warn!("Failed to remove stale socket {}: {}", socket_path.display(), e);
+        }
     }
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::error!("Failed to create socket parent directory {}: {}", parent.display(), e);
+            return Err(anyhow::anyhow!("Failed to create socket parent directory {}: {}", parent.display(), e));
+        }
     }
 
     let listener = UnixListener::bind(&socket_path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).ok();
+        if let Err(e) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("Failed to set socket permissions for {}: {}", socket_path.display(), e);
+        }
     }
 
     info!("CPG daemon listening on {}", socket_path.display());

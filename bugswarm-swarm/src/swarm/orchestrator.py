@@ -377,13 +377,9 @@ class SwarmOrchestrator:
             from swarm.probability import BugProbabilityModel
             model = BugProbabilityModel()
             confirmed = pdb.get_all_confirmed()
-            # Get all functions from CPG (best effort)
+            # CPG function extraction deferred — model trains with confirmed bug data only
+            # When CPG query API for function nodes is available (Phase 19.5), pass all_funcs
             all_funcs = []
-            try:
-                # Pass empty list if CPG not available — model will train with what it has
-                pass
-            except Exception:
-                pass
             result = model.train(confirmed, all_funcs, hotspot_tracker=ht)
             if result.get("status") == "trained":
                 pdb.reset_training_counter()

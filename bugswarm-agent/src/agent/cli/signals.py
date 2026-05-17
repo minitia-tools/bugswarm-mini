@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
+import atexit
+import os
 import signal
 import sys
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+_temp_files: list[str] = []
+
+
+def register_temp_file(path: str):
+    """Register a temp file for cleanup on exit."""
+    _temp_files.append(path)
+
+
+def _cleanup_temp_files():
+    for path in _temp_files:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_temp_files)
 
 
 class GracefulKiller:
@@ -26,6 +46,7 @@ class GracefulKiller:
     def _handle(self, signum, frame):
         logger.warning("shutdown_signal_received", signal=signum)
         self.kill_now = True
+        _cleanup_temp_files()
         for callback in self._on_shutdown:
             try:
                 callback()

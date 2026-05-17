@@ -109,8 +109,12 @@ class GatewayConfig:
             raise ValueError(f"Provider {provider} not configured")
         return self.providers[provider]
 
+    @property
+    def configured_providers(self) -> dict[ProviderType, ProviderConfig]:
+        return {p: c for p, c in self.providers.items() if c.api_key.strip()}
+
     @classmethod
-    def from_env(cls) -> GatewayConfig:
+    def from_env(cls, validate: bool = True) -> "GatewayConfig":
         """Build config from environment variables."""
         import os
         providers = {}
@@ -167,13 +171,18 @@ class GatewayConfig:
 
         default = ProviderType(os.getenv("GATEWAY_DEFAULT_PROVIDER", "openai"))
 
-        return cls(
+        config = cls(
             providers=providers,
             default_provider=default,
             fallback_providers=[p for p in ProviderType if p != default and p in providers],
             token_budget=int(os.getenv("GATEWAY_TOKEN_BUDGET", "5000000")),
             cost_budget_usd=float(os.getenv("GATEWAY_COST_BUDGET", "50.0")),
         )
+
+        if validate and not config.configured_providers:
+            raise ValueError("No API providers configured. Set DEEPSEEK_API_KEY or OPENAI_API_KEY.")
+
+        return config
 
 
 def request_fingerprint(request: ChatRequest) -> str:

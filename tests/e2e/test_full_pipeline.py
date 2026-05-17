@@ -55,6 +55,41 @@ def run_cmd_json(cmd, timeout=60):
             return None, f"Invalid JSON: {stdout[:200]}"
     return None, stderr
 
+
+def run_simulation_mode():
+    """Run CPG + sandbox + evidence stages without LLM to verify pipeline integrity."""
+    print(f"  {Y}--- Simulation Mode ---{N}")
+
+    # CPG query
+    stats_data, err = run_cmd_json([CPG_BIN, "stats", "--repo", str(BUG_REPO)], timeout=30)
+    if stats_data and stats_data.get("total_functions", 0) > 10:
+        P("Sim-CPG", f"{stats_data['total_functions']} functions indexed")
+    else:
+        F("Sim-CPG", f"stats={stats_data}, err={err}")
+
+    # Sandbox execution with a known PoC
+    import tempfile
+    import os as _os
+    test_poc = "# PoC test\nprint('simulation ok')\n"
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(test_poc)
+        poc_path = f.name
+    try:
+        stdout, stderr = run_cmd([SANDBOX_BIN, "execute", "--poc", poc_path], timeout=130)
+        if stdout:
+            P("Sim-Sandbox", f"execution completed ({len(stdout)} bytes)")
+        else:
+            F("Sim-Sandbox", f"stderr: {stderr[:200] if stderr else 'none'}")
+    finally:
+        _os.unlink(poc_path)
+
+    # Evidence graph demo
+    stdout, _ = run_cmd([EVIDENCE_BIN, "demo"], timeout=10)
+    if stdout and "Agent" in stdout:
+        P("Sim-Evidence", "demo graph assembled")
+    else:
+        F("Sim-Evidence", f"no output ({len(stdout) if stdout else 0} bytes)")
+
 print("=" * 70)
 print("  EXTREME AGGRESSIVE END-TO-END TEST")
 print("  Bug Swarm Full Pipeline")
@@ -94,7 +129,9 @@ api_key = os.getenv("DEEPSEEK_API_KEY", "")
 if not api_key:
     print(f"  {Y}SKIP{N} No DEEPSEEK_API_KEY set -- skipping live agent test")
     print(f"  {Y}SKIP{N} Set DEEPSEEK_API_KEY to run with real LLM")
+    print(f"  {Y}SKIP{N} Running pipeline in simulation mode (non-LLM stages)")
     results["Agent"] = "SKIPPED"
+    run_simulation_mode()
 else:
     sys.path.insert(0, str(AGENT_DIR / "src"))
     from agent.loop import IEPEngine, IEPConfig

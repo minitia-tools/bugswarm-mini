@@ -1,0 +1,5 @@
+# CPG Daemon Configuration
+socket_path: /var/run/bugswarm/cpg.sock
+log_level: info
+max_file_size_mb: 50
+cache_enabled: true

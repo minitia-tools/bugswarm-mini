@@ -309,10 +309,11 @@ impl ContainerManager {
                         if let Some(state) = &inspect.state {
                             if state.oom_killed.unwrap_or(false) {
                                 // Clean up on OOM
-                                let _ = self.docker.remove_container(
-                                    // Container cleanup — errors logged but non-fatal
+                                if let Err(e) = self.docker.remove_container(
                                     &container_name, None::<bollard::container::RemoveContainerOptions>,
-                                ).await;
+                                ).await {
+                                    warn!("Failed to remove OOM-killed container {}: {}", container_name, e);
+                                }
                                 return Ok(ContainerOutput {
                                     stdout: String::new(), stderr: String::new(),
                                     exit_code: Some(137),
@@ -363,10 +364,11 @@ impl ContainerManager {
             let (growth_rate, growth_duration) = (0.0, 0.0);
 
             // Clean up container after collecting logs
-            let _ = self.docker.remove_container(
-                // Container cleanup — errors logged but non-fatal
+            if let Err(e) = self.docker.remove_container(
                 &container_name, None::<bollard::container::RemoveContainerOptions>,
-            ).await;
+            ).await {
+                warn!("Failed to remove container {}: {}", container_name, e);
+            }
 
             Ok(ContainerOutput {
                 stdout, stderr, exit_code, duration_secs,
@@ -399,13 +401,15 @@ impl ContainerManager {
                     } else { Some(TimeoutReason::InfiniteLoop) }
                 } else { Some(TimeoutReason::Unknown) };
 
-                let _ = self.docker.kill_container(&container_name, None::<bollard::container::KillContainerOptions<&str>>).await;
-                    // Container kill — errors logged but non-fatal
+                if let Err(e) = self.docker.kill_container(&container_name, None::<bollard::container::KillContainerOptions<&str>>).await {
+                    warn!("Failed to kill timed-out container {}: {}", container_name, e);
+                }
                 let (stdout, stderr) = self.get_partial_logs(&container_name).await;
-                let _ = self.docker.remove_container(
-                    // Container cleanup — errors logged but non-fatal
+                if let Err(e) = self.docker.remove_container(
                     &container_name, None::<bollard::container::RemoveContainerOptions>,
-                ).await;
+                ).await {
+                    warn!("Failed to remove timed-out container {}: {}", container_name, e);
+                }
 
                 Ok(ContainerOutput {
                     stdout, stderr, exit_code: None,
@@ -446,8 +450,9 @@ impl ContainerManager {
             }
         }
 
-        let _ = self.docker.kill_container(container_name, Some(bollard::container::KillContainerOptions { signal: "SIGQUIT" })).await;
-            // Container kill — errors logged but non-fatal
+        if let Err(e) = self.docker.kill_container(container_name, Some(bollard::container::KillContainerOptions { signal: "SIGQUIT" })).await {
+            warn!("Failed to send SIGQUIT to container {}: {}", container_name, e);
+        }
         Some(diagnostics)
     }
 

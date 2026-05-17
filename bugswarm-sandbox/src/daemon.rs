@@ -68,12 +68,17 @@ struct DaemonResponse {
 pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig) -> SandboxResult<()> {
     // Remove stale socket file if it exists
     if socket_path.exists() {
-        std::fs::remove_file(&socket_path).ok();
+        if let Err(e) = std::fs::remove_file(&socket_path) {
+            tracing::warn!("Failed to remove stale socket {}: {}", socket_path.display(), e);
+        }
     }
 
     // Ensure parent directory exists
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::error!("Failed to create socket parent directory {}: {}", parent.display(), e);
+            return Err(crate::error::SandboxError::Other(format!("Failed to create socket parent directory {}: {}", parent.display(), e)));
+        }
     }
 
     let listener = UnixListener::bind(&socket_path)
@@ -83,7 +88,9 @@ pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig) -> SandboxR
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).ok();
+        if let Err(e) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("Failed to set socket permissions for {}: {}", socket_path.display(), e);
+        }
     }
 
     info!("Sandbox daemon listening on {}", socket_path.display());

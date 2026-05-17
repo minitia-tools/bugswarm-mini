@@ -51,10 +51,19 @@ class BaseProviderAdapter(ABC):
         # Default: yield full content (backward compat)
         yield response.content
 
+    def _estimate_tokens(self, content: str) -> int:
+        """Estimate token count. Uses tiktoken if available, falls back to character heuristic."""
+        try:
+            import tiktoken
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(content))
+        except ImportError:
+            # Improved heuristic: ~3.5 chars per token for English code/text
+            return max(1, int(len(content) / 3.5))
+
     async def count_tokens(self, messages: list[ChatMessage]) -> int:
         """Count tokens for a message list. Override for provider-specific tokenizers."""
-        # Universal fallback: ~4 chars per token
-        return sum(max(1, len(m.content) // 4) for m in messages)
+        return sum(self._estimate_tokens(m.content) for m in messages)
 
     def estimate_cost(self, input_tokens: int, output_tokens: int) -> CostInfo:
         """Estimate cost from token counts and provider pricing."""

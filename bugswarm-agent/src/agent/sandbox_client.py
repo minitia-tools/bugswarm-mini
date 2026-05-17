@@ -15,6 +15,8 @@ from typing import Any
 
 import structlog
 
+from agent.cli.signals import register_temp_file
+
 logger = structlog.get_logger(__name__)
 
 DEFAULT_SANDBOX_BINARY = "bugswarm-sandbox"
@@ -164,6 +166,7 @@ class SandboxClient:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
+            register_temp_file(poc_path)
 
         try:
             args = ["execute", "--poc", poc_path]
@@ -202,6 +205,7 @@ class SandboxClient:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
+            register_temp_file(poc_path)
 
         try:
             stdout, stderr, rc = await self._run(
@@ -228,6 +232,7 @@ class SandboxClient:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
+            register_temp_file(poc_path)
 
         try:
             args = ["verify-receipt", "--poc", poc_path]
@@ -264,6 +269,7 @@ class SandboxClient:
         with tempfile.NamedTemporaryFile(mode='wb', suffix='.bin', delete=False) as f:
             f.write(input_bytes)
             input_path = f.name
+            register_temp_file(input_path)
 
         try:
             stdout, stderr, rc = await self._run(

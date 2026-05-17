@@ -19,6 +19,9 @@ from .types import (
 
 logger = structlog.get_logger(__name__)
 
+# Key rotation: set BGSWARM_KEY_REFRESH_INTERVAL=3600 (seconds)
+# Currently requires process restart. Future: auto-reload from env.
+
 
 class ProviderAdapter:
     """Base class for provider-specific adapters."""

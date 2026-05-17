@@ -1,0 +1,5 @@
+# Evidence Daemon Configuration
+socket_path: /var/run/bugswarm/evidence.sock
+log_level: info
+trigger_state_path: /var/lib/bugswarm/triggers.json
+persist_enabled: true

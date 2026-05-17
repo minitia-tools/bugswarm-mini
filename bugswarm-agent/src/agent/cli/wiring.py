@@ -289,31 +289,32 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
 
 
 def _extract_cpg_functions(cpg, repo_path):
-    """Extract function features from CPG for probability prediction.
+    """Extract function features from repo for probability prediction.
 
-    Best-effort: queries CPG for function nodes, falls back to empty list.
-    Full implementation requires CPG node listing API (Phase 19.5 deferred).
+    Note: Uses heuristic file-walking (regex for def/class). Full CPG node-listing
+    API is deferred (Phase 19.5). When CPG query API supports per-function extraction,
+    this function should be replaced with actual CPG queries.
+
+    Returns list of FunctionFeatures objects with best-effort extraction.
     """
     from swarm.probability import FunctionFeatures
     features = []
     try:
-        # Walk repo files and extract Python function names + basic features
-        rp = repo_path if hasattr(repo_path, 'iterdir') else Path(repo_path)
-        for py_file in list(rp.rglob("*.py"))[:100]:  # Cap at 100 files
+        rp = Path(repo_path) if hasattr(repo_path, 'iterdir') else Path(repo_path)
+        for py_file in list(rp.rglob("*.py"))[:200]:  # Cap increased for larger repos
             try:
-                content = py_file.read_text()
+                content = py_file.read_text(errors='ignore')
                 lines = content.splitlines()
-                name = py_file.name
-                # Heuristic: treat each top-level def as a function
-                for line in lines:
+                for i, line in enumerate(lines):
                     stripped = line.strip()
                     if stripped.startswith("def "):
                         func_name = stripped[4:].split("(")[0].strip()
-                        features.append(FunctionFeatures(
-                            function_name=func_name,
-                            file_path=str(py_file.relative_to(rp)),
-                            lines_of_code=len(lines),
-                        ))
+                        if not func_name.startswith('_'):  # Skip private functions
+                            features.append(FunctionFeatures(
+                                function_name=func_name,
+                                file_path=str(py_file.relative_to(rp)),
+                                lines_of_code=len(lines),
+                            ))
                     elif stripped.startswith("class "):
                         class_name = stripped[6:].split("(")[0].split(":")[0].strip()
                         features.append(FunctionFeatures(

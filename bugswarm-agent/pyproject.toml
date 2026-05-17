@@ -5,7 +5,7 @@ description = "Bug Swarm Agent — Single-agent IEP loop for bug detection"
 requires-python = ">=3.11"
 dependencies = [
     "bugswarm-gateway",
-    "pydantic>=2.10.0",
+    "pydantic>=2.10.0,<3.0",
 ]
 
 [project.scripts]

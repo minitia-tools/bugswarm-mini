@@ -152,7 +152,7 @@ fn parse_env_vars(env_args: &[String]) -> HashMap<String, String> {
         .iter()
         .filter_map(|arg| {
             let parts: Vec<&str> = arg.splitn(2, '=').collect();
-            if parts.len() == 2 {
+            if parts.len() == 2 && !parts[0].is_empty() {
                 Some((parts[0].to_string(), parts[1].to_string()))
             } else {
                 None

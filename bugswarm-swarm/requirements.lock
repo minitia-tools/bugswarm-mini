@@ -1,0 +1,4 @@
+structlog>=24.4.0,<25.0
+pyyaml>=6.0.2,<7.0
+scikit-learn>=1.4,<2.0
+xgboost>=2.0,<3.0

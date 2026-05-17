@@ -266,6 +266,41 @@ def export_sarif(findings: list[dict], repo_uri: str = "file:///src") -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Metrics HTTP Server
+# ═══════════════════════════════════════════════════════════════
+
+def start_metrics_server(port: int = 9090, registry=None):
+    """Start a minimal HTTP server exposing Prometheus metrics."""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import os
+
+    if registry is None:
+        from swarm.observability import _global_registry
+        registry = _global_registry
+
+    class MetricsHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/metrics':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(registry.render_prometheus().encode())
+            elif self.path == '/health':
+                self.send_response(200)
+                self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    server = HTTPServer(('0.0.0.0', port), MetricsHandler)
+    import threading
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return server
+
+_global_registry = MetricsRegistry()
+
+# ═══════════════════════════════════════════════════════════════
 # CI/CD Command
 # ═══════════════════════════════════════════════════════════════
 

@@ -24,6 +24,8 @@ from typing import Any
 from gateway.types import ChatMessage, ChatRequest, MessageRole, ProviderType
 from gateway.client import LLMClient
 
+from agent.cli.signals import register_temp_file
+
 
 # ═══════════════════════════════════════════════════════════════
 # System Prompts
@@ -198,6 +200,7 @@ class ToolDispatcher:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
+            register_temp_file(poc_path)
 
         try:
             sandbox_bin = "/root/a/bugswarm-sandbox/target/release/bugswarm-sandbox"

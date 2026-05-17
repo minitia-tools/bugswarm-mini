@@ -167,15 +167,16 @@ class UnifiedScanner:
         return tokens
 
     @staticmethod
-    def _shannon_entropy(s: str) -> float:
-        if not s:
+    def _shannon_entropy(text: str) -> float:
+        """Compute Shannon entropy of a string for randomness detection."""
+        import math
+        if not text:
             return 0.0
-        freq = [0] * 256
-        for byte in s.encode('latin-1', errors='ignore'):
-            freq[byte] += 1
-        length = len(s)
-        return -sum((c / length) * ((c / length) if c > 0 else 0).__bool__()
-                    for c in freq if c > 0)  # simplified — full log2 in production
+        freq = {}
+        for c in text:
+            freq[c] = freq.get(c, 0) + 1
+        length = len(text)
+        return -sum((count / length) * math.log2(count / length) for count in freq.values())
 
     # ─── Full Scan ───
 
