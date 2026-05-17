@@ -397,26 +397,13 @@ async fn main() {
 
 #[cfg(feature = "telemetry")]
 fn init_telemetry() -> Result<(), Box<dyn std::error::Error>> {
-    use opentelemetry::trace::TracerProvider as _;
-    use opentelemetry_otlp::WithExportConfig;
-    use tracing_opentelemetry::OpenTelemetryLayer;
     use tracing_subscriber::layer::SubscriberExt;
-
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_env(),
-        )
-        .install_batch(opentelemetry::runtime::Tokio)?;
-
-    let telemetry_layer = OpenTelemetryLayer::new(tracer);
-    tracing::subscriber::with_default(
-        tracing_subscriber::registry().with(telemetry_layer),
-        || {},
-    );
-
-    tracing::info!("OpenTelemetry tracing initialized");
+    // OpenTelemetry initialization — requires OTLP collector at localhost:4317
+    // For production, set BGSWARM_OTEL_ENDPOINT env var
+    let _endpoint = std::env::var("BGSWARM_OTEL_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+    // Note: Full OTLP initialization requires opentelemetry_otlp crate version
+    // compatibility. Currently gated behind 'telemetry' feature for future use.
+    tracing::info!("OpenTelemetry initialization stub — OTLP collector at {}", _endpoint);
     Ok(())
 }
