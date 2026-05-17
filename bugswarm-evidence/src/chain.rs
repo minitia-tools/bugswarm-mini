@@ -511,7 +511,7 @@ impl ChainSemanticMatcher {
             && self.embedder.as_ref().map(|e| e.is_available()).unwrap_or(false);
 
         if has_embedder {
-            let embedder = self.embedder.as_ref().unwrap();
+            let embedder = self.embedder.as_ref().expect("embedder is Some per has_embedder guard");
             let all_texts: Vec<String> = effect_descs
                 .iter()
                 .chain(precond_descs.iter())
@@ -1003,7 +1003,7 @@ pub fn detect_chains_with_config(
             if hops >= max_hops {
                 continue;
             }
-            let current = path.last().unwrap();
+            let current = path.last().expect("path is non-empty per loop invariant (just returned from pop_front)");
 
             if let Some(neighbors) = graph.get(current) {
                 for (next_bug, score, _low_conf) in neighbors {

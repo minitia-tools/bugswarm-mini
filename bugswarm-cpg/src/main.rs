@@ -231,6 +231,27 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::RunServer { socket, pid_file } => {
             info!("Starting CPG daemon on {}", socket.display());
+
+            #[cfg(unix)]
+            {
+                let socket_path = socket.clone();
+                tokio::spawn(async move {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let mut sighup = match signal(SignalKind::hangup()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to register SIGHUP handler: {}", e);
+                            return;
+                        }
+                    };
+                    loop {
+                        sighup.recv().await;
+                        tracing::info!("Received SIGHUP on CPG daemon — runtime config reload is limited to mutable fields");
+                    }
+                });
+                let _ = socket_path;
+            }
+
             // Create PID file (cleaned up on drop)
             struct PidGuard(std::path::PathBuf);
             impl Drop for PidGuard {

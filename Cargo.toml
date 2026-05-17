@@ -6,6 +6,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.metadata]
+telemetry = ["dep:opentelemetry", "dep:tracing-opentelemetry", "dep:opentelemetry-otlp"]
+
 [workspace.dependencies]
 serde = { version = ">=1.0, <2.0", features = ["derive"] }
 serde_json = ">=1.0, <2.0"

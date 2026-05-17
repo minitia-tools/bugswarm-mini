@@ -16,7 +16,8 @@ use crate::config::{ExecutionReceipt, ExecutionStatus, SandboxConfig};
 use crate::container::ContainerManager;
 use crate::delta::{DeltaConfig, DeltaMinimizer, OracleFn};
 use crate::error::SandboxResult;
-use crate::fuzzer::{FuzzRequest, FuzzResponse};
+use crate::fuzzer::FuzzRequest;
+#[cfg(feature = "symbolic")]
 use bugswarm_symbolic::concolic::{ConcolicConfig, ConcolicEngine};
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +31,8 @@ struct DaemonRequest {
     flaky: bool,
     #[serde(default)]
     count: u32,
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,20 +141,29 @@ pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig, http_port: 
     manager.ensure_image().await?;
 
     loop {
-        match listener.accept().await {
-            Ok((stream, addr)) => {
-                let mgr = manager.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, mgr).await {
-                        error!("Connection error: {}", e);
+        tokio::select! {
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, _)) => {
+                        let mgr = manager.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_connection(stream, mgr).await {
+                                error!("Connection error: {}", e);
+                            }
+                        });
                     }
-                });
+                    Err(e) => {
+                        error!("Accept error: {}", e);
+                    }
+                }
             }
-            Err(e) => {
-                error!("Accept error: {}", e);
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received SIGTERM, shutting down gracefully...");
+                break;
             }
         }
     }
+    Ok(())
 }
 
 async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<ContainerManager>) -> SandboxResult<()> {
@@ -177,6 +189,10 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
             }
         };
 
+        let request_id = request.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let span = tracing::info_span!("request", request_id = %request_id);
+        let _guard = span.enter();
+
         let response = match request.method.as_str() {
             "execute" => {
                 match manager.execute(&request.poc_code, &request.env, request.flaky).await {
@@ -185,7 +201,7 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                 }
             }
             "execute_statistical" => {
-                let count = if request.count > 0 { request.count } else { manager.config.rerun_count };
+                let _count = if request.count > 0 { request.count } else { manager.config.rerun_count };
                 match manager.execute_statistical(&request.poc_code, &request.env).await {
                     Ok(result) => {
                         let json = serde_json::to_value(&result).unwrap_or_default();
@@ -361,22 +377,45 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                             ..Default::default()
                         };
 
-                        // Generate stub execution traces (no sandbox execution in daemon handler)
-                        let traces: Vec<crate::invariant::ExecutionTrace> = (0..count).map(|i| {
-                            crate::invariant::ExecutionTrace {
+                        let (module, func) = parse_module_func(function_name);
+
+                        let mut traces = Vec::with_capacity(count);
+                        for i in 0..count {
+                            let args_literals: Vec<String> = param_types.iter().map(|ptype| {
+                                crate::invariant::format_python_arg(ptype, i)
+                            }).collect();
+                            let args_joined = args_literals.join(", ");
+
+                            let poc = format!(
+                                "from {} import {}\nimport json, sys\nargs = [{}]\ntry:\n    result = {}(*args)\n    print(json.dumps({{\"return\": repr(result)}}))\nexcept Exception as e:\n    print(json.dumps({{\"exception\": str(e), \"type\": type(e).__name__}}))\n    sys.exit(1)",
+                                module, func, args_joined, func
+                            );
+
+                            let receipt = match manager.execute(&poc, &HashMap::new(), false).await {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    warn!("mine_invariants execute error for {}: {}", function_name, e);
+                                    continue;
+                                }
+                            };
+
+                            let return_value = parse_return_value(&receipt.stdout_truncated);
+                            let exception = parse_exception(&receipt.stderr_truncated);
+
+                            traces.push(crate::invariant::ExecutionTrace {
                                 input_id: i,
                                 function_name: function_name.to_string(),
-                                return_value: Some(format!("result_{}", i % 10)),
-                                return_type_hint: param_types.first().cloned().unwrap_or_else(|| "string".into()),
-                                exception: None,
-                                stdout: String::new(),
-                                stderr: String::new(),
-                                execution_time_us: 100,
-                                exit_code: 0,
+                                return_value,
+                                return_type_hint: param_types.first().cloned().unwrap_or_else(|| "unknown".into()),
+                                exception,
+                                stdout: receipt.stdout_truncated.clone(),
+                                stderr: receipt.stderr_truncated.clone(),
+                                execution_time_us: (receipt.duration_secs * 1_000_000.0) as u64,
+                                exit_code: receipt.exit_code.unwrap_or(-1) as i32,
                                 side_effects: vec![],
                                 branches_hit: vec![],
-                            }
-                        }).collect();
+                            });
+                        }
 
                         let (count_found, viol_count, invariants, violations) = crate::invariant::mine_invariants(&traces, &config);
 
@@ -386,6 +425,7 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                             error: Some(serde_json::to_string(&serde_json::json!({
                                 "function": function_name,
                                 "inputs_generated": count,
+                                "traces_collected": traces.len(),
                                 "invariants_found": count_found,
                                 "violations_found": viol_count,
                                 "invariants": invariants,
@@ -435,12 +475,32 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     ..Default::default()
                 };
                 
-                // Simple test runner: compile + syntax check
-                let test_runner = |code: &str| -> (usize, usize) {
-                    if code.contains("!=") || code.contains(" - ") || code.contains("/") {
-                        (1, 1) // Test caught the mutant
-                    } else {
-                        (2, 0) // Mutant survived
+                let mgr = manager.clone();
+                let fp = file_path.to_string();
+                let test_runner = move |code: &str| -> (usize, usize) {
+                    let escape_code = code.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
+                    let poc = format!(
+                        r#"import subprocess, sys, os
+source_code = '{}'
+filepath = os.path.join('/sandbox', '{}')
+os.makedirs(os.path.dirname(filepath), exist_ok=True)
+with open(filepath, 'w') as f:
+    f.write(source_code)
+result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', '/sandbox', '-p', 'test_*.py', '-q'], capture_output=True, text=True)
+sys.exit(result.returncode)
+"#,
+                        escape_code, fp
+                    );
+                    let handle = tokio::runtime::Handle::current();
+                    match handle.block_on(mgr.execute(&poc, &std::collections::HashMap::new(), false)) {
+                        Ok(receipt) => {
+                            if receipt.exit_code.unwrap_or(1) == 0 {
+                                (1, 0)
+                            } else {
+                                (0, 1)
+                            }
+                        }
+                        Err(_) => (0, 1),
                     }
                 };
                 
@@ -473,48 +533,70 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     }).collect())
                     .unwrap_or_default();
 
-                let path_refs: Vec<(u32, &str)> = conditions.iter().map(|(l, c)| (*l, c.as_str())).collect();
+                #[allow(unused_variables)]
+                let path_conditions_refs: Vec<(u32, &str)> = conditions.iter().map(|(l, c)| (*l, c.as_str())).collect();
 
-                let mut constraints = Vec::new();
-                let mut var_counter = 0;
-                for (line, cond) in &conditions {
-                    if cond.is_empty() { continue; }
-                    var_counter += 1;
-                    let vname = format!("x_{}", var_counter);
-                    let expr = match parse_to_smt(cond) {
-                        Some(e) => e.replace("$VAR", &vname),
-                        None => format!("(assert (= {} {}))", vname, cond),
-                    };
-                    constraints.push(serde_json::json!({
-                        "line": line,
-                        "description": format!("Line {}: {}", line, cond),
-                        "variable": vname,
-                        "expression": expr,
-                        "original_condition": cond,
-                    }));
-                }
+                #[cfg(feature = "symbolic")]
+                let result = {
+                    let engine = bugswarm_symbolic::engine::SymbolicEngine::new(
+                        bugswarm_symbolic::types::SymbolicConfig::default()
+                    );
+                    let session = engine.solve_reachability(&path_conditions_refs, target);
+                    serde_json::json!({
+                        "target_location": session.target_location,
+                        "paths_explored": session.paths_explored,
+                        "constraints_generated": session.constraints_generated,
+                        "solutions_found": session.solutions_found,
+                        "solutions": session.solutions,
+                        "solver_stats": session.solver_stats,
+                        "elapsed_ms": session.elapsed_ms,
+                    })
+                };
 
-                let mut solutions = Vec::new();
-                for c in &constraints {
-                    let var = c.get("variable").and_then(|v| v.as_str()).unwrap_or("x");
-                    let cond = c.get("original_condition").and_then(|v| v.as_str()).unwrap_or("");
-                    if let Some(val) = extract_solution_value(cond) {
-                        solutions.push(serde_json::json!({
-                            "name": var,
-                            "value": val,
-                            "type": "Int64",
+                #[cfg(not(feature = "symbolic"))]
+                let result = {
+                    let mut constraints = Vec::new();
+                    let mut var_counter = 0;
+                    for (line, cond) in &conditions {
+                        if cond.is_empty() { continue; }
+                        var_counter += 1;
+                        let vname = format!("x_{}", var_counter);
+                        let expr = match parse_to_smt(cond) {
+                            Some(e) => e.replace("$VAR", &vname),
+                            None => format!("(assert (= {} {}))", vname, cond),
+                        };
+                        constraints.push(serde_json::json!({
+                            "line": line,
+                            "description": format!("Line {}: {}", line, cond),
+                            "variable": vname,
+                            "expression": expr,
+                            "original_condition": cond,
                         }));
                     }
-                }
 
-                let result = serde_json::json!({
-                    "target_location": target,
-                    "constraints_generated": constraints.len(),
-                    "solutions_found": solutions.len(),
-                    "solutions": solutions,
-                    "constraints": constraints,
-                    "elapsed_ms": 0,
-                });
+                    let mut solutions = Vec::new();
+                    for c in &constraints {
+                        let var = c.get("variable").and_then(|v| v.as_str()).unwrap_or("x");
+                        let cond = c.get("original_condition").and_then(|v| v.as_str()).unwrap_or("");
+                        if let Some(val) = extract_solution_value(cond) {
+                            solutions.push(serde_json::json!({
+                                "name": var,
+                                "value": val,
+                                "type": "Int64",
+                            }));
+                        }
+                    }
+
+                    serde_json::json!({
+                        "target_location": target,
+                        "constraints_generated": constraints.len(),
+                        "solutions_found": solutions.len(),
+                        "solutions": solutions,
+                        "constraints": constraints,
+                        "elapsed_ms": 0,
+                        "solver_note": "Z3 solver not compiled (enable 'symbolic' feature)",
+                    })
+                };
 
                 DaemonResponse {
                     success: true,
@@ -522,6 +604,7 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
                     error: Some(serde_json::to_string(&result).unwrap_or_default()),
                 }
             }
+            #[cfg(feature = "symbolic")]
             "explore_paths" => {
                 let req: serde_json::Value = match serde_json::from_str(line.trim()) {
                     Ok(v) => v,
@@ -611,6 +694,7 @@ async fn handle_connection(stream: UnixStream, manager: std::sync::Arc<Container
     Ok(())
 }
 
+#[cfg(not(feature = "symbolic"))]
 fn parse_to_smt(condition: &str) -> Option<String> {
     let cond = condition.trim();
     if let Some((_, op, val)) = parse_condition(cond) {
@@ -628,6 +712,7 @@ fn parse_to_smt(condition: &str) -> Option<String> {
     }
 }
 
+#[cfg(not(feature = "symbolic"))]
 fn parse_condition(s: &str) -> Option<(String, &str, String)> {
     let ops = [">=", "<=", "!=", "==", ">", "<"];
     for op in &ops {
@@ -642,6 +727,7 @@ fn parse_condition(s: &str) -> Option<(String, &str, String)> {
     None
 }
 
+#[cfg(not(feature = "symbolic"))]
 fn extract_solution_value(condition: &str) -> Option<String> {
     if condition.contains(">") {
         if let Some((_, _, val)) = parse_condition(condition) {
@@ -654,6 +740,46 @@ fn extract_solution_value(condition: &str) -> Option<String> {
         if let Some((_, _, val)) = parse_condition(condition) {
             let val = val.trim_matches('"').trim_matches('\'');
             return Some(val.to_string());
+        }
+    }
+    None
+}
+
+fn parse_module_func(function_name: &str) -> (&str, &str) {
+    match function_name.rfind('.') {
+        Some(pos) => (&function_name[..pos], &function_name[pos + 1..]),
+        None => ("__main__", function_name),
+    }
+}
+
+fn parse_return_value(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        if let Ok(obj) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+            if let Some(ret) = obj.get("return").and_then(|v| v.as_str()) {
+                return Some(ret.to_string());
+            }
+        }
+    }
+    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+        if let Some(ret) = obj.get("return").and_then(|v| v.as_str()) {
+            return Some(ret.to_string());
+        }
+    }
+    None
+}
+
+fn parse_exception(stderr: &str) -> Option<String> {
+    for line in stderr.lines() {
+        if let Ok(obj) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+            if let Some(exc) = obj.get("exception").and_then(|v| v.as_str()) {
+                return Some(exc.to_string());
+            }
+        }
+    }
+    if !stderr.is_empty() {
+        let first_line = stderr.lines().next().unwrap_or("");
+        if first_line.contains("Error") || first_line.contains("Exception") {
+            return Some(first_line.to_string());
         }
     }
     None

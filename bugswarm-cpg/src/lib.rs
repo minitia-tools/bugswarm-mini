@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used)]
+
 pub mod cfg;
 pub mod daemon;
 pub mod dominators;

@@ -1186,7 +1186,7 @@ fn extract_variable_names(condition: &str) -> Vec<String> {
     for part in condition.split(|c: char| !c.is_alphanumeric() && c != '_') {
         let p = part.trim();
         if !p.is_empty()
-            && !p.chars().next().unwrap().is_numeric()
+            && !p.chars().next().expect("p is non-empty per is_empty() guard").is_numeric()
             && p != "true"
             && p != "false"
             && p != "NULL"

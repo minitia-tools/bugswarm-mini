@@ -125,6 +125,10 @@ class SandboxClient:
         self.binary = binary
         self.execution_timeout = execution_timeout
         self._healthy: bool | None = None
+        self._request_id: str | None = None
+
+    def set_request_id(self, request_id: str) -> None:
+        self._request_id = request_id
 
     async def _run(self, *args: str) -> tuple[str, str, int]:
         """Run sandbox binary and return (stdout, stderr, returncode)."""
@@ -327,6 +331,7 @@ class SandboxClient:
             "input": output_a,
             "reference": output_b,
             "normalizer": normalizer,
+            "request_id": self._request_id or "",
         })
         try:
             stdout, stderr, rc = await self._run("--request", payload)
@@ -353,6 +358,7 @@ class SandboxClient:
             "function": function_name,
             "param_types": param_types,
             "count": count,
+            "request_id": self._request_id or "",
         })
         stdout, stderr, rc = await self._run("--request", payload)
         try:
@@ -379,6 +385,7 @@ class SandboxClient:
             "source": source_code,
             "file": file_path,
             "operators": operators or [],
+            "request_id": self._request_id or "",
         })
         stdout, stderr, rc = await self._run("--request", payload)
         try:
@@ -403,6 +410,7 @@ class SandboxClient:
             "method": "solve_reachability",
             "target": target_location,
             "conditions": path_conditions,
+            "request_id": self._request_id or "",
         })
         stdout, stderr, rc = await self._run("--request", payload)
         try:
@@ -427,6 +435,7 @@ class SandboxClient:
             "target": target_location,
             "conditions": path_conditions,
             "max_queries": max_queries,
+            "request_id": self._request_id or "",
         })
         stdout, stderr, rc = await self._run("--request", payload)
         try:

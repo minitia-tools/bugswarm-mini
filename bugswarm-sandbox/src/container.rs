@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 use bollard::container::{
@@ -83,7 +84,7 @@ impl ContainerManager {
                 }
             }
         }
-        Err(last_err.unwrap())
+        Err(last_err.expect("max_retries > 0 guarantees at least one failure was stored"))
     }
 
     /// Ensure the sandbox image is pulled.
@@ -730,6 +731,41 @@ impl ContainerManager {
 
         info!("Fuzz campaign started: container={}", container_name);
 
+        let crash_dir = std::path::PathBuf::from("/fuzz/corpus/out/crashes");
+        let output_path = std::path::PathBuf::from("/tmp/bugswarm-crashes.jsonl");
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            let mut seen = HashSet::new();
+            loop {
+                interval.tick().await;
+                if let Ok(entries) = std::fs::read_dir(&crash_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            let hash = format!("{:?}", path);
+                            if seen.insert(hash.clone()) {
+                                if let Ok(content) = std::fs::read(&path) {
+                                    let record = serde_json::json!({
+                                        "file": path.to_string_lossy(),
+                                        "size": content.len(),
+                                        "hash": hash,
+                                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                                    });
+                                    let mut file = std::fs::OpenOptions::new()
+                                        .create(true).append(true)
+                                        .open(&output_path).unwrap_or_else(|e| {
+                                            tracing::warn!("Failed to open crash log: {}", e);
+                                            std::fs::File::create("/dev/null").unwrap()
+                                        });
+                                    writeln!(file, "{}", record).ok();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         Ok(controller.to_response(stream_id))
     }
 
@@ -875,13 +911,27 @@ impl ContainerManager {
         &self, poc_content: &str, env_vars: &HashMap<String, String>,
         intervention: crate::config::CausalIntervention,
     ) -> SandboxResult<crate::config::CausalInterventionResult> {
-        let modified_poc = format!(
-            "import sys, os\ntarget='{file}'\nif os.path.exists(target):\n f=open(target).readlines()\n if 1<={line}<=len(f) and f[{line0}].strip()=='{orig}':\n  f[{line0}]='{repl}\\n'\n  open(target,'w').writelines(f)\n{poc}",
-            file=intervention.file_path, line=intervention.line_number, line0=intervention.line_number-1,
-            orig=intervention.original_line.replace('\'', "\\'"), repl=intervention.replacement_line.replace('\'', "\\'"),
-            poc=poc_content,
+        let intervention_poc = format!(
+            "import os, json\n\
+             target = {target:?}\n\
+             line_num = {line_num}\n\
+             orig_line = {orig:?}\n\
+             repl_line = {repl:?}\n\
+             if os.path.exists(target):\n\
+                 with open(target, 'r') as f:\n\
+                     lines = f.readlines()\n\
+                 if 1 <= line_num <= len(lines) and lines[line_num - 1].rstrip('\\n') == orig_line:\n\
+                     lines[line_num - 1] = repl_line + '\\n'\n\
+                     with open(target, 'w') as f:\n\
+                         f.writelines(lines)\n\
+             {poc}",
+            target = intervention.file_path,
+            line_num = intervention.line_number,
+            orig = intervention.original_line,
+            repl = intervention.replacement_line,
+            poc = poc_content,
         );
-        let receipt = self.execute(&modified_poc, env_vars, false).await?;
+        let receipt = self.execute(&intervention_poc, env_vars, false).await?;
         Ok(crate::config::CausalInterventionResult {
             crash_resolved: receipt.exit_code.unwrap_or(1) == 0,
             causality_confirmed: receipt.exit_code.unwrap_or(1) == 0,

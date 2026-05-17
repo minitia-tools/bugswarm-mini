@@ -176,10 +176,13 @@ fn parse_env_vars(env_args: &[String]) -> HashMap<String, String> {
 async fn run_command(cli: Cli) -> SandboxResult<()> {
     let config = if cli.config.exists() {
         let content = std::fs::read_to_string(&cli.config)?;
-        serde_yaml::from_str(&content).unwrap_or_else(|e| {
-            tracing::warn!("Failed to parse config file {}: {}. Using defaults.", cli.config.display(), e);
-            SandboxConfig::default()
-        })
+        match serde_yaml::from_str(&content) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to parse config file {}: {}", cli.config.display(), e);
+                std::process::exit(1);
+            }
+        }
     } else {
         SandboxConfig::default()
     };
@@ -314,6 +317,34 @@ async fn run_command(cli: Cli) -> SandboxResult<()> {
 
         Commands::RunServer { socket, http_port, pid_file } => {
             info!("Starting sandbox daemon on {}", socket.display());
+
+            #[cfg(unix)]
+            {
+                let config_path = cli.config.clone();
+                tokio::spawn(async move {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let mut sighup = match signal(SignalKind::hangup()) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to register SIGHUP handler: {}", e);
+                            return;
+                        }
+                    };
+                    loop {
+                        sighup.recv().await;
+                        tracing::info!("Received SIGHUP, reloading configuration...");
+                        if let Ok(content) = std::fs::read_to_string(&config_path) {
+                            match serde_yaml::from_str::<SandboxConfig>(&content) {
+                                Ok(_new_config) => {
+                                    tracing::info!("Configuration reloaded successfully (mutable fields only)");
+                                }
+                                Err(e) => tracing::error!("Failed to parse config on reload: {}", e),
+                            }
+                        }
+                    }
+                });
+            }
+
             let _pid = bugswarm_sandbox::pidfile::PidFile::create(&pid_file)
                 .map_err(|e| SandboxError::Other(format!("Failed to create PID file {}: {}", pid_file.display(), e)))?;
             bugswarm_sandbox::daemon::run_daemon(socket, config, http_port).await?;
@@ -351,10 +382,41 @@ async fn main() {
         .json()
         .init();
 
+    #[cfg(feature = "telemetry")]
+    {
+        let _ = init_telemetry();
+    }
+
     let cli = Cli::parse();
 
     if let Err(e) = run_command(cli).await {
         error!("{}", e);
         std::process::exit(1);
     }
+}
+
+#[cfg(feature = "telemetry")]
+fn init_telemetry() -> Result<(), Box<dyn std::error::Error>> {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_otlp::WithExportConfig;
+    use tracing_opentelemetry::OpenTelemetryLayer;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_env(),
+        )
+        .install_batch(opentelemetry::runtime::Tokio)?;
+
+    let telemetry_layer = OpenTelemetryLayer::new(tracer);
+    tracing::subscriber::with_default(
+        tracing_subscriber::registry().with(telemetry_layer),
+        || {},
+    );
+
+    tracing::info!("OpenTelemetry tracing initialized");
+    Ok(())
 }

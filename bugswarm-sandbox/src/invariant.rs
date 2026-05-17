@@ -149,6 +149,15 @@ pub fn generate_inputs(
     inputs
 }
 
+/// Format a value as a Python literal for PoC generation.
+pub fn format_python_arg(type_hint: &str, seed: usize) -> String {
+    let raw = generate_typed_value(type_hint, seed);
+    match type_hint.to_lowercase().as_str() {
+        "string" | "str" | "text" | "&str" => format!("{:?}", raw),
+        _ => raw,
+    }
+}
+
 /// Generate a single typed value based on type hint.
 fn generate_typed_value(type_hint: &str, seed: usize) -> String {
     let s = seed as u64;
@@ -490,10 +499,10 @@ fn check_violation(trace: &ExecutionTrace, invariant: &InferredInvariant) -> Opt
                 return Some(InvariantViolation {
                     invariant_id: invariant.id.clone(),
                     function_name: trace.function_name.clone(),
-                    description: format!("Exception invariant violated: {}", trace.exception.as_ref().unwrap()),
+                    description: format!("Exception invariant violated: {}", trace.exception.as_ref().expect("exception is Some per guard")),
                     violating_input: format!("input#{}", trace.input_id),
                     expected_behavior: "no exceptions".to_string(),
-                    actual_behavior: format!("raised {}", trace.exception.as_ref().unwrap()),
+                    actual_behavior: format!("raised {}", trace.exception.as_ref().expect("exception is Some per guard")),
                     severity: 6,
                     reproducible: false,
                 });

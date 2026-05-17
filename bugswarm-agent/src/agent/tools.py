@@ -10,7 +10,7 @@ import asyncio
 import hashlib
 import random
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -139,6 +139,36 @@ class CircuitBreaker:
         return True  # half_open
 
 
+
+MAX_POC_SIZE_BYTES = 1_000_000
+
+
+def _validate_exec_sandbox(args: dict) -> tuple[bool, str]:
+    poc_code = args.get("poc_code", "")
+    if not poc_code:
+        return False, "exec_sandbox requires non-empty 'poc_code'"
+    if len(poc_code.encode("utf-8")) > MAX_POC_SIZE_BYTES:
+        return False, f"PoC code too large: {len(poc_code.encode('utf-8'))} bytes (max {MAX_POC_SIZE_BYTES})"
+    return True, ""
+
+
+def _validate_read_file(args: dict) -> tuple[bool, str]:
+    path = args.get("path", "")
+    if not path:
+        return False, "read_file requires non-empty 'path'"
+    if path.startswith("/"):
+        return False, f"read_file rejected: absolute path '{path}' forbidden"
+    if ".." in path.replace("\\", "/").split("/"):
+        return False, f"read_file rejected: path traversal blocked for '{path}'"
+    return True, ""
+
+
+TOOL_VALIDATORS: dict[str, Callable] = {
+    "exec_sandbox": _validate_exec_sandbox,
+    "read_file": _validate_read_file,
+}
+
+
 class ToolRegistry:
     """Plugin-based tool dispatch with retry, cache, and circuit breaker."""
 
@@ -159,6 +189,13 @@ class ToolRegistry:
             return ToolResult(False, f"Unknown tool: {name}")
 
         tool = self._tools[name]
+
+        validator = TOOL_VALIDATORS.get(name)
+        if validator is not None:
+            ok, reason = validator(args)
+            if not ok:
+                return ToolResult(False, f"Tool rejected by capability gate: {reason}")
+
         breaker = self._breakers[name]
 
         if not breaker.allow_request():

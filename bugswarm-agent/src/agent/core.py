@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -528,6 +529,12 @@ class BugSwarmAgent:
         self.tools = ToolDispatcher(config.repo_path, config.sandbox_binary)
         self.messages: list[ChatMessage] = []
         self.state_id = self.db.start_run(config.run_id, config.persona)
+        self.request_id = str(uuid.uuid4())
+
+    @staticmethod
+    def _generate_request_id() -> str:
+        import uuid as _uuid
+        return str(_uuid.uuid4())
 
     async def run(self) -> dict:
         """Execute the full IEP loop."""

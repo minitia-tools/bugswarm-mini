@@ -8,11 +8,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info};
+use uuid::Uuid;
 
 use crate::chain;
 use crate::graph::EvidenceGraph;
@@ -72,6 +74,8 @@ struct DaemonRequest {
     language: String,
     #[serde(default)]
     file_path: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,14 +101,17 @@ pub async fn run_daemon(socket_path: PathBuf) -> anyhow::Result<()> {
         }
     }
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create socket directory: {}", parent.display()))?;
     }
 
     let listener = UnixListener::bind(&socket_path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).ok();
+        if let Err(e) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("Failed to set socket permissions for {}: {}", socket_path.display(), e);
+        }
     }
 
     info!("Evidence daemon listening on {}", socket_path.display());
@@ -112,16 +119,24 @@ pub async fn run_daemon(socket_path: PathBuf) -> anyhow::Result<()> {
     let graph = Arc::new(EvidenceGraph::new());
 
     loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                let g = graph.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, g).await {
-                        error!("Evidence connection error: {}", e);
+        tokio::select! {
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, _)) => {
+                        let g = graph.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_connection(stream, g).await {
+                                error!("Evidence connection error: {}", e);
+                            }
+                        });
                     }
-                });
+                    Err(e) => error!("Evidence accept error: {}", e),
+                }
             }
-            Err(e) => error!("Evidence accept error: {}", e),
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received SIGTERM, shutting down gracefully...");
+                break Ok(());
+            }
         }
     }
 }
@@ -144,6 +159,10 @@ async fn handle_connection(stream: UnixStream, graph: Arc<EvidenceGraph>) -> any
                 continue;
             }
         };
+
+        let request_id = request.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let span = tracing::info_span!("request", request_id = %request_id);
+        let _guard = span.enter();
 
         let response = process(&request, &graph);
         writer.write_all(serde_json::to_string(&response)?.as_bytes()).await?;

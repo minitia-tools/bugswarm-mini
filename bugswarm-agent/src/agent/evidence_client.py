@@ -21,6 +21,10 @@ class EvidenceClient:
     def __init__(self, binary: str = DEFAULT_EVIDENCE_BINARY, timeout_secs: float = 30.0):
         self.binary = binary
         self.timeout = timeout_secs
+        self._request_id: str | None = None
+
+    def set_request_id(self, request_id: str) -> None:
+        self._request_id = request_id
 
     async def _run(self, *args: str) -> tuple[str, str, int]:
         cmd = [self.binary] + list(args)
@@ -39,6 +43,8 @@ class EvidenceClient:
 
     async def _send_json(self, request: dict) -> dict:
         """Send a JSON request to the daemon and receive a JSON response."""
+        if self._request_id:
+            request["request_id"] = self._request_id
         request_json = json.dumps(request)
         stdout, stderr, rc = await self._run("--request", request_json)
         if rc != 0:

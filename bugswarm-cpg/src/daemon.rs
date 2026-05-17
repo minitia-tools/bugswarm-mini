@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info};
+use uuid::Uuid;
 
 use crate::graph::CodePropertyGraph;
 use crate::parser;
@@ -32,6 +33,8 @@ struct DaemonRequest {
     prune: bool,
     #[serde(default = "default_decay")]
     decay: f32,
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 fn default_decay() -> f32 { 0.7 }
@@ -111,16 +114,24 @@ pub async fn run_daemon(socket_path: PathBuf) -> anyhow::Result<()> {
     let cache = Arc::new(CpgCache::new());
 
     loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                let c = cache.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, c).await {
-                        error!("CPG connection error: {}", e);
+        tokio::select! {
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, _)) => {
+                        let c = cache.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_connection(stream, c).await {
+                                error!("CPG connection error: {}", e);
+                            }
+                        });
                     }
-                });
+                    Err(e) => error!("CPG accept error: {}", e),
+                }
             }
-            Err(e) => error!("CPG accept error: {}", e),
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received SIGTERM, shutting down gracefully...");
+                break Ok(());
+            }
         }
     }
 }
@@ -144,6 +155,10 @@ async fn handle_connection(stream: UnixStream, cache: Arc<CpgCache>) -> anyhow::
                 continue;
             }
         };
+
+        let request_id = request.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let span = tracing::info_span!("request", request_id = %request_id);
+        let _guard = span.enter();
 
         let response = process_request(&request, &cache);
         let json = serde_json::to_string(&response).unwrap_or_default();

@@ -71,6 +71,14 @@ class SwarmOrchestrator:
         cpg = CPGClient()
         sandbox = SandboxClient()
         scanner = UnifiedScanner()
+        evidence = None  # Lazy-init
+
+        def get_evidence():
+            nonlocal evidence
+            if evidence is None:
+                from agent.evidence_client import EvidenceClient
+                evidence = EvidenceClient()
+            return evidence
 
         tools = ToolRegistry()
         tools.register(ToolDefinition(
@@ -137,6 +145,105 @@ class SwarmOrchestrator:
             handler=lambda args: asyncio.ensure_future(self._tool_get_trigger_matrix(args)),
             timeout_secs=10.0,
             cache_ttl_secs=30.0,
+        ))
+
+        # Batch 3B: Additional sandbox and evidence tools
+        tools.register(ToolDefinition(
+            name="delta_debug",
+            description="Minimize a crashing input using delta debugging (ddmin algorithm).",
+            parameters={"type": "object", "properties": {
+                "input_bytes_b64": {"type": "string", "description": "Base64-encoded crashing input bytes"},
+                "max_iterations": {"type": "integer"},
+                "timeout_secs": {"type": "integer"},
+            }, "required": ["input_bytes_b64"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_delta_debug(sandbox, args)),
+            timeout_secs=120.0, max_retries=1, cache_ttl_secs=0.0,
+        ))
+        tools.register(ToolDefinition(
+            name="diff_execute",
+            description="Compare two outputs using differential analysis.",
+            parameters={"type": "object", "properties": {
+                "output_a": {"type": "string"},
+                "output_b": {"type": "string"},
+                "normalizer": {"type": "string", "description": "Text, Json, Xml, Dict, or Binary"},
+            }, "required": ["output_a", "output_b"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_diff_execute(sandbox, args)),
+            timeout_secs=120.0, cache_ttl_secs=10.0,
+        ))
+        tools.register(ToolDefinition(
+            name="mine_invariants",
+            description="Mine invariants from function execution traces.",
+            parameters={"type": "object", "properties": {
+                "function_name": {"type": "string"},
+                "param_types": {"type": "array", "items": {"type": "string"}},
+                "count": {"type": "integer"},
+            }, "required": ["function_name"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_mine_invariants(sandbox, args)),
+            timeout_secs=60.0, cache_ttl_secs=30.0,
+        ))
+        tools.register(ToolDefinition(
+            name="run_mutations",
+            description="Run mutation testing against source code.",
+            parameters={"type": "object", "properties": {
+                "source_code": {"type": "string"},
+                "file_path": {"type": "string"},
+                "operators": {"type": "array", "items": {"type": "string"}},
+            }, "required": ["source_code"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_run_mutations(sandbox, args)),
+            timeout_secs=60.0, cache_ttl_secs=0.0,
+        ))
+        tools.register(ToolDefinition(
+            name="solve_reachability",
+            description="Solve for the exact input that reaches a target code location.",
+            parameters={"type": "object", "properties": {
+                "target_location": {"type": "string"},
+                "path_conditions": {"type": "array", "items": {
+                    "type": "object", "properties": {
+                        "line": {"type": "integer"}, "condition": {"type": "string"},
+                    }, "required": ["line", "condition"]}},
+            }, "required": ["target_location"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_solve_reachability(sandbox, args)),
+            timeout_secs=60.0, cache_ttl_secs=30.0,
+        ))
+        tools.register(ToolDefinition(
+            name="explore_paths",
+            description="Systematically explore all code paths using concolic execution.",
+            parameters={"type": "object", "properties": {
+                "target_location": {"type": "string"},
+                "path_conditions": {"type": "array", "items": {
+                    "type": "object", "properties": {
+                        "line": {"type": "integer"}, "condition": {"type": "string"},
+                    }, "required": ["line", "condition"]}},
+                "max_queries": {"type": "integer"},
+            }, "required": ["target_location"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_explore_paths(sandbox, args)),
+            timeout_secs=120.0, cache_ttl_secs=60.0,
+        ))
+        tools.register(ToolDefinition(
+            name="suggest_chain",
+            description="Analyze bugs and discover exploit chains with severity escalations.",
+            parameters={"type": "object", "properties": {
+                "bug_ids": {"type": "array", "items": {"type": "string"}},
+                "max_hops": {"type": "integer"},
+            }, "required": ["bug_ids"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_suggest_chain(get_evidence, args)),
+            timeout_secs=30.0, cache_ttl_secs=60.0,
+        ))
+        tools.register(ToolDefinition(
+            name="predict_fix_impact",
+            description="Predict whether a proposed fix will introduce new bugs.",
+            parameters={"type": "object", "properties": {
+                "bug_id": {"type": "string"},
+                "function_name": {"type": "string"},
+                "file_path": {"type": "string"},
+                "original_line": {"type": "string"},
+                "replacement_line": {"type": "string"},
+                "line_number": {"type": "integer"},
+                "language": {"type": "string"},
+                "description": {"type": "string"},
+            }, "required": ["bug_id", "function_name"]},
+            handler=lambda args: asyncio.ensure_future(self._tool_predict_fix_impact(get_evidence, args)),
+            timeout_secs=30.0, cache_ttl_secs=60.0,
         ))
 
         self._tools = tools
@@ -229,12 +336,9 @@ class SwarmOrchestrator:
             bug_id = args.get("bug_id", "unknown")
             dimension = args.get("dimension", "Input")
             description = args.get("description", "")
-            result = {
-                "bug_id": bug_id,
-                "dimension": dimension,
-                "description": description,
-                "recorded": True,
-            }
+            from agent.evidence_client import EvidenceClient
+            ev = EvidenceClient()
+            result = await ev.add_trigger_condition(bug_id, dimension, description, "agent")
             return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
         except Exception as e:
             return ToolResult(False, str(e))
@@ -244,13 +348,116 @@ class SwarmOrchestrator:
         import json
         try:
             bug_id = args.get("bug_id", "unknown")
-            result = {
-                "bug_id": bug_id,
-                "conditions": [],
-                "completeness_score": 0.0,
-                "contributing_layers": [],
-            }
+            from agent.evidence_client import EvidenceClient
+            ev = EvidenceClient()
+            result = await ev.get_trigger_matrix(bug_id)
             return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_delta_debug(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import base64, json
+        try:
+            input_b64 = args.get("input_bytes_b64", "")
+            input_bytes = base64.b64decode(input_b64)
+            max_iterations = int(args.get("max_iterations", 200))
+            timeout_secs = int(args.get("timeout_secs", 30))
+            result = await sandbox.delta_debug(input_bytes, max_iterations, timeout_secs)
+            return ToolResult(True, json.dumps(result, indent=2))
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_diff_execute(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            output_a = args.get("output_a", "")
+            output_b = args.get("output_b", "")
+            normalizer = args.get("normalizer", "Text")
+            result = await sandbox.diff_execute(output_a, output_b, normalizer)
+            return ToolResult(True, json.dumps(result, indent=2))
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_mine_invariants(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            function_name = args.get("function_name", "")
+            param_types = args.get("param_types", [])
+            count = int(args.get("count", 100))
+            result = await sandbox.mine_invariants(function_name, param_types, count)
+            return ToolResult(True, json.dumps(result, indent=2))
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_run_mutations(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            source_code = args.get("source_code", "")
+            file_path = args.get("file_path", "unknown")
+            operators = args.get("operators")
+            result = await sandbox.run_mutations(source_code, file_path, operators)
+            return ToolResult(True, json.dumps(result, indent=2))
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_solve_reachability(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            target_location = args.get("target_location", "")
+            path_conditions = args.get("path_conditions", [])
+            result = await sandbox.solve_reachability(target_location, path_conditions)
+            return ToolResult(True, json.dumps(result, indent=2))
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_explore_paths(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            target_location = args.get("target_location", "")
+            path_conditions = args.get("path_conditions", [])
+            max_queries = int(args.get("max_queries", 100))
+            result = await sandbox.explore_paths(target_location, path_conditions, max_queries)
+            return ToolResult(True, json.dumps(result, indent=2))
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_suggest_chain(self, get_evidence, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            bug_ids = args.get("bug_ids", [])
+            max_hops = int(args.get("max_hops", 10))
+            ev = get_evidence()
+            result = await ev.suggest_chain(bug_ids, max_hops)
+            return ToolResult(True, json.dumps(result, indent=2))
+        except Exception as e:
+            return ToolResult(False, str(e))
+
+    async def _tool_predict_fix_impact(self, get_evidence, args: dict) -> "ToolResult":
+        from agent.tools import ToolResult
+        import json
+        try:
+            bug_id = args.get("bug_id", "")
+            function_name = args.get("function_name", "")
+            file_path = args.get("file_path", "")
+            original_line = args.get("original_line", "")
+            replacement_line = args.get("replacement_line", "")
+            line_number = int(args.get("line_number", 0))
+            language = args.get("language", "python")
+            description = args.get("description", "")
+            ev = get_evidence()
+            result = await ev.predict_fix_impact(
+                bug_id, function_name, file_path,
+                original_line, replacement_line, line_number,
+                language, description,
+            )
+            return ToolResult(True, json.dumps(result, indent=2))
         except Exception as e:
             return ToolResult(False, str(e))
 

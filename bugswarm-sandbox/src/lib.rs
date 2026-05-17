@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used)]
+
 pub mod config;
 pub mod container;
 pub mod daemon;
@@ -10,6 +12,7 @@ pub mod invariant;
 pub mod logging;
 pub mod mutation;
 pub mod pidfile;
+pub mod request_id;
 pub mod sanitizer_report;
 pub mod scanner;
 pub mod seccomp;

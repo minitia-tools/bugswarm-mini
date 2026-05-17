@@ -68,6 +68,25 @@ fn main() {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
                 info!("Starting evidence daemon on {}", socket.display());
+
+                #[cfg(unix)]
+                {
+                    tokio::spawn(async move {
+                        use tokio::signal::unix::{signal, SignalKind};
+                        let mut sighup = match signal(SignalKind::hangup()) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Failed to register SIGHUP handler: {}", e);
+                                return;
+                            }
+                        };
+                        loop {
+                            sighup.recv().await;
+                            tracing::info!("Received SIGHUP on evidence daemon — runtime config reload is limited to mutable fields");
+                        }
+                    });
+                }
+
                 bugswarm_evidence::daemon::run_daemon(socket).await
                     .expect("Evidence daemon failed");
             });

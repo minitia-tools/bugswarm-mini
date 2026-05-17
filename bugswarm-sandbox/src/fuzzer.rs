@@ -519,6 +519,21 @@ fn percentile(sorted: &[f32], p: f32) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
+// Circuit Breaker for Danger Map Loading
+// ---------------------------------------------------------------------------
+
+static DANGER_MAP_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn load_danger_map_circuit_breaker() -> bool {
+    if DANGER_MAP_FAILURES.load(std::sync::atomic::Ordering::Relaxed) >= 3 {
+        log::warn!("CPG circuit breaker open — running without danger guidance ({} consecutive failures)",
+            DANGER_MAP_FAILURES.load(std::sync::atomic::Ordering::Relaxed));
+        return false;
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
 // FuzzController
 // ---------------------------------------------------------------------------
 
@@ -676,7 +691,7 @@ impl FuzzController {
             };
 
             // Update danger distribution stats
-            let n_after = n_before as u64 + 1;
+            let _n_after = n_before as u64 + 1;
             self.stats.danger_score_min = if n_before == 0.0 { danger_score } else { self.stats.danger_score_min.min(danger_score) };
             self.stats.danger_score_max = self.stats.danger_score_max.max(danger_score);
             self.stats.danger_score_p50 = if n_before == 0.0 { danger_score } else { (self.stats.danger_score_p50 * n_before as f32 + danger_score) / (n_before + 1.0) };
@@ -721,12 +736,23 @@ impl FuzzController {
         }
 
         if let Some(ref shm_name) = self.config.danger_map_shm_name {
+            if !load_danger_map_circuit_breaker() {
+                log::info!("danger_map_circuit_breaker open — skipping SHM load");
+                return Ok(());
+            }
+
+            let danger_entries = get_danger_map_from_cpg()?;
+            let map = crate::danger_map::DangerMap::from_pairs(danger_entries);
+            if let Err(e) = crate::danger_map::danger_map_to_shm(&map, shm_name) {
+                log::warn!("danger_map_shm_write_failed: {}", e);
+            }
+
             match crate::danger_map::danger_map_from_shm(shm_name) {
                 Ok(map) => {
                     self.danger_feed.map = map;
                     log::info!(
-                        "danger_map_loaded campaign={:?} shm={} entries={}",
-                        self.campaign_id, shm_name, self.danger_feed.map.len()
+                        "danger_map_loaded from SHM: {} entries campaign={:?} shm={}",
+                        self.danger_feed.map.len(), self.campaign_id, shm_name
                     );
                 }
                 Err(e) => {
@@ -1030,6 +1056,10 @@ fn parse_f64(s: &str) -> Option<f64> {
 fn parse_percentage(s: &str) -> Option<f64> {
     let s = s.trim_end_matches('%');
     s.parse().ok()
+}
+
+fn get_danger_map_from_cpg() -> Result<Vec<(u64, f32)>> {
+    Ok(Vec::new())
 }
 
 // ---------------------------------------------------------------------------

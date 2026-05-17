@@ -218,19 +218,38 @@ pub fn discover_callers(
     callers
 }
 
-/// Estimate argument value ranges for a caller (simplified static analysis).
-fn estimate_argument_ranges(_caller_name: &str) -> Vec<ArgumentValueRange> {
-    // Simplified: generate placeholder ranges
-    // In production, this would use CPG AST analysis + Z3 symbolic computation
-    vec![ArgumentValueRange {
-        arg_name: "arg0".into(),
-        arg_position: 0,
-        min_value: "0".into(),
-        max_value: "100".into(),
-        typical_value: "42".into(),
-        range_type: ValueRangeType::Integer,
-        overlaps_fix_boundary: false,
-    }]
+/// Estimate argument value ranges for a caller based on common patterns.
+fn estimate_argument_ranges(caller_name: &str) -> Vec<ArgumentValueRange> {
+    let mut ranges = Vec::new();
+
+    if caller_name.contains("count") || caller_name.contains("size") || caller_name.contains("index") {
+        ranges.push(ArgumentValueRange {
+            arg_name: "value".into(), arg_position: 0,
+            min_value: "0".into(), max_value: "65535".into(),
+            typical_value: "42".into(),
+            range_type: ValueRangeType::Integer,
+            overlaps_fix_boundary: false,
+        });
+    }
+    if caller_name.contains("name") || caller_name.contains("path") || caller_name.contains("str") {
+        ranges.push(ArgumentValueRange {
+            arg_name: "value".into(), arg_position: 0,
+            min_value: "".into(), max_value: "".into(),
+            typical_value: "default".into(),
+            range_type: ValueRangeType::String,
+            overlaps_fix_boundary: false,
+        });
+    }
+    if ranges.is_empty() {
+        ranges.push(ArgumentValueRange {
+            arg_name: "arg0".into(), arg_position: 0,
+            min_value: "".into(), max_value: "".into(),
+            typical_value: "unknown".into(),
+            range_type: ValueRangeType::Unknown,
+            overlaps_fix_boundary: false,
+        });
+    }
+    ranges
 }
 
 // ── Value Range Overlap Detection ──────────────────────────────────────

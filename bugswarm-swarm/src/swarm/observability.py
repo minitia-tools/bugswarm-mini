@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
+import aiohttp
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -129,6 +130,13 @@ class AlertRule:
         return False
 
 
+class SlackNotifier:
+    """Async Slack webhook notifier using aiohttp."""
+
+    def __init__(self, webhook_url: str):
+        self.webhook_url = webhook_url
+
+
 class AlertEngine:
     """Evaluates alert rules and routes to notification channels."""
 
@@ -136,6 +144,11 @@ class AlertEngine:
         self.rules: list[AlertRule] = []
         self._fired_history: list[dict] = []
         self._notifier: Callable[[AlertRule], None] | None = None
+        self._slack_notifier: SlackNotifier | None = None
+
+        slack_url = os.getenv("BGSWARM_ALERT_SLACK_WEBHOOK", "")
+        if slack_url:
+            self._slack_notifier = SlackNotifier(slack_url)
 
     def add_rule(self, rule: AlertRule) -> None:
         self.rules.append(rule)
@@ -143,7 +156,7 @@ class AlertEngine:
     def set_notifier(self, notifier: Callable[[AlertRule], None]) -> None:
         self._notifier = notifier
 
-    def evaluate_all(self) -> list[AlertRule]:
+    async def evaluate_all(self) -> list[AlertRule]:
         triggered = []
         for rule in self.rules:
             if rule.evaluate():
@@ -152,9 +165,25 @@ class AlertEngine:
                     "rule": rule.name, "severity": rule.severity.value,
                     "channel": rule.channel, "timestamp": time.time(),
                 })
-                if self._notifier:
-                    self._notifier(rule)
+                if self._slack_notifier:
+                    await self._send_slack_alert(rule)
         return triggered
+
+    async def _send_slack_alert(self, rule: AlertRule) -> None:
+        if not self._slack_notifier:
+            return
+        import asyncio
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(
+                    self._slack_notifier.webhook_url,
+                    json={"text": f"[{rule.severity.value}] {rule.name}: {rule.description}"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status != 200:
+                        logger.warning("slack_webhook_failed", status=resp.status, rule=rule.name)
+            except Exception as e:
+                logger.error("slack_webhook_error", error=str(e), rule=rule.name)
 
     def active_alerts(self) -> list[dict]:
         return [

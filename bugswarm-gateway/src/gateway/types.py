@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+def _load_api_key(key_name: str) -> str:
+    """Load API key from env var or Docker secret file."""
+    provider = os.getenv("BGSWARM_SECRETS_PROVIDER", "env")
+    if provider == "file":
+        path = os.getenv(f"{key_name}_FILE", f"/run/secrets/{key_name.lower()}")
+        try:
+            return Path(path).read_text().strip()
+        except Exception:
+            return ""
+    return os.getenv(key_name, "")
 
 
 class ProviderType(str, Enum):
@@ -120,20 +134,20 @@ class GatewayConfig:
         providers = {}
 
         # OpenAI
-        if os.getenv("OPENAI_API_KEY"):
+        if _load_api_key("OPENAI_API_KEY"):
             providers[ProviderType.OPENAI] = ProviderConfig(
                 provider=ProviderType.OPENAI,
-                api_key=os.getenv("OPENAI_API_KEY", ""),
+                api_key=_load_api_key("OPENAI_API_KEY"),
                 default_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 input_cost_per_mtok=0.15,
                 output_cost_per_mtok=0.60,
             )
 
         # Anthropic
-        if os.getenv("ANTHROPIC_API_KEY"):
+        if _load_api_key("ANTHROPIC_API_KEY"):
             providers[ProviderType.ANTHROPIC] = ProviderConfig(
                 provider=ProviderType.ANTHROPIC,
-                api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+                api_key=_load_api_key("ANTHROPIC_API_KEY"),
                 default_model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
                 input_cost_per_mtok=3.0,
                 output_cost_per_mtok=15.0,
@@ -159,10 +173,10 @@ class GatewayConfig:
         )
 
         # DeepSeek (OpenAI-compatible API)
-        if os.getenv("DEEPSEEK_API_KEY"):
+        if _load_api_key("DEEPSEEK_API_KEY"):
             providers[ProviderType.DEEPSEEK] = ProviderConfig(
                 provider=ProviderType.DEEPSEEK,
-                api_key=os.getenv("DEEPSEEK_API_KEY", ""),
+                api_key=_load_api_key("DEEPSEEK_API_KEY"),
                 base_url="https://api.deepseek.com",
                 default_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
                 input_cost_per_mtok=0.14,   # $0.14/1M input tokens

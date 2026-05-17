@@ -23,7 +23,15 @@
         "clock_getres", "clock_nanosleep", "restart_syscall",
         "faccessat", "faccessat2", "newfstatat", "getdents64"
       ],
-      "action": "SCMP_ACT_ALLOW"
+      "action": "SCMP_ACT_ALLOW",
+      "comment": "prlimit64 is REQUIRED by Python's resource.getrlimit at startup. Removal would crash Python containers. Verified 2026-05-14."
+    },
+    {
+      "names": [
+        "fork", "vfork", "clone", "clone3"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Explicitly blocked: process creation not allowed in sandbox"
     },
     {
       "names": [
