@@ -1,6 +1,6 @@
 [package]
 name = "bugswarm-cpg"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Bug Swarm CLI — Code Property Graph Builder. Static analysis graph for multi-language codebases."
 
@@ -25,6 +25,7 @@ log = { workspace = true }
 tokio = { version = "1.41", features = ["full"] }
 parking_lot = "0.12"
 chrono = { workspace = true }
+once_cell = "1"
 
 [dev-dependencies]
 tempfile = "3.14"

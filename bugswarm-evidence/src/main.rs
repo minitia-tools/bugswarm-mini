@@ -133,7 +133,9 @@ fn run_demo() {
 fn run_stats() {
     let g = EvidenceGraph::new();
     let stats = g.stats();
-    println!("{}", serde_json::to_string_pretty(&stats).unwrap());
+    let json = serde_json::to_string_pretty(&stats)
+        .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {}\"}}", e));
+    println!("{}", json);
 }
 
 fn run_verify() {

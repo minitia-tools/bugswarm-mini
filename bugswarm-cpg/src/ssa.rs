@@ -205,7 +205,10 @@ fn extract_lhs_var(node: &GraphNode) -> Option<String> {
 /// Check if a string is a valid identifier (C6.2.2).
 fn is_valid_identifier(s: &str) -> bool {
     if s.is_empty() { return false; }
-    let first = s.chars().next().unwrap();
+    let first = match s.chars().next() {
+        Some(c) => c,
+        None => return false,
+    };
     if !first.is_alphabetic() && first != '_' { return false; }
     s.chars().all(|c| c.is_alphanumeric() || c == '_')
 }

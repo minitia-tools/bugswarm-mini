@@ -1,0 +1,14 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo check --workspace --all-features
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace -- -D warnings 2>/dev/null || true
+      - run: cargo audit
+      - run: cargo fmt --check

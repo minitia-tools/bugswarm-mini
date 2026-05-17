@@ -1,0 +1,15 @@
+[Unit]
+Description=BugSwarm Evidence Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bugswarm-evidence run-server --socket /var/run/bugswarm/evidence.sock --pid-file /var/run/bugswarm/evidence.pid
+PIDFile=/var/run/bugswarm/evidence.pid
+Restart=always
+RestartSec=5
+User=bugswarm
+Group=bugswarm
+
+[Install]
+WantedBy=multi-user.target

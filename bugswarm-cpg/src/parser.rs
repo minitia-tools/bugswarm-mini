@@ -3,11 +3,15 @@ use std::path::Path;
 use tree_sitter::{Language, Node, Parser};
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
+use once_cell::sync::Lazy;
 
 use crate::graph::{
     CodePropertyGraph, EdgeKind, FunctionInfo, GraphEdge, GraphNode, NodeId, NodeKind,
 };
 use petgraph::visit::EdgeRef;
+
+static PYTHON_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"(?:import|from)\s+(\S+)").unwrap());
+static JS_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"(?:import|require)\s*\(?["']([^"']+)["']"#).unwrap());
 
 /// Detect the language of a file based on its extension.
 pub fn detect_language(path: &Path) -> Option<&'static str> {
@@ -951,14 +955,12 @@ fn collect_js_calls(node: Node, content: &str, calls: &mut Vec<String>) {
 fn extract_imports(content: &str, lang: &str) -> Vec<String> {
     match lang {
         "python" => {
-            let re = regex::Regex::new(r"(?:import|from)\s+(\S+)").unwrap();
-            re.captures_iter(content)
+            PYTHON_IMPORT_RE.captures_iter(content)
                 .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
                 .collect()
         }
         "javascript" | "typescript" => {
-            let re = regex::Regex::new(r#"(?:import|require)\s*\(?["']([^"']+)["']"#).unwrap();
-            re.captures_iter(content)
+            JS_IMPORT_RE.captures_iter(content)
                 .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
                 .collect()
         }

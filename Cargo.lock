@@ -208,13 +208,14 @@ dependencies = [
 
 [[package]]
 name = "bugswarm-cpg"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
  "hex",
  "log",
+ "once_cell",
  "parking_lot",
  "petgraph",
  "regex",
@@ -235,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "bugswarm-evidence"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -256,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "bugswarm-sandbox"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -272,6 +273,7 @@ dependencies = [
  "log",
  "nix",
  "num_cpus",
+ "once_cell",
  "regex",
  "regex-lite",
  "rstest",
@@ -292,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "bugswarm-symbolic"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "log",

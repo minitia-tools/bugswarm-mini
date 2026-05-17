@@ -8,6 +8,11 @@
 
 use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
+use once_cell::sync::Lazy;
+
+static XML_COMMENT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<!--.*?-->").unwrap());
+static XML_PI_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<\?.*?\?>").unwrap());
+static XML_NAMESPACE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"xmlns(:\w+)?="[^"]*""#).unwrap());
 
 /// The four differential comparison modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,18 +213,15 @@ fn normalize_xml(raw: &str) -> (String, Vec<String>) {
 }
 
 fn strip_xml_comments(s: &str) -> String {
-    let re = regex::Regex::new(r"<!--.*?-->").unwrap();
-    re.replace_all(s, "").to_string()
+    XML_COMMENT_RE.replace_all(s, "").to_string()
 }
 
 fn strip_xml_pi(s: &str) -> String {
-    let re = regex::Regex::new(r"<\?.*?\?>").unwrap();
-    re.replace_all(s, "").to_string()
+    XML_PI_RE.replace_all(s, "").to_string()
 }
 
 fn strip_namespaces(s: &str) -> String {
-    let re = regex::Regex::new(r#"xmlns(:\w+)?="[^"]*""#).unwrap();
-    re.replace_all(s, "").to_string()
+    XML_NAMESPACE_RE.replace_all(s, "").to_string()
 }
 
 fn normalize_dict(raw: &str) -> (String, Vec<String>) {

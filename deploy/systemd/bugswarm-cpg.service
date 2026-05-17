@@ -1,0 +1,15 @@
+[Unit]
+Description=BugSwarm CPG Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bugswarm-cpg daemon --socket /var/run/bugswarm/cpg.sock --pid-file /var/run/bugswarm/cpg.pid
+PIDFile=/var/run/bugswarm/cpg.pid
+Restart=always
+RestartSec=5
+User=bugswarm
+Group=bugswarm
+
+[Install]
+WantedBy=multi-user.target

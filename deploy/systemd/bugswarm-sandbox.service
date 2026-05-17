@@ -1,0 +1,18 @@
+[Unit]
+Description=BugSwarm Sandbox Daemon
+After=docker.service network.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bugswarm-sandbox run-server --socket /var/run/bugswarm/sandbox.sock --pid-file /var/run/bugswarm/sandbox.pid --http-port 8080
+PIDFile=/var/run/bugswarm/sandbox.pid
+Restart=always
+RestartSec=5
+User=bugswarm
+Group=bugswarm
+RuntimeDirectory=bugswarm
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

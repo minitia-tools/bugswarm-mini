@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use anyhow::Context;
 
 /// A single danger map entry as received from the CPG daemon in JSON form.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,18 +130,18 @@ impl DangerMap {
     }
 
     /// Deserialize from binary format.
-    pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
+    pub fn from_bytes(data: &[u8]) -> anyhow::Result<Self> {
         if data.len() < 8 {
-            return Err("data too short for header".to_string());
+            anyhow::bail!("data too short for header");
         }
         let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
         let expected_len = 8 + count * 16;
         if data.len() < expected_len {
-            return Err(format!(
+            anyhow::bail!(
                 "data too short: expected {} bytes, got {}",
                 expected_len,
                 data.len()
-            ));
+            );
         }
         if data.len() > expected_len {
             log::warn!("from_bytes: {} trailing bytes ignored", data.len() - expected_len);
@@ -256,8 +257,12 @@ pub fn compute_power_score(danger_score: f32, coverage_rarity: f32, config: &Dan
 // ---------------------------------------------------------------------------
 
 /// Create a POSIX shared memory segment, return its file descriptor.
-pub fn shm_create(name: &str, size: usize) -> Result<i32, String> {
-    let c_name = std::ffi::CString::new(name).map_err(|e| format!("invalid name: {}", e))?;
+pub fn shm_create(name: &str, size: usize) -> anyhow::Result<i32> {
+    let c_name = std::ffi::CString::new(name)
+        .with_context(|| format!("invalid SHM name: {}", name))?;
+    // SAFETY: shm_open is called with a valid NUL-terminated CString pointer,
+    // O_RDWR|O_CREAT|O_EXCL for exclusive creation, and mode 0o600.
+    // The CString lives for the duration of this call.
     let fd = unsafe {
         libc::shm_open(
             c_name.as_ptr(),
@@ -266,21 +271,29 @@ pub fn shm_create(name: &str, size: usize) -> Result<i32, String> {
         )
     };
     if fd < 0 {
-        return Err(format!("shm_open failed: {}", std::io::Error::last_os_error()));
+        anyhow::bail!("shm_open({}) failed: {}", name, std::io::Error::last_os_error());
     }
+    // SAFETY: ftruncate is called with a valid fd from shm_open (checked >= 0 above),
+    // and the size argument matches the requested segment size.
     if unsafe { libc::ftruncate(fd, size as libc::off_t) } < 0 {
         let err = std::io::Error::last_os_error();
+        // SAFETY: close and shm_unlink are called with a valid fd and valid CString
+        // to clean up resources on ftruncate failure.
         unsafe {
             libc::close(fd);
             libc::shm_unlink(c_name.as_ptr());
         }
-        return Err(format!("ftruncate failed: {}", err));
+        anyhow::bail!("ftruncate({}, {}) failed: {}", name, size, err);
     }
     Ok(fd)
 }
 
 /// Mmap a shared memory segment read-write, returning a raw pointer.
-pub fn shm_map(fd: i32, size: usize) -> Result<*mut u8, String> {
+pub fn shm_map(fd: i32, size: usize) -> anyhow::Result<*mut u8> {
+    // SAFETY: mmap is called with a valid file descriptor from shm_open,
+    // size matching the segment size from fstat, PROT_READ|PROT_WRITE only,
+    // MAP_SHARED for read/write access, and offset 0.
+    // The returned pointer is raw and the caller must ensure cleanup (munmap + close).
     let ptr = unsafe {
         libc::mmap(
             std::ptr::null_mut(),
@@ -292,29 +305,35 @@ pub fn shm_map(fd: i32, size: usize) -> Result<*mut u8, String> {
         )
     };
     if ptr == libc::MAP_FAILED {
-        return Err(format!("mmap failed: {}", std::io::Error::last_os_error()));
+        anyhow::bail!("mmap failed: {}", std::io::Error::last_os_error());
     }
     Ok(ptr as *mut u8)
 }
 
 /// Unlink a POSIX shared memory segment by name.
-pub fn shm_unlink(name: &str) -> Result<(), String> {
-    let c_name = std::ffi::CString::new(name).map_err(|e| format!("invalid name: {}", e))?;
+pub fn shm_unlink(name: &str) -> anyhow::Result<()> {
+    let c_name = std::ffi::CString::new(name)
+        .with_context(|| format!("invalid SHM name: {}", name))?;
+    // SAFETY: shm_unlink is called with a valid NUL-terminated CString pointer.
+    // The CString lives for the duration of this call.
     let rc = unsafe { libc::shm_unlink(c_name.as_ptr()) };
     if rc < 0 {
         let err = std::io::Error::last_os_error();
         if err.kind() != std::io::ErrorKind::NotFound {
-            return Err(format!("shm_unlink failed: {}", err));
+            anyhow::bail!("shm_unlink({}) failed: {}", name, err);
         }
     }
     Ok(())
 }
 
 /// Serialize a DangerMap and write it to a POSIX shared memory segment.
-pub fn danger_map_to_shm(map: &DangerMap, shm_name: &str) -> Result<(), String> {
+pub fn danger_map_to_shm(map: &DangerMap, shm_name: &str) -> anyhow::Result<()> {
     let bytes = map.to_bytes();
     let fd = shm_create(shm_name, bytes.len())?;
     let ptr = shm_map(fd, bytes.len())?;
+    // SAFETY: copy_nonoverlapping copies exactly bytes.len() bytes from a valid
+    // Vec<u8> to the mmap'd writable region of the same size. After the copy,
+    // munmap and close clean up the mapping and file descriptor.
     unsafe {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
         libc::munmap(ptr as *mut libc::c_void, bytes.len());
@@ -324,24 +343,37 @@ pub fn danger_map_to_shm(map: &DangerMap, shm_name: &str) -> Result<(), String> 
 }
 
 /// Open a shared memory segment, deserialize a DangerMap from it, and unlink.
-pub fn danger_map_from_shm(shm_name: &str) -> Result<DangerMap, String> {
-    let c_name = std::ffi::CString::new(shm_name).map_err(|e| format!("invalid name: {}", e))?;
+pub fn danger_map_from_shm(shm_name: &str) -> anyhow::Result<DangerMap> {
+    let c_name = std::ffi::CString::new(shm_name)
+        .with_context(|| format!("invalid SHM name: {}", shm_name))?;
+    // SAFETY: shm_open is called with a valid NUL-terminated CString, O_RDONLY
+    // for read-only access, and mode 0. The CString is valid for this call.
     let fd = unsafe { libc::shm_open(c_name.as_ptr(), libc::O_RDONLY, 0) };
     if fd < 0 {
-        return Err(format!(
-            "shm_open for read failed: {}",
+        anyhow::bail!(
+            "shm_open({}) for read failed: {}",
+            shm_name,
             std::io::Error::last_os_error()
-        ));
+        );
     }
+    // SAFETY: std::mem::zeroed() is safe for libc::stat which is a POD struct;
+    // all-zero bit pattern is a valid initialized value.
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: fstat is called with a valid fd from shm_open and a mutable
+    // reference to a zeroed stat struct that will be filled by the kernel.
     if unsafe { libc::fstat(fd, &mut stat) } < 0 {
         let err = std::io::Error::last_os_error();
+        // SAFETY: close on a valid fd to clean up after fstat failure.
         unsafe {
             libc::close(fd);
         }
-        return Err(format!("fstat failed: {}", err));
+        anyhow::bail!("fstat({}) failed: {}", shm_name, err);
     }
     let size = stat.st_size as usize;
+    // SAFETY: mmap is called with a valid fd from shm_open, size from fstat
+    // which matches the segment size, PROT_READ only, MAP_SHARED for read-only
+    // access, and offset 0. The returned pointer is immediately converted to a
+    // slice via from_raw_parts with the same size.
     let ptr = unsafe {
         libc::mmap(
             std::ptr::null_mut(),
@@ -354,13 +386,19 @@ pub fn danger_map_from_shm(shm_name: &str) -> Result<DangerMap, String> {
     };
     if ptr == libc::MAP_FAILED {
         let err = std::io::Error::last_os_error();
+        // SAFETY: close on a valid fd to clean up after mmap failure.
         unsafe {
             libc::close(fd);
         }
-        return Err(format!("mmap failed: {}", err));
+        anyhow::bail!("mmap({}) failed: {}", shm_name, err);
     }
+    // SAFETY: from_raw_parts constructs an &[u8] over the mmap'd memory region
+    // with the exact same size as returned by fstat. The memory is valid for the
+    // lifetime of this function (munmap at end).
     let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, size) };
     let map = DangerMap::from_bytes(slice)?;
+    // SAFETY: munmap unmaps the shared memory region, and close releases the fd.
+    // Both pointer and fd are valid from the mmap/shm_open calls above.
     unsafe {
         libc::munmap(ptr as *mut libc::c_void, size);
         libc::close(fd);
@@ -560,9 +598,12 @@ mod tests {
         assert!(fd >= 0);
         let ptr = shm_map(fd, 4096).unwrap();
         assert!(!ptr.is_null());
+        // SAFETY: munmap with a valid non-null pointer from shm_map and the
+        // correct size 4096 bytes. Test invariant: ptr is not null (asserted above).
         unsafe {
             libc::munmap(ptr as *mut libc::c_void, 4096);
         }
+        // SAFETY: close with a valid file descriptor from shm_create (checked >= 0 above).
         unsafe {
             libc::close(fd);
         }
