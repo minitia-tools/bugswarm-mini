@@ -282,20 +282,22 @@ class ToolDispatcher:
 
     async def _read_file(self, args: dict) -> ToolResult:
         path = args.get("path", "")
-        start = args.get("start_line", 1)
-        end = args.get("end_line", start + 50)
+        start = int(args.get("start_line", 1))
+        end = int(args.get("end_line", start + 50))
 
-        full_path = self.repo_path / path
-        # If the path is absolute and exists, use it directly
-        if path.startswith("/") and Path(path).exists():
-            full_path = Path(path)
-        # If relative path doesn't exist, try to find it
-        if not full_path.exists():
-            # Try just the filename
-            filename = Path(path).name
-            candidates = list(self.repo_path.rglob(filename))
-            if candidates:
-                full_path = candidates[0]
+        repo_resolved = self.repo_path.resolve()
+
+        # H12: Path traversal prevention
+        if path.startswith("/"):
+            return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
+        if ".." in path:
+            return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
+
+        full_path = (self.repo_path / path).resolve()
+
+        if not str(full_path).startswith(str(repo_resolved)):
+            return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository")
+
         if not full_path.exists():
             return ToolResult(False, f"File not found: {path}")
 

@@ -347,11 +347,23 @@ async def _read_file_async(repo, scanner, args):
         path = args.get("path", "")
         start = int(args.get("start_line", 1))
         end = int(args.get("end_line", start + 50))
-        full = repo / path
-        if not full.exists() and Path(path).exists():
-            full = Path(path)
+
+        repo_resolved = repo.resolve()
+
+        # H12: Path traversal prevention
+        if path.startswith("/"):
+            return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
+        if ".." in path:
+            return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
+
+        full = (repo / path).resolve()
+
+        if not str(full).startswith(str(repo_resolved)):
+            return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository")
+
         if not full.exists():
             return ToolResult(False, f"File not found: {path}")
+
         lines = full.read_text().splitlines()
         result_lines = [f"{i+1}: {lines[i]}" for i in range(max(0, start-1), min(len(lines), end))]
         content = "\n".join(result_lines)

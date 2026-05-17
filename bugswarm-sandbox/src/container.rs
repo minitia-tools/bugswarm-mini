@@ -241,7 +241,7 @@ impl ContainerManager {
             execution_id: execution_id.clone(),
             poc_sha256,
             image_sha256,
-            command: vec!["sh".into(), "-c".into(), "python3 /tmp/sandbox/poc.py".into()],
+            command: vec!["sh".into(), "-c".into(), "python3 /sandbox/poc.py".into()],
             exit_code: output.exit_code,
             status: Self::determine_status(output.exit_code, &output.status),
             duration_secs: duration,
@@ -295,18 +295,38 @@ impl ContainerManager {
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
 
-        let script = format!(
-            "mkdir -p /tmp/sandbox && cat > /tmp/sandbox/poc.py << 'BUGSWARM_EOF'\n{}\nBUGSWARM_EOF\npython3 /tmp/sandbox/poc.py",
-            poc_content
-        );
+        // Write PoC to temp file on host for bind-mount (avoids shell injection via heredoc)
+        let poc_host_dir = std::path::PathBuf::from("/tmp/bugswarm");
+        let poc_host_path = poc_host_dir.join(format!("poc-{}.py", execution_id));
+        std::fs::create_dir_all(&poc_host_dir)
+            .map_err(|e| SandboxError::ContainerExecution(format!("Failed to create PoC temp dir: {}", e)))?;
+        std::fs::write(&poc_host_path, poc_content)
+            .map_err(|e| SandboxError::ContainerExecution(format!("Failed to write PoC file: {}", e)))?;
+        let _guard = PocFileGuard(poc_host_path.clone());
+
+        let cmd = "python3 /sandbox/poc.py".to_string();
 
         let mut host_cfg = build_host_config(&self.config);
         host_cfg.auto_remove = Some(true);
 
+        // Add bind mount for PoC file
+        let poc_mount = Mount {
+            target: Some("/sandbox/poc.py".to_string()),
+            typ: Some(MountTypeEnum::BIND),
+            source: Some(poc_host_path.to_string_lossy().to_string()),
+            read_only: Some(true),
+            ..Default::default()
+        };
+        let mut all_mounts = vec![poc_mount];
+        if let Some(ref mut existing) = host_cfg.mounts {
+            all_mounts.append(existing);
+        }
+        host_cfg.mounts = Some(all_mounts);
+
         let container_config = ContainerConfig {
             image: Some(image.to_string()),
             env: Some(env_list),
-            cmd: Some(vec!["sh".into(), "-c".into(), script]),
+            cmd: Some(vec!["sh".into(), "-c".into(), cmd]),
             working_dir: Some(self.config.workdir.clone()),
             host_config: Some(host_cfg),
             ..Default::default()
@@ -867,6 +887,13 @@ impl ContainerManager {
             causality_confirmed: receipt.exit_code.unwrap_or(1) == 0,
             intervention, receipt,
         })
+    }
+}
+
+struct PocFileGuard(std::path::PathBuf);
+impl Drop for PocFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 
