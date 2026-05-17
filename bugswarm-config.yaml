@@ -1,0 +1,28 @@
+# BugSwarm Unified Configuration v1.0.0
+version: "1.0.0"
+
+logging:
+  level: info
+  file: /var/log/bugswarm/daemon.log
+
+daemons:
+  sandbox:
+    socket: /var/run/bugswarm/sandbox.sock
+    pid_file: /var/run/bugswarm/sandbox.pid
+    http_port: 8080
+    docker_image: bugswarm/sandbox-base:1.0.0
+    memory_limit_mb: 256
+    timeout_secs: 30
+  cpg:
+    socket: /var/run/bugswarm/cpg.sock
+    pid_file: /var/run/bugswarm/cpg.pid
+    http_port: 8081
+  evidence:
+    socket: /var/run/bugswarm/evidence.sock
+    pid_file: /var/run/bugswarm/evidence.pid
+    http_port: 8082
+    state_dir: /var/lib/bugswarm
+
+storage:
+  state_dir: /var/lib/bugswarm
+  chroma_persist_dir: /var/lib/bugswarm/chroma

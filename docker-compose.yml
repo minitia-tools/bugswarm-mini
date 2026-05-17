@@ -1,0 +1,100 @@
+version: "3.8"
+
+services:
+  sandbox:
+    build:
+      context: ./bugswarm-sandbox
+      dockerfile: docker/sandbox-base.Dockerfile
+    image: bugswarm/sandbox:${BUGSWARM_VERSION:-1.0.0}
+    ports:
+      - "${BGSWARM_SANDBOX_PORT:-8080}:${BGSWARM_SANDBOX_PORT:-8080}"
+    volumes:
+      - /var/run/bugswarm:/var/run/bugswarm
+      - /fuzz/corpus:/fuzz/corpus
+      - /etc/bugswarm/config.yaml:/etc/bugswarm/config.yaml:ro
+    command: ["run-server", "--config", "/etc/bugswarm/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  cpg:
+    build:
+      context: ./bugswarm-cpg
+    image: bugswarm/cpg:${BUGSWARM_VERSION:-1.0.0}
+    ports:
+      - "${BGSWARM_CPG_PORT:-8081}:${BGSWARM_CPG_PORT:-8081}"
+    volumes:
+      - /var/run/bugswarm:/var/run/bugswarm
+      - /etc/bugswarm/config.yaml:/etc/bugswarm/config.yaml:ro
+    command: ["daemon", "--config", "/etc/bugswarm/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  evidence:
+    build:
+      context: ./bugswarm-evidence
+    image: bugswarm/evidence:${BUGSWARM_VERSION:-1.0.0}
+    ports:
+      - "${BGSWARM_EVIDENCE_PORT:-8082}:${BGSWARM_EVIDENCE_PORT:-8082}"
+    volumes:
+      - /var/run/bugswarm:/var/run/bugswarm
+      - /var/lib/bugswarm:/var/lib/bugswarm
+      - /etc/bugswarm/config.yaml:/etc/bugswarm/config.yaml:ro
+    command: ["run-server", "--config", "/etc/bugswarm/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  symbolic:
+    build:
+      context: ./bugswarm-symbolic
+    image: bugswarm/symbolic:${BUGSWARM_VERSION:-1.0.0}
+    volumes:
+      - /etc/bugswarm/config.yaml:/etc/bugswarm/config.yaml:ro
+    command: ["--config", "/etc/bugswarm/config.yaml"]
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ./bugswarm-gateway
+    image: bugswarm/gateway:${BUGSWARM_VERSION:-1.0.0}
+    environment:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - DEEPSEEK_API_KEY
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: ./bugswarm-agent
+    image: bugswarm/agent:${BUGSWARM_VERSION:-1.0.0}
+    depends_on:
+      sandbox: { condition: service_healthy }
+      cpg: { condition: service_healthy }
+    environment:
+      - DEEPSEEK_API_KEY
+    restart: "no"
+
+  swarm:
+    build:
+      context: ./bugswarm-swarm
+    image: bugswarm/swarm:${BUGSWARM_VERSION:-1.0.0}
+    depends_on:
+      gateway: { condition: service_healthy }
+    restart: "no"
+
+  minitia:
+    build:
+      context: ./minitia
+    image: bugswarm/minitia:${BUGSWARM_VERSION:-1.0.0}
+    restart: "no"
