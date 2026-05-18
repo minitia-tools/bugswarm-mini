@@ -7,6 +7,7 @@ description = "Bug Swarm CLI — Evidence Graph. Immutable hypergraph for agent 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
 sha2 = { workspace = true }
 strsim = "0.11"
 hex = "0.4"

@@ -95,17 +95,21 @@ enum Commands {
 
     /// Run as a daemon listening on a Unix socket.
     RunServer {
-        /// Unix socket path.
-        #[arg(short, long, default_value = "/var/run/bugswarm/cpg.sock")]
-        socket: PathBuf,
+        /// Unified config file path.
+        #[arg(short, long, default_value = "/etc/bugswarm/config.yaml")]
+        config: PathBuf,
 
-        /// PID file path.
-        #[arg(long, default_value = "/var/run/bugswarm/cpg.pid")]
-        pid_file: PathBuf,
+        /// Unix socket path (overrides config file).
+        #[arg(short, long)]
+        socket: Option<PathBuf>,
 
-        /// HTTP health/metrics port (0 = disabled).
-        #[arg(long, default_value = "8081")]
-        http_port: u16,
+        /// PID file path (overrides config file).
+        #[arg(long)]
+        pid_file: Option<PathBuf>,
+
+        /// HTTP health/metrics port (overrides config file).
+        #[arg(long)]
+        http_port: Option<u16>,
     },
 }
 
@@ -233,12 +237,34 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&stats)?);
         }
 
-        Commands::RunServer { socket, pid_file, http_port } => {
-            info!("Starting CPG daemon on {}", socket.display());
+        Commands::RunServer { config, socket, pid_file, http_port } => {
+            // Read unified config
+            let (socket_path, pid_path, port) = if config.exists() {
+                let content = std::fs::read_to_string(&config)?;
+                let yaml: serde_yaml::Value = serde_yaml::from_str(&content)
+                    .unwrap_or(serde_yaml::Value::Null);
+                let cpg = &yaml["daemons"]["cpg"];
+                let s = socket.unwrap_or_else(|| {
+                    PathBuf::from(cpg["socket"].as_str().unwrap_or("/var/run/bugswarm/cpg.sock"))
+                });
+                let p = pid_file.unwrap_or_else(|| {
+                    PathBuf::from(cpg["pid_file"].as_str().unwrap_or("/var/run/bugswarm/cpg.pid"))
+                });
+                let hp = http_port.unwrap_or_else(|| {
+                    cpg["http_port"].as_u64().unwrap_or(8081) as u16
+                });
+                (s, p, hp)
+            } else {
+                let s = socket.unwrap_or_else(|| PathBuf::from("/var/run/bugswarm/cpg.sock"));
+                let p = pid_file.unwrap_or_else(|| PathBuf::from("/var/run/bugswarm/cpg.pid"));
+                let hp = http_port.unwrap_or(8081);
+                (s, p, hp)
+            };
+            info!("Starting CPG daemon on {}", socket_path.display());
 
             #[cfg(unix)]
             {
-                let socket_path = socket.clone();
+                let sp = socket_path.clone();
                 tokio::spawn(async move {
                     use tokio::signal::unix::{signal, SignalKind};
                     let mut sighup = match signal(SignalKind::hangup()) {
@@ -253,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
                         tracing::info!("Received SIGHUP on CPG daemon — runtime config reload is limited to mutable fields");
                     }
                 });
-                let _ = socket_path;
+                let _ = sp;
             }
 
             // Create PID file (cleaned up on drop)
@@ -261,12 +287,12 @@ async fn main() -> anyhow::Result<()> {
             impl Drop for PidGuard {
                 fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
             }
-            if let Some(parent) = pid_file.parent() {
+            if let Some(parent) = pid_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&pid_file, std::process::id().to_string())?;
-            let _pid = PidGuard(pid_file);
-            bugswarm_cpg::daemon::run_daemon(socket, Some(http_port)).await?;
+            std::fs::write(&pid_path, std::process::id().to_string())?;
+            let _pid = PidGuard(pid_path);
+            bugswarm_cpg::daemon::run_daemon(socket_path, Some(port)).await?;
         }
     }
 

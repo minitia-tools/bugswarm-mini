@@ -31,13 +31,17 @@ enum Commands {
     Test,
     /// Run as a daemon listening on a Unix socket.
     RunServer {
-        /// Unix socket path.
-        #[arg(short, long, default_value = "/var/run/bugswarm/evidence.sock")]
-        socket: PathBuf,
+        /// Unified config file path.
+        #[arg(short, long, default_value = "/etc/bugswarm/config.yaml")]
+        config: PathBuf,
 
-        /// HTTP health/metrics port (0 = disabled).
-        #[arg(long, default_value = "8082")]
-        http_port: u16,
+        /// Unix socket path (overrides config file).
+        #[arg(short, long)]
+        socket: Option<PathBuf>,
+
+        /// HTTP health/metrics port (overrides config file).
+        #[arg(long)]
+        http_port: Option<u16>,
     },
 }
 
@@ -68,10 +72,28 @@ fn main() {
         Commands::Stats => run_stats(),
         Commands::Verify => run_verify(),
         Commands::Test => run_gate_tests(),
-        Commands::RunServer { socket, http_port } => {
+        Commands::RunServer { config, socket, http_port } => {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                info!("Starting evidence daemon on {}", socket.display());
+                // Read unified config
+                let (socket_path, port) = if config.exists() {
+                    let content = std::fs::read_to_string(&config).unwrap_or_default();
+                    let yaml: serde_yaml::Value = serde_yaml::from_str(&content)
+                        .unwrap_or(serde_yaml::Value::Null);
+                    let ev = &yaml["daemons"]["evidence"];
+                    let s = socket.unwrap_or_else(|| {
+                        PathBuf::from(ev["socket"].as_str().unwrap_or("/var/run/bugswarm/evidence.sock"))
+                    });
+                    let hp = http_port.unwrap_or_else(|| {
+                        ev["http_port"].as_u64().unwrap_or(8082) as u16
+                    });
+                    (s, hp)
+                } else {
+                    let s = socket.unwrap_or_else(|| PathBuf::from("/var/run/bugswarm/evidence.sock"));
+                    let hp = http_port.unwrap_or(8082);
+                    (s, hp)
+                };
+                info!("Starting evidence daemon on {}", socket_path.display());
 
                 #[cfg(unix)]
                 {
@@ -91,7 +113,7 @@ fn main() {
                     });
                 }
 
-                bugswarm_evidence::daemon::run_daemon(socket, Some(http_port)).await
+                bugswarm_evidence::daemon::run_daemon(socket_path, Some(port)).await
                     .expect("Evidence daemon failed");
             });
         }
