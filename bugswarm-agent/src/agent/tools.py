@@ -141,6 +141,14 @@ class CircuitBreaker:
 
 
 MAX_POC_SIZE_BYTES = 1_000_000
+MAX_INPUT_SIZE_BYTES = 10_000_000
+MAX_SOURCE_SIZE_BYTES = 5_000_000
+MAX_OUTPUT_SIZE_BYTES = 5_000_000
+MAX_COUNT = 10_000
+MAX_QUERIES = 1_000
+MAX_HOPS = 20
+RATE_LIMIT_WINDOW_SECS = 60
+MAX_CALLS_PER_WINDOW = 100
 
 
 def _validate_exec_sandbox(args: dict) -> tuple[bool, str]:
@@ -163,14 +171,141 @@ def _validate_read_file(args: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _validate_fuzz_target(args: dict) -> tuple[bool, str]:
+    target = args.get("target_path", "")
+    if not target:
+        return False, "fuzz_target requires non-empty 'target_path'"
+    timeout = int(args.get("exec_timeout_ms", 1000))
+    if timeout < 10 or timeout > 300_000:
+        return False, f"fuzz_target timeout must be 10-300000ms, got {timeout}"
+    return True, ""
+
+
+def _validate_delta_debug(args: dict) -> tuple[bool, str]:
+    input_data = args.get("input_base64", args.get("input_bytes", ""))
+    if isinstance(input_data, bytes):
+        if len(input_data) > MAX_INPUT_SIZE_BYTES:
+            return False, f"Input too large: {len(input_data)} bytes (max {MAX_INPUT_SIZE_BYTES})"
+    iterations = int(args.get("max_iterations", 200))
+    if iterations < 1 or iterations > MAX_COUNT:
+        return False, f"max_iterations must be 1-{MAX_COUNT}, got {iterations}"
+    return True, ""
+
+
+def _validate_diff_execute(args: dict) -> tuple[bool, str]:
+    output_a = args.get("output_a", "")
+    output_b = args.get("output_b", "")
+    if not output_a and not output_b:
+        return False, "diff_execute requires at least one output to compare"
+    if len(output_a) > MAX_OUTPUT_SIZE_BYTES or len(output_b) > MAX_OUTPUT_SIZE_BYTES:
+        return False, f"Output too large (max {MAX_OUTPUT_SIZE_BYTES} bytes)"
+    return True, ""
+
+
+def _validate_mine_invariants(args: dict) -> tuple[bool, str]:
+    func = args.get("function_name", "")
+    if not func:
+        return False, "mine_invariants requires non-empty 'function_name'"
+    count = int(args.get("count", 100))
+    if count < 1 or count > MAX_COUNT:
+        return False, f"count must be 1-{MAX_COUNT}, got {count}"
+    return True, ""
+
+
+def _validate_run_mutations(args: dict) -> tuple[bool, str]:
+    source = args.get("source_code", "")
+    if not source:
+        return False, "run_mutations requires non-empty 'source_code'"
+    if len(source.encode("utf-8")) > MAX_SOURCE_SIZE_BYTES:
+        return False, f"Source too large: {len(source.encode('utf-8'))} bytes (max {MAX_SOURCE_SIZE_BYTES})"
+    return True, ""
+
+
+def _validate_solve_reachability(args: dict) -> tuple[bool, str]:
+    target = args.get("target_location", "")
+    if not target:
+        return False, "solve_reachability requires non-empty 'target_location'"
+    if ":" not in target:
+        return False, f"target_location must be 'file:line' format, got '{target}'"
+    return True, ""
+
+
+def _validate_explore_paths(args: dict) -> tuple[bool, str]:
+    target = args.get("target_location", "")
+    if not target:
+        return False, "explore_paths requires non-empty 'target_location'"
+    queries = int(args.get("max_queries", 100))
+    if queries < 1 or queries > MAX_QUERIES:
+        return False, f"max_queries must be 1-{MAX_QUERIES}, got {queries}"
+    return True, ""
+
+
+def _validate_describe_trigger(args: dict) -> tuple[bool, str]:
+    bug_id = args.get("bug_id", "")
+    if not bug_id:
+        return False, "describe_trigger requires non-empty 'bug_id'"
+    dim = args.get("dimension", "")
+    valid_dims = {"Input", "Environment", "Timing", "DataState", "Concurrency",
+                  "Configuration", "DependencyVersion", "OsArch"}
+    if dim and dim not in valid_dims:
+        return False, f"Invalid dimension '{dim}'. Must be one of: {valid_dims}"
+    return True, ""
+
+
+def _validate_get_trigger_matrix(args: dict) -> tuple[bool, str]:
+    bug_id = args.get("bug_id", "")
+    if not bug_id:
+        return False, "get_trigger_matrix requires non-empty 'bug_id'"
+    return True, ""
+
+
+def _validate_suggest_chain(args: dict) -> tuple[bool, str]:
+    bug_ids = args.get("bug_ids", [])
+    if not bug_ids:
+        return False, "suggest_chain requires non-empty 'bug_ids' list"
+    if len(bug_ids) > 100:
+        return False, f"Too many bug_ids: {len(bug_ids)} (max 100)"
+    hops = int(args.get("max_hops", 10))
+    if hops < 1 or hops > MAX_HOPS:
+        return False, f"max_hops must be 1-{MAX_HOPS}, got {hops}"
+    return True, ""
+
+
+def _validate_predict_fix_impact(args: dict) -> tuple[bool, str]:
+    bug_id = args.get("bug_id", "")
+    func = args.get("function_name", "")
+    original = args.get("original_line", "")
+    replacement = args.get("replacement_line", "")
+    if not bug_id:
+        return False, "predict_fix_impact requires non-empty 'bug_id'"
+    if not func:
+        return False, "predict_fix_impact requires non-empty 'function_name'"
+    if not original:
+        return False, "predict_fix_impact requires non-empty 'original_line'"
+    if not replacement:
+        return False, "predict_fix_impact requires non-empty 'replacement_line'"
+    return True, ""
+
+
 TOOL_VALIDATORS: dict[str, Callable] = {
     "exec_sandbox": _validate_exec_sandbox,
     "read_file": _validate_read_file,
+    "fuzz_target": _validate_fuzz_target,
+    "delta_debug": _validate_delta_debug,
+    "diff_execute": _validate_diff_execute,
+    "mine_invariants": _validate_mine_invariants,
+    "run_mutations": _validate_run_mutations,
+    "solve_reachability": _validate_solve_reachability,
+    "explore_paths": _validate_explore_paths,
+    "describe_trigger": _validate_describe_trigger,
+    "get_trigger_matrix": _validate_get_trigger_matrix,
+    "suggest_chain": _validate_suggest_chain,
+    "predict_fix_impact": _validate_predict_fix_impact,
 }
 
 
 class ToolRegistry:
-    """Plugin-based tool dispatch with retry, cache, and circuit breaker."""
+    """Plugin-based tool dispatch with retry, cache, circuit breaker, and rate limiting."""
 
     def __init__(self):
         self._tools: dict[str, ToolDefinition] = {}
@@ -178,6 +313,18 @@ class ToolRegistry:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._retry = RetryPolicy()
         self._stats: dict[str, dict] = {}
+        self._rate_limit_counters: dict[str, list[float]] = defaultdict(list)
+
+    def _check_rate_limit(self, name: str) -> tuple[bool, str]:
+        """Enforce per-tool rate limiting within a sliding window."""
+        now = time.time()
+        window_start = now - RATE_LIMIT_WINDOW_SECS
+        timestamps = self._rate_limit_counters[name]
+        timestamps[:] = [t for t in timestamps if t > window_start]
+        if len(timestamps) >= MAX_CALLS_PER_WINDOW:
+            return False, f"Rate limit exceeded for {name}: {MAX_CALLS_PER_WINDOW} calls per {RATE_LIMIT_WINDOW_SECS}s"
+        timestamps.append(now)
+        return True, ""
 
     def register(self, tool: ToolDefinition) -> None:
         self._tools[tool.name] = tool
@@ -195,6 +342,10 @@ class ToolRegistry:
             ok, reason = validator(args)
             if not ok:
                 return ToolResult(False, f"Tool rejected by capability gate: {reason}")
+
+        rate_ok, rate_reason = self._check_rate_limit(name)
+        if not rate_ok:
+            return ToolResult(False, f"Tool rejected by rate limit: {rate_reason}")
 
         breaker = self._breakers[name]
 
