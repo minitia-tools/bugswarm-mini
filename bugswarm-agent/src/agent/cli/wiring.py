@@ -270,6 +270,98 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         cache_ttl_secs=0.0,
     ))
 
+    # ── Batch 2A: Enterprise Tool Suite (M029-M035) ─────────────────────
+    
+    tools.register(ToolDefinition(
+        name="grep",
+        description="Search the entire codebase with regex pattern matching. Returns ranked results with context lines. Use for finding function calls, imports, dangerous API usage, vulnerability patterns across files.",
+        parameters={"type": "object", "properties": {
+            "pattern": {"type": "string", "description": "Regex pattern to search for"},
+            "path_filter": {"type": "string", "description": "Glob filter for files (e.g., '**/*.py', 'src/**/*.rs')"},
+            "max_results": {"type": "integer", "description": "Max results (default: 500)"},
+        }, "required": ["pattern"]},
+        handler=lambda args: _grep_handler(config.repo, args),
+        timeout_secs=10.0,
+        cache_ttl_secs=30.0,
+    ))
+    
+    tools.register(ToolDefinition(
+        name="glob",
+        description="Recursive file discovery with pattern matching. Returns file listings with metadata (size, modification time, extension). Use to discover project structure before reading files.",
+        parameters={"type": "object", "properties": {
+            "pattern": {"type": "string", "description": "Glob pattern (e.g., '**/*.py', 'src/**/*.rs')"},
+            "max_results": {"type": "integer", "description": "Max results (default: 200)"},
+        }, "required": []},
+        handler=lambda args: _glob_handler(config.repo, args),
+        timeout_secs=5.0,
+        cache_ttl_secs=30.0,
+    ))
+    
+    tools.register(ToolDefinition(
+        name="write_file",
+        description="Write a file to the repository with atomic writes, automatic versioning, and path traversal protection. Previous versions are preserved for rollback.",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string", "description": "Relative file path within repository"},
+            "content": {"type": "string", "description": "Content to write"},
+        }, "required": ["path", "content"]},
+        handler=lambda args: _write_file_handler(config.repo, args),
+        timeout_secs=10.0,
+        cache_ttl_secs=0.0,
+    ))
+    
+    tools.register(ToolDefinition(
+        name="edit_file",
+        description="Surgical find-and-replace code modification. Supports single or all-occurrence replacement with preview and automatic versioning. Use for causal interventions and fix proposals.",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string", "description": "Relative file path within repository"},
+            "old_string": {"type": "string", "description": "String to find"},
+            "new_string": {"type": "string", "description": "String to replace with"},
+            "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: first only)"},
+        }, "required": ["path", "old_string", "new_string"]},
+        handler=lambda args: _edit_file_handler(config.repo, args),
+        timeout_secs=10.0,
+        cache_ttl_secs=0.0,
+    ))
+    
+    tools.register(ToolDefinition(
+        name="web_fetch",
+        description="Security-hardened web client for fetching CVE data, documentation, and known exploit patterns. URL allowlist enforced. Results cached for 1 hour.",
+        parameters={"type": "object", "properties": {
+            "url": {"type": "string", "description": "URL to fetch (must be in allowlist)"},
+        }, "required": ["url"]},
+        handler=lambda args: _web_fetch_handler(args),
+        timeout_secs=15.0,
+        cache_ttl_secs=3600.0,
+    ))
+    
+    tools.register(ToolDefinition(
+        name="todo_write",
+        description="Structured investigation task tracker. Create, update, and list tasks with priorities and dependencies. Auto-unblocks dependent tasks when prerequisites complete.",
+        parameters={"type": "object", "properties": {
+            "action": {"type": "string", "description": "Action: add, update, list, or status"},
+            "description": {"type": "string", "description": "Task description (for add)"},
+            "task_id": {"type": "string", "description": "Task ID (for update)"},
+            "status": {"type": "string", "description": "New status: pending, in_progress, done, blocked"},
+            "priority": {"type": "integer", "description": "Task priority 0-10"},
+        }, "required": ["action"]},
+        handler=lambda args: _todo_write_handler(args),
+        timeout_secs=5.0,
+        cache_ttl_secs=0.0,
+    ))
+    
+    tools.register(ToolDefinition(
+        name="kill_shell",
+        description="Process lifecycle manager. List, gracefully terminate (SIGTERM with 5s timeout, then SIGKILL), or kill all registered background processes.",
+        parameters={"type": "object", "properties": {
+            "process_id": {"type": "string", "description": "Process ID to kill (omit to list all)"},
+            "signal": {"type": "string", "description": "Signal: SIGTERM (default) or SIGKILL"},
+            "kill_all": {"type": "boolean", "description": "Kill all registered processes"},
+        }, "required": []},
+        handler=lambda args: _kill_shell_handler(args),
+        timeout_secs=10.0,
+        cache_ttl_secs=0.0,
+    ))
+
     # 6. Parser
     parser = OutputParser()
 
@@ -594,3 +686,86 @@ async def _predict_fix_impact_async(evidence, args):
 
 def _predict_fix_impact(evidence, args):
     return _run_async(_predict_fix_impact_async(evidence, args))
+
+
+# ── Batch 2A Enterprise Tool Handlers ────────────────────────────────────
+
+def _grep_handler(repo, args):
+    from agent.enterprise_tools import grep
+    try:
+        import json
+        result = grep(repo, args.get("pattern", ""),
+                      args.get("path_filter", "**/*"),
+                      int(args.get("max_results", 500)))
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"grep failed: {e}")
+
+
+def _glob_handler(repo, args):
+    from agent.enterprise_tools import glob
+    try:
+        import json
+        result = glob(repo, args.get("pattern", "**/*"),
+                      int(args.get("max_results", 200)))
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"glob failed: {e}")
+
+
+def _write_file_handler(repo, args):
+    from agent.enterprise_tools import write_file
+    try:
+        import json
+        result = write_file(repo, args.get("path", ""), args.get("content", ""))
+        return ToolResult(result.success, json.dumps({"path": result.path, "size": result.size, "version": result.version, "message": result.message}))
+    except Exception as e:
+        return ToolResult(False, f"write_file failed: {e}")
+
+
+def _edit_file_handler(repo, args):
+    from agent.enterprise_tools import edit_file
+    try:
+        import json
+        result = edit_file(repo, args.get("path", ""),
+                           args.get("old_string", ""), args.get("new_string", ""),
+                           args.get("replace_all", False))
+        return ToolResult(result.get("success", False), json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"edit_file failed: {e}")
+
+
+def _web_fetch_handler(args):
+    from agent.enterprise_tools import web_fetch
+    try:
+        import json
+        result = _run_async(web_fetch(args.get("url", "")))
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"web_fetch failed: {e}")
+
+
+def _todo_write_handler(args):
+    from agent.enterprise_tools import todo_write
+    try:
+        import json
+        result = todo_write(args.get("action", "list"),
+                            args.get("description", ""),
+                            args.get("task_id", ""),
+                            args.get("status", "pending"),
+                            int(args.get("priority", 0)))
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"todo_write failed: {e}")
+
+
+def _kill_shell_handler(args):
+    from agent.enterprise_tools import kill_shell
+    try:
+        import json
+        result = kill_shell(args.get("process_id"),
+                            args.get("signal", "SIGTERM"),
+                            args.get("kill_all", False))
+        return ToolResult(True, json.dumps(result, indent=2))
+    except Exception as e:
+        return ToolResult(False, f"kill_shell failed: {e}")
