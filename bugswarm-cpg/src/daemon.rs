@@ -177,90 +177,87 @@ async fn handle_connection(stream: UnixStream, cache: Arc<CpgCache>) -> anyhow::
 
 fn process_request(req: &DaemonRequest, cache: &CpgCache) -> DaemonResponse {
     match req.method.as_str() {
-        "stats" | "index" => {
-            match cache.get_or_index(&req.repo) {
-                Ok(cpg) => {
-                    let stats = cpg.stats();
-                    DaemonResponse {
-                        success: true,
-                        data: Some(serde_json::to_value(&stats).unwrap_or_default()),
-                        error: None,
-                    }
-                }
-                Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
-            }
-        }
-
-        "taint" => {
-            match cache.get_or_index(&req.repo) {
-                Ok(cpg) => {
-                    let paths = cpg.find_taint_paths();
-                    let summary: Vec<serde_json::Value> = paths.iter().map(|p| {
-                        serde_json::json!({
-                            "source": cpg.get_node(p.source).map(|n| n.name.clone()).unwrap_or_default(),
-                            "sink": cpg.get_node(p.sink).map(|n| n.name.clone()).unwrap_or_default(),
-                            "length": p.length,
-                            "sanitized": p.sanitized,
-                            "confidence": p.confidence,
-                        })
-                    }).collect();
-                    DaemonResponse { success: true, data: Some(serde_json::json!({"paths": summary})), error: None }
-                }
-                Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
-            }
-        }
-
-        "call_path" => {
-            match cache.get_or_index(&req.repo) {
-                Ok(cpg) => {
-                    let paths = cpg.find_call_paths(&req.from_func, &req.to_func);
-                    DaemonResponse {
-                        success: true,
-                        data: Some(serde_json::to_value(&paths).unwrap_or_default()),
-                        error: None,
-                    }
-                }
-                Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
-            }
-        }
-
+        "stats" | "index" => handle_stats_or_index(req, cache),
+        "taint" => handle_taint(req, cache),
+        "call_path" => handle_call_path(req, cache),
         "invalidate" => {
             cache.invalidate(&req.repo);
             DaemonResponse { success: true, data: None, error: None }
         }
-
         "health" => {
             DaemonResponse { success: true, data: None, error: None }
         }
+        "danger_map" => handle_danger_map(req, cache),
+        _ => DaemonResponse { success: false, data: None, error: Some(format!("Unknown method: {}", req.method)) },
+    }
+}
 
-        "danger_map" => {
-            match cache.get_or_index(&req.repo) {
-                Ok(cpg) => {
-                    let danger_map = crate::danger_map::danger_map_from_graph(&cpg, req.decay);
-                    let entries: Vec<serde_json::Value> = danger_map.iter().map(|(addr, score)| {
-                        serde_json::json!({"address": format!("0x{:x}", addr), "danger_score": score})
-                    }).collect();
-                    let sinks_used: Vec<&str> = crate::danger_map::DEFAULT_SINKS.to_vec();
-                    let source_count = entries.len();
-                    let sink_count = sinks_used.len();
-                    let data = serde_json::json!({
-                        "num_entries": entries.len(),
-                        "sink_count": sink_count,
-                        "source_count": source_count,
-                        "decay_factor": req.decay,
-                        "entries": entries,
-                        "sinks": sinks_used,
-                        "timestamp": chrono::Utc::now().to_rfc3339(),
-                    });
-                    DaemonResponse { success: true, data: Some(data), error: None }
-                }
-                Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
+fn handle_stats_or_index(req: &DaemonRequest, cache: &CpgCache) -> DaemonResponse {
+    match cache.get_or_index(&req.repo) {
+        Ok(cpg) => {
+            let stats = cpg.stats();
+            DaemonResponse {
+                success: true,
+                data: Some(serde_json::to_value(&stats).unwrap_or_default()),
+                error: None,
             }
         }
+        Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
+    }
+}
 
-        _ => DaemonResponse {
-            success: false, data: None,
-            error: Some(format!("Unknown method: {}", req.method)),
+fn handle_taint(req: &DaemonRequest, cache: &CpgCache) -> DaemonResponse {
+    match cache.get_or_index(&req.repo) {
+        Ok(cpg) => {
+            let paths = cpg.find_taint_paths();
+            let summary: Vec<serde_json::Value> = paths.iter().map(|p| {
+                serde_json::json!({
+                    "source": cpg.get_node(p.source).map(|n| n.name.clone()).unwrap_or_default(),
+                    "sink": cpg.get_node(p.sink).map(|n| n.name.clone()).unwrap_or_default(),
+                    "length": p.length,
+                    "sanitized": p.sanitized,
+                    "confidence": p.confidence,
+                })
+            }).collect();
+            DaemonResponse { success: true, data: Some(serde_json::json!({"paths": summary})), error: None }
         }
+        Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
+    }
+}
+
+fn handle_call_path(req: &DaemonRequest, cache: &CpgCache) -> DaemonResponse {
+    match cache.get_or_index(&req.repo) {
+        Ok(cpg) => {
+            let paths = cpg.find_call_paths(&req.from_func, &req.to_func);
+            DaemonResponse {
+                success: true,
+                data: Some(serde_json::to_value(&paths).unwrap_or_default()),
+                error: None,
+            }
+        }
+        Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
+    }
+}
+
+fn handle_danger_map(req: &DaemonRequest, cache: &CpgCache) -> DaemonResponse {
+    match cache.get_or_index(&req.repo) {
+        Ok(cpg) => {
+            let danger_map = crate::danger_map::danger_map_from_graph(&cpg, req.decay);
+            let entries: Vec<serde_json::Value> = danger_map.iter().map(|(addr, score)| {
+                serde_json::json!({"address": format!("0x{:x}", addr), "danger_score": score})
+            }).collect();
+            let sinks_used: Vec<&str> = crate::danger_map::DEFAULT_SINKS.to_vec();
+            let data = serde_json::json!({
+                "num_entries": entries.len(),
+                "sink_count": sinks_used.len(),
+                "source_count": entries.len(),
+                "decay_factor": req.decay,
+                "entries": entries,
+                "sinks": sinks_used,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            DaemonResponse { success: true, data: Some(data), error: None }
+        }
+        Err(e) => DaemonResponse { success: false, data: None, error: Some(e) },
     }
 }

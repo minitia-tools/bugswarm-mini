@@ -239,133 +239,151 @@ fn process(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
         }
 
         "add_trigger_condition" => {
-            let dimension = match parse_dimension(&req.dimension) {
-                Ok(d) => d,
-                Err(e) => return DaemonResponse { success: false, data: None, error: Some(e) },
-            };
-            let layer = parse_layer(&req.layer);
-            let condition = trigger::TriggerCondition::new(
-                &req.bug_id, dimension, &req.description, layer,
-            );
-            let mut tm = graph.trigger_manager.write();
-            let is_new = tm.add_condition(condition.clone());
-            graph.add_trigger_condition(&req.bug_id, condition);
-            DaemonResponse {
-                success: true,
-                data: Some(serde_json::json!({"is_new": is_new})),
-                error: None,
-            }
+            handle_add_trigger_condition(req, graph)
         }
         "get_trigger_matrix" => {
-            let tm = graph.trigger_manager.read();
-            if let Some(matrix) = tm.get(&req.bug_id) {
-                DaemonResponse {
-                    success: true,
-                    data: Some(serde_json::to_value(matrix).unwrap_or_default()),
-                    error: None,
-                }
-            } else {
-                let matrix = trigger::TriggerMatrix::new(&req.bug_id);
-                DaemonResponse {
-                    success: true,
-                    data: Some(serde_json::to_value(&matrix).unwrap_or_default()),
-                    error: None,
-                }
-            }
+            handle_get_trigger_matrix(req, graph)
         }
 
         "suggest_chain" => {
-            let bug_ids: Vec<String> = req.bug_ids.clone();
-            let max_hops = req.max_hops.unwrap_or(10);
-
-            let nodes = graph.nodes.read();
-            let mut severities = HashMap::new();
-            let mut effects = Vec::new();
-            let mut preconditions = Vec::new();
-
-            for id in &bug_ids {
-                for node in nodes.iter() {
-                    if node.label == *id && node.kind == NodeKind::ConfirmedBug {
-                        let sev = node.severity.unwrap_or(5);
-                        severities.insert(id.clone(), sev);
-                        let desc = &node.description;
-                        effects.extend(chain::extract_effects(id, desc, sev));
-                        preconditions.extend(chain::extract_preconditions(id, desc, sev));
-                    }
-                }
-            }
-            drop(nodes);
-
-            let mut matcher = chain::ChainSemanticMatcher::new(0.3);
-            let matches = matcher.find_matches(&effects, &preconditions);
-
-            let chain_graph = chain::build_chain_graph(&matches);
-            let chains = chain::detect_chains(&chain_graph, &severities, max_hops);
-            let escalated = chain::escalate_severities(&chains, &severities);
-
-            let result = serde_json::json!({
-                "matches_found": matches.len(),
-                "chains_found": chains.len(),
-                "chains": chains,
-                "original_severities": severities,
-                "escalated_severities": escalated,
-            });
-
-            DaemonResponse { success: true, data: Some(result), error: None }
+            handle_suggest_chain(req, graph)
         }
 
         "predict_fix_impact" => {
-            let fix = match serde_json::from_value::<crate::fix_predict::FixProposal>(
-                serde_json::json!({
-                    "bug_id": req.bug_id,
-                    "file_path": req.file_path.clone().unwrap_or_default(),
-                    "function_name": req.function.clone(),
-                    "original_line": req.original_line.clone(),
-                    "replacement_line": req.replacement_line.clone(),
-                    "line_number": req.line_number.unwrap_or(0),
-                    "description": req.description.clone(),
-                    "language": if req.language.is_empty() { "python".into() } else { req.language.clone() },
-                })
-            ) {
-                Ok(f) => f,
-                Err(e) => {
-                    return DaemonResponse { success: false, data: None, error: Some(format!("Invalid FixProposal: {}", e)) };
-                }
-            };
-            
-            let call_graph: std::collections::HashMap<String, Vec<String>> = {
-                let nodes = graph.nodes.read();
-                let mut cg: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-                for node in nodes.iter() {
-                    if node.kind == NodeKind::Agent || node.kind == NodeKind::Claim {
-                        cg.entry(node.label.clone()).or_default();
-                    }
-                }
-                cg.entry(fix.function_name.clone()).or_default();
-                let out_edges = graph.out_edges.read();
-                for (source_id, edges) in out_edges.iter() {
-                    for (_, target_id) in edges {
-                        if let Some(source_node) = nodes.get(*source_id) {
-                            if let Some(target_node) = nodes.get(*target_id) {
-                                cg.entry(source_node.label.clone()).or_default().push(target_node.label.clone());
-                            }
-                        }
-                    }
-                }
-                cg
-            };
-            
-            let priors = crate::fix_predict::LanguagePriors::default();
-            let report = crate::fix_predict::predict_fix_impact(fix, &call_graph, &priors, 5);
-            
-            DaemonResponse {
-                success: true,
-                data: Some(serde_json::to_value(&report).unwrap_or_default()),
-                error: None,
-            }
+            handle_predict_fix_impact(req, graph)
         }
 
         _ => DaemonResponse { success: false, data: None, error: Some(format!("Unknown method: {}", req.method)) },
+    }
+}
+
+fn handle_add_trigger_condition(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
+    let dimension = match parse_dimension(&req.dimension) {
+        Ok(d) => d,
+        Err(e) => return DaemonResponse { success: false, data: None, error: Some(e) },
+    };
+    let layer = parse_layer(&req.layer);
+    let condition = trigger::TriggerCondition::new(
+        &req.bug_id, dimension, &req.description, layer,
+    );
+    let mut tm = graph.trigger_manager.write();
+    let is_new = tm.add_condition(condition.clone());
+    graph.add_trigger_condition(&req.bug_id, condition);
+    DaemonResponse {
+        success: true,
+        data: Some(serde_json::json!({"is_new": is_new})),
+        error: None,
+    }
+}
+
+fn handle_get_trigger_matrix(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
+    let tm = graph.trigger_manager.read();
+    if let Some(matrix) = tm.get(&req.bug_id) {
+        DaemonResponse {
+            success: true,
+            data: Some(serde_json::to_value(matrix).unwrap_or_default()),
+            error: None,
+        }
+    } else {
+        let matrix = trigger::TriggerMatrix::new(&req.bug_id);
+        DaemonResponse {
+            success: true,
+            data: Some(serde_json::to_value(&matrix).unwrap_or_default()),
+            error: None,
+        }
+    }
+}
+
+fn handle_suggest_chain(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
+    let bug_ids: Vec<String> = req.bug_ids.clone();
+    let max_hops = req.max_hops.unwrap_or(10);
+
+    let nodes = graph.nodes.read();
+    let mut severities = HashMap::new();
+    let mut effects = Vec::new();
+    let mut preconditions = Vec::new();
+
+    for id in &bug_ids {
+        for node in nodes.iter() {
+            if node.label == *id && node.kind == NodeKind::ConfirmedBug {
+                let sev = node.severity.unwrap_or(5);
+                severities.insert(id.clone(), sev);
+                let desc = &node.description;
+                effects.extend(chain::extract_effects(id, desc, sev));
+                preconditions.extend(chain::extract_preconditions(id, desc, sev));
+            }
+        }
+    }
+    drop(nodes);
+
+    let mut matcher = chain::ChainSemanticMatcher::new(0.3);
+    let matches = matcher.find_matches(&effects, &preconditions);
+
+    let chain_graph = chain::build_chain_graph(&matches);
+    let chains = chain::detect_chains(&chain_graph, &severities, max_hops);
+    let escalated = chain::escalate_severities(&chains, &severities);
+
+    DaemonResponse {
+        success: true,
+        data: Some(serde_json::json!({
+            "matches_found": matches.len(),
+            "chains_found": chains.len(),
+            "chains": chains,
+            "original_severities": severities,
+            "escalated_severities": escalated,
+        })),
+        error: None,
+    }
+}
+
+fn handle_predict_fix_impact(req: &DaemonRequest, graph: &EvidenceGraph) -> DaemonResponse {
+    let fix = match serde_json::from_value::<crate::fix_predict::FixProposal>(
+        serde_json::json!({
+            "bug_id": req.bug_id,
+            "file_path": req.file_path.clone().unwrap_or_default(),
+            "function_name": req.function.clone(),
+            "original_line": req.original_line.clone(),
+            "replacement_line": req.replacement_line.clone(),
+            "line_number": req.line_number.unwrap_or(0),
+            "description": req.description.clone(),
+            "language": if req.language.is_empty() { "python".into() } else { req.language.clone() },
+        })
+    ) {
+        Ok(f) => f,
+        Err(e) => {
+            return DaemonResponse { success: false, data: None, error: Some(format!("Invalid FixProposal: {}", e)) };
+        }
+    };
+    
+    let call_graph: std::collections::HashMap<String, Vec<String>> = {
+        let nodes = graph.nodes.read();
+        let mut cg: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for node in nodes.iter() {
+            if node.kind == NodeKind::Agent || node.kind == NodeKind::Claim {
+                cg.entry(node.label.clone()).or_default();
+            }
+        }
+        cg.entry(fix.function_name.clone()).or_default();
+        let out_edges = graph.out_edges.read();
+        for (source_id, edges) in out_edges.iter() {
+            for (_, target_id) in edges {
+                if let Some(source_node) = nodes.get(*source_id) {
+                    if let Some(target_node) = nodes.get(*target_id) {
+                        cg.entry(source_node.label.clone()).or_default().push(target_node.label.clone());
+                    }
+                }
+            }
+        }
+        cg
+    };
+    
+    let priors = crate::fix_predict::LanguagePriors::default();
+    let report = crate::fix_predict::predict_fix_impact(fix, &call_graph, &priors, 5);
+    
+    DaemonResponse {
+        success: true,
+        data: Some(serde_json::to_value(&report).unwrap_or_default()),
+        error: None,
     }
 }
 
