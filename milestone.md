@@ -1563,3 +1563,574 @@
 - `phase24.md` (Differential): referenced in M039, M052
 - `phase25.md` (Invariants): referenced in M036, M040
 - `phase30.md` (Fix Impact): M153-M154
+
+---
+
+# APPENDIX A: Parallel Execution Plan
+
+## Rules
+- Milestones in the SAME parallel group can run simultaneously — they touch different files and have no shared state
+- Milestones on separate lines within a batch are sequential — they depend on earlier milestones completing first
+- "ALONE" means this milestone must run solo because it mutates shared infrastructure (daemon loop, config schema, agent dispatch) that would break parallel agents
+
+---
+
+### Batch 1 Parallel Groups (28 milestones)
+
+**Group 1A (4 parallel)**: M001 (shell injection), M002 (path traversal), M004 (CPG Dockerfile), M005 (Evidence Dockerfile)
+→ These touch container.rs, core.py, and new Dockerfiles — zero shared state
+
+**Group 1B (5 parallel)**: M006 (Symbolic Dockerfile), M007 (ASAN Dockerfile), M008 (docker-compose), M009 (release profiles), M019 (version + git tag)
+→ Dockerfiles are independent; compose file is new; Cargo.toml changes are separate crates
+
+**Group 1C — ALONE**: M003 (tool capability gating)
+→ Mutates the central agent dispatch path; all other agent changes must happen before or after, not during
+
+**Group 1D (4 parallel)**: M010 (CPG health), M011 (Evidence health), M012 (Sandbox metrics), M018 (CI/CD pipeline)
+→ Different daemons, different files; CI is a new .github file
+
+**Group 1E (3 parallel)**: M013 (CPG metrics), M014 (Evidence metrics), M015 (unified config Rust)
+→ Config schema must be stable before M016 can run
+
+**Group 1F (4 parallel)**: M016 (unified config Python), M020 (Evidence RunServer), M021 (systemd units), M022 (graceful shutdown)
+→ M016 depends on M015 being done first
+
+**Group 1G — ALONE**: M017 (refactor daemon handlers)
+→ Mutates daemon.rs across ALL crates; must run alone to prevent merge conflicts
+
+**Group 1H (4 parallel)**: M023 (config hard error), M024 (SIGHUP reload), M025 (unwrap removal), M026 (socket error handling)
+→ Different files, different crates
+
+**Group 1I — ALONE**: M027 (evidence graph persistence)
+→ Mutates graph.rs core data structures; changes how nodes/edges are serialized
+
+**Group 1J — ALONE**: M028 (fuzzer crash collection)
+→ Mutates container.rs + fuzzer.rs; touches the execution pipeline
+
+---
+
+### Batch 2 Parallel Groups (24 milestones)
+
+**Group 2A (7 parallel)**: M029 (grep), M030 (glob), M031 (write), M032 (edit), M033 (web_fetch), M034 (todo), M035 (kill_shell)
+→ All are NEW standalone tools; zero shared state; each is a self-contained module
+
+**Group 2B — ALONE**: M036 (mine_invariants real execution)
+→ Mutates daemon.rs invariant handler + sandbox execution path
+
+**Group 2C — ALONE**: M037 (run_mutations real execution)
+→ Mutates daemon.rs mutation handler + sandbox execution path
+
+**Group 2D — ALONE**: M038 (solve_reachability Z3 integration)
+→ Adds new crate dependency; changes feature flags; mutates symbolic crate
+
+**Group 2E (3 parallel)**: M039 (diff_execute protocol), M040 (invariant_check real), M041 (delta_debug wire-up)
+→ Different daemon handlers; different files
+
+**Group 2F (4 parallel)**: M042 (describe_trigger wire-up), M043 (get_trigger_matrix wire-up), M044 (suggest_chain wire-up), M045 (predict_fix_impact wire-up)
+→ All evidence daemon handlers; independent methods
+
+**Group 2G (3 parallel)**: M046 (orchestrator tools), M047 (fuzz_target tool), M048 (explore_paths tool)
+→ Different Python files; orchestration vs agent
+
+**Group 2H (2 parallel)**: M049 (explore_paths daemon), M050 (diff_execute daemon)
+→ Different daemon handlers
+
+**Group 2I (2 parallel)**: M051 (explore_paths agent), M052 (diff_execute agent)
+→ Different Python client methods
+
+---
+
+### Batch 3 Parallel Groups (23 milestones)
+
+**Group 3A (5 parallel)**: M053-M057 (CWE-89/79/20/22/78 detection)
+→ New scanner modules with no shared state
+
+**Group 3B (5 parallel)**: M058-M062 (CWE-190/416/787/125/476 detection)
+→ More scanner modules; independent implementations
+
+**Group 3C (6 parallel)**: M063 (fuzzer danger map SHM), M064 (C CPG parser), M065 (C++ CPG parser), M066 (Rust CPG parser), M067 (universal chain types), M068 (Go CPG parser)
+→ M064-M066, M068 are independent parser files; M063 is sandbox; M067 is chain.rs enums
+
+**Group 3D (2 parallel)**: M069 (Java CPG parser), M070 (auto-language detection)
+→ M070 depends on having multiple parsers; M069 must finish first
+
+**Group 3E (3 parallel)**: M071 (Z3 real calls in symbolic), M072 (danger map CPG wire-up), M073 (fuzz stats parsing real)
+→ M071 is symbolic crate; M072 is sandbox→CPG; M073 is fuzzer.rs
+
+**Group 3F (2 parallel)**: M074 (docker compose health checks), M075 (docker compose volumes)
+→ Both modify docker-compose.yml; must sequentialize or be one milestone
+
+---
+
+### Batch 4 Parallel Groups (21 milestones)
+
+**Group 4A (4 parallel)**: M076 (sandbox auto-restart), M077 (CPG auto-restart), M078 (Evidence auto-restart), M079 (docker restart policies)
+→ Different systemd files; independent
+
+**Group 4B (4 parallel)**: M080 (log rotation), M081 (structured error types), M082 (tracing spans), M083 (request ID propagation)
+→ Different files across crates
+
+**Group 4C — ALONE**: M084 (axum HTTP server migration)
+→ Replaces raw TCP with axum in ALL daemons; must run alone
+
+**Group 4D (5 parallel)**: M085 (OpenTelemetry), M086 (Slack alerts), M087 (secret provider), M088 (circuit breaker), M089 (unsafe audit comments)
+→ Independent modules
+
+**Group 4E (3 parallel)**: M090 (seccomp hardening), M091 (causal intervention escaping), M092 (config migration tool)
+→ Different files
+
+**Group 4F (2 parallel)**: M093 (container removal logging), M094 (temp file cleanup)
+→ Different subsystems
+
+**Group 4G (2 parallel)**: M095 (Python lock files), M096 (dependency upper bounds)
+→ Different files
+
+---
+
+### Batch 5 Parallel Groups (38 milestones)
+
+**Group 5A — ALONE**: M097 (FastAPI backend scaffold)
+→ Creates entire new crate; all other platform work depends on this
+
+**Group 5B (6 parallel)**: M098-M103 (REST endpoints: health, scan, status, findings, stream, artifacts)
+→ All are route handlers in the same FastAPI app; can parallelize as different route files
+
+**Group 5C (4 parallel)**: M104 (auth middleware), M105 (rate limiting), M106 (job queue), M107 (artifact storage)
+→ Independent middleware/services
+
+**Group 5D — ALONE**: M108 (React frontend scaffold)
+→ Creates entire new frontend project
+
+**Group 5E (5 parallel)**: M109 (landing page), M110 (dashboard), M111 (code viewer), M112 (settings), M113 (export)
+→ Different React components; no shared state
+
+**Group 5F (4 parallel)**: M114 (GitHub App), M115 (OAuth flow), M116 (webhook handler), M117 (PR comments)
+→ M115 depends on M114; rest can parallelize after M114 done
+
+**Group 5G (4 parallel)**: M118 (SARIF upload), M119 (auto-issues), M120 (check runs), M121 (branch protection)
+→ Independent GitHub API integrations
+
+**Group 5H (3 parallel)**: M122 (bugswarm-action), M123 (VS Code extension), M124 (Slack/Discord bots)
+→ Independent projects
+
+**Group 5I (3 parallel)**: M125 (Terraform), M126 (Helm chart), M127 (K8s manifests)
+→ Infra-as-code; independent templates
+
+**Group 5J (3 parallel)**: M128 (landing docs), M129 (pricing page), M130 (onboarding flow)
+→ Frontend-only; independent pages
+
+**Group 5K (2 parallel)**: M131 (marketplace listing), M132 (GitHub Enterprise)
+→ External integrations
+
+**Group 5L (2 parallel)**: M133 (org-wide policies), M134 (audit logging)
+→ Enterprise features
+
+---
+
+### Batch 6 Parallel Groups (27 milestones)
+
+**Group 6A — ALONE**: M135 (ARIA ICO schema)
+→ Defines the central data structure everything else reads
+
+**Group 6B (4 parallel)**: M136 (PreCompEngine), M137 (PromptBuilder), M138 (IntentParser), M139 (WaypointEngine)
+→ All read from ICO schema (M135); no shared mutation of ICO
+
+**Group 6C (3 parallel)**: M140 (ContextManager), M141 (Dispatch loop), M142 (Completion conditions)
+→ Read from ICO; independent implementations
+
+**Group 6D (3 parallel)**: M143 (tool normalizers), M144 (capability grammar), M145 (ISG integration)
+→ Independent modules
+
+**Group 6E (4 parallel)**: M146 (fine-tuning data pipeline), M147 (model evaluation framework), M148 (LoRA harness), M149 (model registry)
+→ POST-MVP; all independent infrastructure for fine-tuning
+
+**Group 6F (3 parallel)**: M150 (provider adapters Tier 2), M151 (provider adapters Tier 3), M152 (model registry catalog)
+→ Independent adapter files; no shared state
+
+**Group 6G (3 parallel)**: M153 (fix outcome tracking), M154 (Bayesian prior updating), M155 (chain bench integration)
+→ Different subsystems
+
+**Group 6H (3 parallel)**: M156 (explore_paths solver latency), M157 (constraint simplification measurement), M158 (seed recycling warm-start)
+→ Independent performance tracking
+
+**Group 6I (3 parallel)**: M159 (Decision Scaffold question types), M160 (scaffold runtime), M161 (scaffold per-task adaptation)
+→ M160 depends on M159; M161 depends on M160
+
+---
+
+### Batch 7 Parallel Groups (11 milestones)
+
+**Group 7A (5 parallel)**: M162 (end-to-end system test), M163 (load test 100 concurrent), M164 (security penetration test), M165 (documentation site), M166 (launch checklist)
+→ Independent verification activities
+
+**Group 7B (3 parallel)**: M167 (OSS-Fuzz corpus run), M168 (Juliet test suite run), M169 (real targets run)
+→ Independent benchmark runs
+
+**Group 7C (3 parallel)**: M170 (bug bounty program setup), M171 (community guidelines), M172 (contributor onboarding)
+→ Community/launch activities
+
+---
+
+# APPENDIX B: Engineered Prompts Per Batch
+
+## Batch 1 Prompt — Critical Fixes (M001-M028)
+
+```
+You are implementing CRITICAL production fixes for BugSwarm, an enterprise 
+vulnerability detection system with 4 Rust crates and 3 Python packages.
+
+CONTEXT:
+- The system has 30 phases of implementation complete
+- All 1,000+ tests pass, workspace compiles
+- These fixes close 28 critical deployment/security gaps
+- Everything must compile + pass tests after EACH milestone
+
+RULES:
+1. Never modify shared infrastructure (daemon.rs dispatch, config schema, 
+   agent loop) while another agent is working — check with the coordinator
+2. Each milestone is ONE commit. Commit after each passing test suite
+3. Run `cargo check --workspace` after every Rust change
+4. Run `python3 -m pytest` after every Python change  
+5. If a milestone touches MULTIPLE crates, run ALL their test suites
+6. Dockerfiles must pass `docker build` before committing
+
+PARALLEL GROUPS:
+- M001+M002+M004+M005 can run simultaneously (different files)
+- M006+M007+M008+M009+M019 can run simultaneously
+- M010+M011+M012+M018 can run simultaneously
+- M013+M014+M015 can run simultaneously
+- M016+M020+M021+M022 can run simultaneously (M016 AFTER M015)
+- M023+M024+M025+M026 can run simultaneously
+
+SEQUENTIAL:
+- M003 (tool gating) runs AFTER M002, alone
+- M017 (handler refactor) runs alone — modifies ALL daemon dispatchers
+- M027 (graph persistence) runs alone
+- M028 (fuzzer collection) runs alone
+
+OUTPUT: After each milestone, report: what changed, test count, 
+compilation status, any blocked dependencies.
+```
+
+---
+
+## Batch 2 Prompt — Core Tooling (M029-M052)
+
+```
+You are building BugSwarm's core tooling — 7 new enterprise tools and 
+fixing 9 functional stubs that currently return mock data.
+
+CONTEXT:
+- All Batch 1 fixes are complete. The system deploys and compiles.
+- BugSwarm's ToolRegistry has 14 registered tools, 9 return stubs
+- Claude Code has 17 tools BugSwarm doesn't. We're closing that gap.
+- Each new tool must be enterprise-grade, not "few lines of code"
+
+NEW TOOLS (7):
+M029: Grep — regex search across codebase with ripgrep, result ranking, 
+      context windows, caching. Rust backend for performance. ~300 lines
+M030: Glob — recursive `**` pattern matching with relevance ranking, 
+      file type detection, CPG metadata integration. ~200 lines
+M031: Write — secure file writer with sandbox directory, atomic writes, 
+      version history, rollback, path validation. ~250 lines  
+M032: Edit — AST-aware surgical code modifier via tree-sitter, semantic 
+      edits, multi-file refactoring, preview diffs. ~400 lines
+M033: WebFetch — security-hardened web client with URL allowlist, content 
+      sanitization, token budgeting, caching. ~300 lines
+M034: TodoWrite — structured investigation task tracker with auto-status 
+      updates, dependency tracking, progress reporting. ~250 lines
+M035: KillShell — process lifecycle manager with graceful shutdown, 
+      resource cleanup, orphan detection. ~200 lines
+
+STUB FIXES (9):
+M036-M044: Wire real sandbox execution, real Z3 integration, real test 
+         compilation, real evidence daemon calls instead of mock returns
+
+RULES:
+1. Each tool is self-contained — add to tool_registry AFTER it's tested
+2. Stub fixes mutete daemon handlers — run ALONE (M036, M037, M038)
+3. Evidence daemon handlers (M042-M045) are independent — parallelize
+4. Every tool needs: unit tests, integration test, error path test, 
+   performance benchmark (must complete in <100ms for typical input)
+
+OUTPUT: Tool name, lines of code, test count, benchmark results, 
+registration status in ToolRegistry.
+```
+
+---
+
+## Batch 3 Prompt — Detection Expansion (M053-M075)
+
+```
+You are expanding BugSwarm's detection capabilities from 6 bug categories 
+to 100+ CWE categories, from 2 languages to 7, and from security-only 
+chains to universal bug chains.
+
+CONTEXT:
+- Current CPG supports Python + JavaScript tree-sitter grammars  
+- Current chain detector has 6 effect types (security only)
+- Current fuzzer uses heuristic danger map, not real SHM transport
+- Each CWE scanner is a standalone module implementing BugCategoryScanner
+
+CWE SCANNERS (M053-M062):
+- Each scanner: ~200-500 lines, detects one CWE category
+- Must produce: bug report with file:line, confidence score, CPG evidence
+- Must have: 90%+ true positive rate on Juliet test suite
+- Test with: 100+ synthetic test cases per scanner
+
+LANGUAGE PARSERS (M064-M069):
+- Each parser: ~200 lines for AST, ~100 for call graph, ~200 for CFG
+- Add tree-sitter-{lang} crate to Cargo.toml
+- Must extract: functions, classes, call edges, control flow, taint sources/sinks
+- Test with: 50+ real-world files per language
+
+UNIVERSAL CHAINS (M067):
+- Expand EffectType from 7 to 15 variants
+- Expand PreconditionType from 7 to 15 variants  
+- Add ChainType enum with 6 categories
+- Category-aware severity calculus
+- Test with: 30+ cross-category chain scenarios
+
+SYMBOLIC Z3 (M071):
+- Replace heuristic solver with real Z3 SMT calls
+- Add z3 crate dependency
+- Handle: bitvector, integer, string, array theories
+- Test with: 100+ SMT-LIB2 benchmark problems
+
+PARALLEL GROUPS:
+- M053-M057: 5 CWE scanners simultaneously
+- M058-M062: 5 more CWE scanners simultaneously  
+- M064-M066, M068: 4 language parsers simultaneously
+- M063: Fuzzer SHM — run after M072 (CPG danger map wire-up)
+- M071: Z3 integration — run ALONE (changes solver architecture)
+
+OUTPUT: Scanner name, CWE coverage, true/false positive rates, 
+language parser: files parsed correctly, chain detector: new effect types 
+working, Z3: solve rate improvement over heuristic.
+```
+
+---
+
+## Batch 4 Prompt — Enterprise Infrastructure (M076-M096)
+
+```
+You are hardening BugSwarm for production deployment — systemd units, 
+logging, monitoring, security hardening, migration tools.
+
+CONTEXT:
+- All Batch 1-3 features are complete and tested
+- The system compiles and deploys but has zero production hardening
+- These milestones make BugSwarm run reliably without human intervention
+
+INFRASTRUCTURE:
+M076-M079: systemd unit files with Restart=always, proper dependencies
+M080: Log rotation via logrotate config or tracing-appender
+M081: Replace String errors with thiserror enums in all crates
+M082: Distributed tracing spans across daemon boundaries
+M083: Request ID propagation from agent → sandbox → CPG → evidence
+
+HTTP/HEALTH:
+M084: Replace raw TCP health endpoints with axum Router
+      (/health, /ready, /metrics on all 3 daemons)
+
+SECURITY:
+M085: OpenTelemetry OTLP export (feature-gated, default off)
+M086: Slack/PagerDuty alerting via webhook
+M087: Secrets provider — file-based API keys via Docker secrets
+M088: Circuit breaker between daemons (3 consecutive failures → open)
+M089: SAFETY comments on ALL unsafe blocks (audit + document)
+M090: Seccomp hardening — explicit deny for fork/clone families
+M091: Causal intervention escaping fix — temp file + bind mount
+M092: Config migration tool — old sandbox.yaml → unified config.yaml
+
+CLEANUP:  
+M093: Container removal errors logged (not silently swallowed)
+M094: Temp file atexit cleanup via signal handler
+M095: Python lock files with exact pinned versions
+M096: All Cargo.toml deps with upper bounds
+
+RULES:
+- M084 (axum migration) runs ALONE — touches ALL daemon HTTP code
+- M076-M079 run simultaneously (different systemd files)
+- M085-M089 run simultaneously (independent security modules)
+- All changes must pass: `cargo check --workspace`, 
+  `cargo test --workspace`, `cargo clippy -- -D warnings`
+
+OUTPUT: Number of warnings fixed, security audit pass/fail, 
+daemon restart test result, config migration test result.
+```
+
+---
+
+## Batch 5 Prompt — Platform (M097-M134)
+
+```
+You are building BugSwarm's SaaS platform — FastAPI backend, React 
+frontend, GitHub integration, VS Code extension, and deployment 
+infrastructure. This transforms BugSwarm from a CLI tool into a 
+zero-CLI platform where users paste GitHub URLs and get results.
+
+CONTEXT:
+- All previous batches are deployed and stable  
+- BugSwarm currently requires CLI knowledge to operate
+- This batch makes it accessible to anyone with a browser
+- Target: user pastes repo URL → auto-clones → scans → streams results
+
+BACKEND (M097-M107):
+M097: FastAPI scaffold with project structure, middleware, config
+M098-M103: REST endpoints for scan lifecycle (POST/GET/WS)
+M104: JWT + API key + GitHub OAuth authentication
+M105: Rate limiting per user/IP
+M106: Redis + Celery job queue for long-running scans
+M107: S3-compatible artifact storage for PoCs and crash files
+
+FRONTEND (M108-M113):
+M108: React + TypeScript + Tailwind scaffold
+M109-M113: Landing page, dashboard, code viewer, settings, export
+
+GITHUB (M114-M121):
+M114: GitHub App manifest + installation flow
+M115: OAuth token exchange
+M116: Webhook event handler (PR opened, push, check suite)
+M117: Inline PR review comments with bug annotations
+M118: SARIF upload to GitHub Code Scanning
+M119: Auto-create GitHub Issues for confirmed bugs
+M120: Check runs API integration
+M121: Branch protection — require BugSwarm scan before merge
+
+EXTENSIONS (M122-M124):
+M122: `bugswarm-action@v1` GitHub Action
+M123: VS Code extension — scan current file, inline findings
+M124: Slack/Discord notification bots
+
+DEPLOYMENT (M125-M134):
+M125-M127: Terraform, Helm chart, K8s manifests
+M128-M130: Documentation site, pricing page, onboarding
+M131: GitHub Marketplace listing
+M132: GitHub Enterprise Server support
+M133: Organization-wide scan policies
+M134: Audit logging for compliance
+
+PARALLEL GROUPS:
+- M097 runs ALONE (backend scaffold)
+- M098-M103: 6 endpoints simultaneously (different route files)
+- M104-M107: 4 middleware/services simultaneously
+- M108 runs ALONE (frontend scaffold)
+- M109-M113: 5 frontend components simultaneously
+- M114-M121: M115 depends on M114; M116-M121 after M114+M115
+- M122-M124: 3 extensions simultaneously
+- M125-M127: 3 IaC templates simultaneously
+
+OUTPUT: Number of endpoints, frontend pages, GitHub events handled, 
+deployment manifests created.
+```
+
+---
+
+## Batch 6 Prompt — Advanced (M135-M161)
+
+```
+You are building BugSwarm's advanced capabilities — ARIA runtime, 
+fine-tuning pipeline, decision scaffold, and multi-provider gateway.
+
+CONTEXT:
+- The platform is deployed and serving users
+- These milestones are the "super powers" that make BugSwarm surpass 
+  frontier models through tools, not model quality
+- ARIA replaces the IEP engine with adaptive reasoning
+
+ARIA RUNTIME (M135-M145):
+M135: ICO schema — Investigation Context Object with 3 layers
+M136: PreComputationEngine — CPG + CVE + patterns pre-run
+M137: LayeredPromptBuilder — builds ICO-based prompts
+M138: UniversalIntentParser — 3-layer (structured→semantic→constrained)
+M139: WaypointEngine — generation + continuous regeneration
+M140: ContextManager — 3-tier memory (active/compressed/archive)
+M141: Dispatch loop — intent-driven execution
+M142: Completion conditions — multi-factor investigation termination
+M143: Tool output normalizers — every tool → NormalizedToolOutput
+M144: CapabilityGrammar — 4-category self-describing manifest
+M145: ISG integration — Investigation State Graph
+
+FINE-TUNING (M146-M149):
+M146: Data collection pipeline — NVD API poller, patch-diff parser
+M147: Model evaluation framework — holdout sets, blind benchmarks
+M148: LoRA/QLoRA training harness — 8×A100, $500-2000/run
+M149: Model registry — versioning, rollback, canary deployment
+⚠️ M146-M149 are POST-MVP — requires 3+ months production data first
+
+MULTI-PROVIDER (M150-M152):
+M150: Tier 2 adapters — OpenRouter, Together, Groq, Fireworks (10 providers)
+M151: Tier 3 adapters — AWS Bedrock, Azure, Vertex AI (5 providers)
+M152: Model registry catalog — 120+ models with capability metadata
+
+FIX PREDICTION (M153-M154):
+M153: FixOutcome tracking — record all fix outcomes for Bayesian update
+M154: Bayesian prior convergence — language priors stabilize after 100 outcomes
+
+PERFORMANCE (M155-M158):
+M155: Chain detector bench integration — chains appear in bench queue
+M156: Solver latency tracking — p50/p95/p99 per query
+M157: Constraint simplification ratio measurement
+M158: Seed recycling warm-start reuse measurement
+
+DECISION SCAFFOLD (M159-M161):
+M159: 12 question types — structured questions for every investigation phase
+M160: Scaffold runtime — per-task adaptive level selection
+M161: Per-task adaptation — same model gets different scaffold level per task type
+
+PARALLEL GROUPS:
+- M135 runs ALONE (ICO schema — everything depends on it)
+- M136-M139: 4 ARIA components simultaneously
+- M140-M142: 3 ARIA components simultaneously
+- M143-M145: 3 ARIA components simultaneously
+- M146-M149: 4 fine-tuning components simultaneously (POST-MVP)
+- M150-M152: 3 provider adapters simultaneously
+- M153-M154: 2 fix prediction components simultaneously
+- M155-M158: 4 performance tracking components simultaneously
+- M159-M161: SEQUENTIAL (scaffold depends on question types)
+
+OUTPUT: ARIA test suite pass rate, model solve rate improvement, 
+provider adapter count, fine-tuning pipeline status.
+```
+
+---
+
+## Batch 7 Prompt — Launch (M162-M172)
+
+```
+You are launching BugSwarm — final verification, benchmarks, 
+documentation, and community setup.
+
+CONTEXT:
+- All 161 previous milestones are complete
+- The system is feature-complete and must now be proven
+- These milestones verify that BugSwarm works at production scale
+
+VERIFICATION (M162-M164):
+M162: End-to-end system test — full pipeline against 10 real repos
+M163: Load test — 100 concurrent scan requests
+M164: Security penetration test — external audit
+
+BENCHMARKS (M167-M169):
+M167: OSS-Fuzz corpus — run against 1,000 known-vulnerable repos
+M168: Juliet test suite — 100,000 synthetic bugs across 150 CWE categories
+M169: Real-world targets — nginx, Redis, SQLite, OpenSSL
+
+DOCUMENTATION (M165):
+M165: Full documentation site — API docs, user guide, architecture docs
+
+COMMUNITY (M170-M172):
+M170: Bug bounty program setup — HackerOne or self-hosted
+M171: Community guidelines and code of conduct
+M172: Contributor onboarding — CONTRIBUTING.md, good first issues
+
+PARALLEL GROUPS:
+- M162-M164: 3 verification activities simultaneously
+- M167-M169: 3 benchmarks simultaneously
+- M165: Documentation (independent)
+- M170-M172: 3 community activities simultaneously
+
+OUTPUT: Test pass rates, bug counts per target, documentation completeness,
+community readiness checklist.
+```
