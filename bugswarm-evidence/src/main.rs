@@ -78,8 +78,13 @@ fn main() {
                 // Read unified config
                 let (socket_path, port) = if config.exists() {
                     let content = std::fs::read_to_string(&config).unwrap_or_default();
-                    let yaml: serde_yaml::Value = serde_yaml::from_str(&content)
-                        .unwrap_or(serde_yaml::Value::Null);
+                    let yaml: serde_yaml::Value = match serde_yaml::from_str(&content) {
+                        Ok(y) => y,
+                        Err(e) => {
+                            tracing::error!("Failed to parse config file {}: {}", config.display(), e);
+                            std::process::exit(1);
+                        }
+                    };
                     let ev = &yaml["daemons"]["evidence"];
                     let s = socket.unwrap_or_else(|| {
                         PathBuf::from(ev["socket"].as_str().unwrap_or("/var/run/bugswarm/evidence.sock"))

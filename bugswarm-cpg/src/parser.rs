@@ -10,8 +10,8 @@ use crate::graph::{
 };
 use petgraph::visit::EdgeRef;
 
-static PYTHON_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"(?:import|from)\s+(\S+)").unwrap());
-static JS_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"(?:import|require)\s*\(?["']([^"']+)["']"#).unwrap());
+static PYTHON_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"(?:import|from)\s+(\S+)").expect("valid regex"));
+static JS_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"(?:import|require)\s*\(?["']([^"']+)["']"#).expect("valid regex"));
 
 /// Detect the language of a file based on its extension.
 pub fn detect_language(path: &Path) -> Option<&'static str> {

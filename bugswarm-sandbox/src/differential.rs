@@ -10,9 +10,9 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
 
-static XML_COMMENT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<!--.*?-->").unwrap());
-static XML_PI_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<\?.*?\?>").unwrap());
-static XML_NAMESPACE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"xmlns(:\w+)?="[^"]*""#).unwrap());
+static XML_COMMENT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<!--.*?-->").expect("valid regex"));
+static XML_PI_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<\?.*?\?>").expect("valid regex"));
+static XML_NAMESPACE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"xmlns(:\w+)?="[^"]*""#).expect("valid regex"));
 
 /// The four differential comparison modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

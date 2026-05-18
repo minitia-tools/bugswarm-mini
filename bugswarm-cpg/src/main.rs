@@ -241,8 +241,13 @@ async fn main() -> anyhow::Result<()> {
             // Read unified config
             let (socket_path, pid_path, port) = if config.exists() {
                 let content = std::fs::read_to_string(&config)?;
-                let yaml: serde_yaml::Value = serde_yaml::from_str(&content)
-                    .unwrap_or(serde_yaml::Value::Null);
+                let yaml: serde_yaml::Value = match serde_yaml::from_str(&content) {
+                    Ok(y) => y,
+                    Err(e) => {
+                        tracing::error!("Failed to parse config file {}: {}", config.display(), e);
+                        std::process::exit(1);
+                    }
+                };
                 let cpg = &yaml["daemons"]["cpg"];
                 let s = socket.unwrap_or_else(|| {
                     PathBuf::from(cpg["socket"].as_str().unwrap_or("/var/run/bugswarm/cpg.sock"))
