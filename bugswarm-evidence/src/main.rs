@@ -42,6 +42,10 @@ enum Commands {
         /// HTTP health/metrics port (overrides config file).
         #[arg(long)]
         http_port: Option<u16>,
+
+        /// Graph state persistence file path.
+        #[arg(long, default_value = "/var/lib/bugswarm/evidence.json")]
+        state_path: PathBuf,
     },
 }
 
@@ -72,11 +76,11 @@ fn main() {
         Commands::Stats => run_stats(),
         Commands::Verify => run_verify(),
         Commands::Test => run_gate_tests(),
-        Commands::RunServer { config, socket, http_port } => {
+        Commands::RunServer { config, socket, http_port, state_path } => {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
                 // Read unified config
-                let (socket_path, port) = if config.exists() {
+                let (socket_path, port, sp) = if config.exists() {
                     let content = std::fs::read_to_string(&config).unwrap_or_default();
                     let yaml: serde_yaml::Value = match serde_yaml::from_str(&content) {
                         Ok(y) => y,
@@ -92,11 +96,16 @@ fn main() {
                     let hp = http_port.unwrap_or_else(|| {
                         ev["http_port"].as_u64().unwrap_or(8082) as u16
                     });
-                    (s, hp)
+                    let st = PathBuf::from(
+                        ev["state_dir"].as_str().unwrap_or(
+                            yaml["storage"]["state_dir"].as_str().unwrap_or("/var/lib/bugswarm")
+                        )
+                    ).join("evidence.json");
+                    (s, hp, Some(st))
                 } else {
                     let s = socket.unwrap_or_else(|| PathBuf::from("/var/run/bugswarm/evidence.sock"));
                     let hp = http_port.unwrap_or(8082);
-                    (s, hp)
+                    (s, hp, Some(state_path.clone()))
                 };
                 info!("Starting evidence daemon on {}", socket_path.display());
 
@@ -118,7 +127,7 @@ fn main() {
                     });
                 }
 
-                bugswarm_evidence::daemon::run_daemon(socket_path, Some(port)).await
+                bugswarm_evidence::daemon::run_daemon(socket_path, Some(port), sp).await
                     .expect("Evidence daemon failed");
             });
         }

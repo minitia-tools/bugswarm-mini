@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::chain;
@@ -87,7 +87,7 @@ struct DaemonResponse {
     error: Option<String>,
 }
 
-pub async fn run_daemon(socket_path: PathBuf, http_port: Option<u16>) -> anyhow::Result<()> {
+pub async fn run_daemon(socket_path: PathBuf, http_port: Option<u16>, state_path: Option<PathBuf>) -> anyhow::Result<()> {
     if socket_path.exists() {
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(_) => {
@@ -117,6 +117,31 @@ pub async fn run_daemon(socket_path: PathBuf, http_port: Option<u16>) -> anyhow:
     info!("Evidence daemon listening on {}", socket_path.display());
 
     let graph = Arc::new(EvidenceGraph::new());
+
+    // Restore graph state from disk
+    if let Some(ref path) = state_path {
+        if path.exists() {
+            match graph.load_graph(path) {
+                Ok(n) => info!("Restored {} evidence nodes from {}", n, path.display()),
+                Err(e) => warn!("Failed to load graph from {}: {} — starting fresh", path.display(), e),
+            }
+        }
+    }
+
+    // Graceful shutdown: save graph on SIGTERM
+    let graph_clone = graph.clone();
+    let state_clone = state_path.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        if let Some(ref path) = state_clone {
+            info!("Shutting down — saving evidence graph to {}", path.display());
+            match graph_clone.save_graph(path) {
+                Ok(n) => info!("Saved {} evidence nodes to {}", n, path.display()),
+                Err(e) => error!("Failed to save graph: {}", e),
+            }
+        }
+        std::process::exit(0);
+    });
 
     if let Some(port) = http_port {
         let metrics = Arc::new(crate::metrics::EvidenceMetrics::new());
