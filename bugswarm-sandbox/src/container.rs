@@ -733,6 +733,7 @@ impl ContainerManager {
 
         let crash_dir = std::path::PathBuf::from("/fuzz/corpus/out/crashes");
         let output_path = std::path::PathBuf::from("/tmp/bugswarm-crashes.jsonl");
+        let campaign_id_str = format!("{:?}", controller.campaign_id());
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             let mut seen = HashSet::new();
@@ -742,22 +743,39 @@ impl ContainerManager {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_file() {
-                            let hash = format!("{:?}", path);
-                            if seen.insert(hash.clone()) {
+                            let file_hash = format!("{:?}", path);
+                            if seen.insert(file_hash.clone()) {
                                 if let Ok(content) = std::fs::read(&path) {
+                                    // Attempt to extract stack trace from crash file
+                                    let content_str = String::from_utf8_lossy(&content);
+                                    let stack_trace = extract_stack_trace(&content_str);
+                                    let stack_hash = format!("{:x}", sha2::Sha256::digest(stack_trace.as_bytes()));
+                                    let signal = detect_signal(&content_str);
+                                    let classification = classify_crash(&content_str, signal);
+                                    
                                     let record = serde_json::json!({
-                                        "file": path.to_string_lossy(),
-                                        "size": content.len(),
-                                        "hash": hash,
-                                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                                        "crash_id": uuid::Uuid::new_v4().to_string(),
+                                        "campaign_id": campaign_id_str,
+                                        "stack_hash": stack_hash,
+                                        "crashing_input_size": content.len(),
+                                        "signal": signal,
+                                        "signal_name": signal_name(signal),
+                                        "stack_trace": stack_trace,
+                                        "classification": format!("{:?}", classification),
+                                        "crash_address": extract_crash_address(&content_str),
+                                        "discovered_at": chrono::Utc::now().to_rfc3339(),
+                                        "artifact_path": path.to_string_lossy(),
                                     });
                                     let mut file = std::fs::OpenOptions::new()
                                         .create(true).append(true)
                                         .open(&output_path).unwrap_or_else(|e| {
                                             tracing::warn!("Failed to open crash log: {}", e);
-                                            std::fs::File::create("/dev/null").unwrap()
+                                            std::fs::File::create("/dev/null").unwrap_or_else(|_| {
+                                                panic!("Cannot create /dev/null")
+                                            })
                                         });
                                     writeln!(file, "{}", record).ok();
+                                    tracing::info!("Crash collected: hash={} size={}", &stack_hash[..8], content.len());
                                 }
                             }
                         }
@@ -999,6 +1017,77 @@ fn build_host_config(config: &SandboxConfig) -> HostConfig {
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len { s.to_string() }
-    else { format!("{}... [truncated {} more bytes]", &s[..max_len], s.len() - max_len) }
+    if s.len() <= max_len { s.to_string() } else { format!("{}...", &s[..max_len]) }
+}
+
+fn extract_stack_trace(content: &str) -> String {
+    let mut trace = String::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("SIGSEGV") || trimmed.contains("SIGABRT") || trimmed.contains("SIGILL")
+            || trimmed.contains("SIGFPE") || trimmed.contains("SIGBUS")
+            || trimmed.contains(" at 0x") || trimmed.contains("backtrace")
+            || trimmed.starts_with('#') || trimmed.contains("AddressSanitizer")
+        {
+            trace.push_str(trimmed);
+            trace.push('\n');
+        }
+    }
+    if trace.is_empty() {
+        trace = content.lines().take(10).collect::<Vec<&str>>().join("\n");
+    }
+    trace
+}
+
+fn detect_signal(content: &str) -> i32 {
+    if content.contains("SIGSEGV") { libc::SIGSEGV }
+    else if content.contains("SIGABRT") { libc::SIGABRT }
+    else if content.contains("SIGILL") { libc::SIGILL }
+    else if content.contains("SIGFPE") { libc::SIGFPE }
+    else if content.contains("SIGBUS") { libc::SIGBUS }
+    else { 0 }
+}
+
+fn classify_crash(content: &str, signal: i32) -> crate::fuzzer::CrashClassification {
+    match signal {
+        libc::SIGSEGV => crate::fuzzer::CrashClassification::Segfault,
+        libc::SIGABRT => crate::fuzzer::CrashClassification::Abort,
+        libc::SIGILL => crate::fuzzer::CrashClassification::IllegalInstruction,
+        libc::SIGFPE => crate::fuzzer::CrashClassification::ArithmeticException,
+        libc::SIGBUS => crate::fuzzer::CrashClassification::BusError,
+        _ => {
+            if content.contains("AddressSanitizer") || content.contains("heap-buffer-overflow")
+                || content.contains("stack-buffer-overflow") {
+                crate::fuzzer::CrashClassification::Segfault
+            } else if content.contains("timeout") || content.contains("TIMEOUT") {
+                crate::fuzzer::CrashClassification::Timeout
+            } else {
+                crate::fuzzer::CrashClassification::Unknown
+            }
+        }
+    }
+}
+
+fn extract_crash_address(content: &str) -> u64 {
+    for line in content.lines() {
+        if let Some(pos) = line.find("0x") {
+            let hex = &line[pos..];
+            let end = hex.find(|c: char| !c.is_ascii_hexdigit() && c != 'x' && c != 'X').unwrap_or(hex.len());
+            if let Ok(addr) = u64::from_str_radix(&hex[2..end], 16) {
+                return addr;
+            }
+        }
+    }
+    0
+}
+
+fn signal_name(signal: i32) -> &'static str {
+    match signal {
+        libc::SIGSEGV => "SIGSEGV",
+        libc::SIGABRT => "SIGABRT",
+        libc::SIGILL => "SIGILL",
+        libc::SIGFPE => "SIGFPE",
+        libc::SIGBUS => "SIGBUS",
+        _ => "UNKNOWN",
+    }
 }
