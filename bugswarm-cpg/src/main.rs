@@ -102,6 +102,10 @@ enum Commands {
         /// PID file path.
         #[arg(long, default_value = "/var/run/bugswarm/cpg.pid")]
         pid_file: PathBuf,
+
+        /// HTTP health/metrics port (0 = disabled).
+        #[arg(long, default_value = "8081")]
+        http_port: u16,
     },
 }
 
@@ -229,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&stats)?);
         }
 
-        Commands::RunServer { socket, pid_file } => {
+        Commands::RunServer { socket, pid_file, http_port } => {
             info!("Starting CPG daemon on {}", socket.display());
 
             #[cfg(unix)]
@@ -262,7 +266,7 @@ async fn main() -> anyhow::Result<()> {
             }
             std::fs::write(&pid_file, std::process::id().to_string())?;
             let _pid = PidGuard(pid_file);
-            bugswarm_cpg::daemon::run_daemon(socket).await?;
+            bugswarm_cpg::daemon::run_daemon(socket, Some(http_port)).await?;
         }
     }
 

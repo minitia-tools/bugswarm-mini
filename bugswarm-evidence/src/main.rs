@@ -34,6 +34,10 @@ enum Commands {
         /// Unix socket path.
         #[arg(short, long, default_value = "/var/run/bugswarm/evidence.sock")]
         socket: PathBuf,
+
+        /// HTTP health/metrics port (0 = disabled).
+        #[arg(long, default_value = "8082")]
+        http_port: u16,
     },
 }
 
@@ -64,7 +68,7 @@ fn main() {
         Commands::Stats => run_stats(),
         Commands::Verify => run_verify(),
         Commands::Test => run_gate_tests(),
-        Commands::RunServer { socket } => {
+        Commands::RunServer { socket, http_port } => {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
                 info!("Starting evidence daemon on {}", socket.display());
@@ -87,7 +91,7 @@ fn main() {
                     });
                 }
 
-                bugswarm_evidence::daemon::run_daemon(socket).await
+                bugswarm_evidence::daemon::run_daemon(socket, Some(http_port)).await
                     .expect("Evidence daemon failed");
             });
         }

@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -107,21 +108,34 @@ pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig, http_port: 
 
     info!("Sandbox daemon listening on {}", socket_path.display());
 
-    // Spawn HTTP health endpoint if configured
+    // Spawn HTTP health/metrics endpoint if configured
     if let Some(port) = http_port {
+        let daemon_metrics = Arc::new(crate::metrics::DaemonMetrics::new());
         tokio::spawn(async move {
             let addr = format!("0.0.0.0:{}", port);
             match tokio::net::TcpListener::bind(&addr).await {
                 Ok(listener) => {
-                    tracing::info!("HTTP health endpoint listening on {}", addr);
+                    tracing::info!("HTTP health/metrics endpoint listening on {}", addr);
                     loop {
                         match listener.accept().await {
                             Ok((mut tcp_socket, _)) => {
+                                let m = daemon_metrics.clone();
                                 tokio::spawn(async move {
                                     let mut buf = [0u8; 1024];
-                                    let _ = tokio::io::AsyncReadExt::read(&mut tcp_socket, &mut buf).await;
-                                    let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\n\r\n{\"status\":\"healthy\"}";
-                                    let _ = tokio::io::AsyncWriteExt::write_all(&mut tcp_socket, response).await;
+                                    let n = tokio::io::AsyncReadExt::read(&mut tcp_socket, &mut buf).await.unwrap_or(0);
+                                    let request = String::from_utf8_lossy(&buf[..n]);
+                                    let (status, content_type, body) = if request.contains("GET /metrics") {
+                                        ("200 OK", "text/plain; charset=utf-8", m.render_prometheus())
+                                    } else if request.contains("GET /ready") {
+                                        ("200 OK", "application/json", r#"{"status":"ready"}"#.to_string())
+                                    } else {
+                                        ("200 OK", "application/json", r#"{"status":"healthy"}"#.to_string())
+                                    };
+                                    let response = format!(
+                                        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                        status, content_type, body.len(), body
+                                    );
+                                    let _ = tokio::io::AsyncWriteExt::write_all(&mut tcp_socket, response.as_bytes()).await;
                                 });
                             }
                             Err(e) => {

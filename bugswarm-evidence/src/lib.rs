@@ -7,3 +7,4 @@ pub mod graph;
 pub mod trigger;
 pub mod spec;
 pub mod fix_predict;
+pub mod metrics;

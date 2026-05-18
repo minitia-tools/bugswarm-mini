@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub struct EvidenceMetrics {
@@ -56,5 +57,52 @@ impl EvidenceMetrics {
             self.bugs_confirmed_total.load(Ordering::Relaxed),
             self.integrity_checks_total.load(Ordering::Relaxed),
         )
+    }
+}
+
+pub async fn spawn_http_server(port: u16, metrics: Arc<EvidenceMetrics>) {
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("Evidence HTTP server bind failed on {}: {}", addr, e);
+            return;
+        }
+    };
+    tracing::info!("Evidence HTTP health/metrics on {}", addr);
+    loop {
+        match listener.accept().await {
+            Ok((mut socket, _)) => {
+                let m = metrics.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let n = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let (status, content_type, body) = if request.contains("GET /metrics") {
+                        ("200 OK", "text/plain; charset=utf-8", m.render_prometheus())
+                    } else if request.contains("GET /ready") {
+                        let chroma_path = "/var/lib/bugswarm/chroma";
+                        let chroma_ok = std::path::Path::new(chroma_path).exists();
+                        let ready_body = if chroma_ok {
+                            r#"{"status":"ready","chroma":true}"#.to_string()
+                        } else {
+                            r#"{"status":"not_ready","chroma":false}"#.to_string()
+                        };
+                        (if chroma_ok { "200 OK" } else { "503 Service Unavailable" },
+                         "application/json", ready_body)
+                    } else {
+                        ("200 OK", "application/json", r#"{"status":"healthy"}"#.to_string())
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status, content_type, body.len(), body
+                    );
+                    let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes()).await;
+                });
+            }
+            Err(e) => {
+                tracing::warn!("Evidence HTTP accept error: {}", e);
+            }
+        }
     }
 }

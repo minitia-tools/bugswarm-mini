@@ -87,7 +87,7 @@ struct DaemonResponse {
     error: Option<String>,
 }
 
-pub async fn run_daemon(socket_path: PathBuf) -> anyhow::Result<()> {
+pub async fn run_daemon(socket_path: PathBuf, http_port: Option<u16>) -> anyhow::Result<()> {
     if socket_path.exists() {
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(_) => {
@@ -117,6 +117,12 @@ pub async fn run_daemon(socket_path: PathBuf) -> anyhow::Result<()> {
     info!("Evidence daemon listening on {}", socket_path.display());
 
     let graph = Arc::new(EvidenceGraph::new());
+
+    if let Some(port) = http_port {
+        let metrics = Arc::new(crate::metrics::EvidenceMetrics::new());
+        tokio::spawn(crate::metrics::spawn_http_server(port, metrics));
+        info!("Evidence HTTP health/metrics server on port {}", port);
+    }
 
     loop {
         tokio::select! {
