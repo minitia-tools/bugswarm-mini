@@ -238,8 +238,8 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::RunServer { config, socket, pid_file, http_port } => {
-            // Read unified config
-            let (socket_path, pid_path, port) = if config.exists() {
+            // Read unified config with schema_version validation
+            let yaml_opt: Option<serde_yaml::Value> = if config.exists() {
                 let content = std::fs::read_to_string(&config)?;
                 let yaml: serde_yaml::Value = match serde_yaml::from_str(&content) {
                     Ok(y) => y,
@@ -248,23 +248,45 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
                 };
-                let cpg = &yaml["daemons"]["cpg"];
-                let s = socket.unwrap_or_else(|| {
-                    PathBuf::from(cpg["socket"].as_str().unwrap_or("/var/run/bugswarm/cpg.sock"))
-                });
-                let p = pid_file.unwrap_or_else(|| {
-                    PathBuf::from(cpg["pid_file"].as_str().unwrap_or("/var/run/bugswarm/cpg.pid"))
-                });
-                let hp = http_port.unwrap_or_else(|| {
-                    cpg["http_port"].as_u64().unwrap_or(8081) as u16
-                });
-                (s, p, hp)
+                let sv = yaml["schema_version"].as_u64().unwrap_or(0);
+                if sv != 1 {
+                    tracing::error!(
+                        "Unsupported schema_version {} in {}. Expected 1. Please migrate or update your config.",
+                        sv,
+                        config.display()
+                    );
+                    std::process::exit(1);
+                }
+                Some(yaml)
             } else {
-                let s = socket.unwrap_or_else(|| PathBuf::from("/var/run/bugswarm/cpg.sock"));
-                let p = pid_file.unwrap_or_else(|| PathBuf::from("/var/run/bugswarm/cpg.pid"));
-                let hp = http_port.unwrap_or(8081);
-                (s, p, hp)
+                None
             };
+
+            let yaml_ref = yaml_opt.as_ref();
+
+            let socket_path = socket.unwrap_or_else(|| {
+                PathBuf::from(config_or_env(yaml_ref, "/daemons/cpg/socket", "BGSWARM_CPG_SOCKET", "/var/run/bugswarm/cpg.sock"))
+            });
+            let pid_path = pid_file.unwrap_or_else(|| {
+                PathBuf::from(config_or_env(yaml_ref, "/daemons/cpg/pid_file", "BGSWARM_CPG_PID_FILE", "/var/run/bugswarm/cpg.pid"))
+            });
+            let port = http_port.unwrap_or_else(|| {
+                config_or_env(yaml_ref, "/daemons/cpg/http_port", "BGSWARM_CPG_HTTP_PORT", "8081").parse::<u16>().unwrap_or(8081)
+            });
+
+            // Log effective config (secrets redacted)
+            let log_level = config_or_env(yaml_ref, "/logging/level", "BGSWARM_LOG_LEVEL", "info");
+            info!(
+                effective_config = %serde_json::json!({
+                    "schema_version": 1,
+                    "log_level": log_level,
+                    "cpg_socket": socket_path.display().to_string(),
+                    "cpg_pid_file": pid_path.display().to_string(),
+                    "cpg_http_port": port,
+                }),
+                "Effective configuration loaded"
+            );
+
             info!("Starting CPG daemon on {}", socket_path.display());
 
             #[cfg(unix)]
@@ -302,4 +324,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn config_or_env(yaml: Option<&serde_yaml::Value>, path: &str, env_name: &str, default: &str) -> String {
+    std::env::var(env_name).unwrap_or_else(|_| {
+        let mut current = yaml;
+        for key in path.split('/').skip(1) {
+            current = current.and_then(|v| v.get(key));
+        }
+        current.and_then(|v| v.as_str()).unwrap_or(default).to_string()
+    })
 }

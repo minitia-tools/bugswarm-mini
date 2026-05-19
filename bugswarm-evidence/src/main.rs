@@ -79,8 +79,8 @@ fn main() {
         Commands::RunServer { config, socket, http_port, state_path } => {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                // Read unified config
-                let (socket_path, port, sp) = if config.exists() {
+                // Read unified config with schema_version validation
+                let yaml_opt: Option<serde_yaml::Value> = if config.exists() {
                     let content = std::fs::read_to_string(&config).unwrap_or_default();
                     let yaml: serde_yaml::Value = match serde_yaml::from_str(&content) {
                         Ok(y) => y,
@@ -89,24 +89,47 @@ fn main() {
                             std::process::exit(1);
                         }
                     };
-                    let ev = &yaml["daemons"]["evidence"];
-                    let s = socket.unwrap_or_else(|| {
-                        PathBuf::from(ev["socket"].as_str().unwrap_or("/var/run/bugswarm/evidence.sock"))
-                    });
-                    let hp = http_port.unwrap_or_else(|| {
-                        ev["http_port"].as_u64().unwrap_or(8082) as u16
-                    });
-                    let st = PathBuf::from(
-                        ev["state_dir"].as_str().unwrap_or(
-                            yaml["storage"]["state_dir"].as_str().unwrap_or("/var/lib/bugswarm")
-                        )
-                    ).join("evidence.json");
-                    (s, hp, Some(st))
+                    let sv = yaml["schema_version"].as_u64().unwrap_or(0);
+                    if sv != 1 {
+                        tracing::error!(
+                            "Unsupported schema_version {} in {}. Expected 1. Please migrate or update your config.",
+                            sv,
+                            config.display()
+                        );
+                        std::process::exit(1);
+                    }
+                    Some(yaml)
                 } else {
-                    let s = socket.unwrap_or_else(|| PathBuf::from("/var/run/bugswarm/evidence.sock"));
-                    let hp = http_port.unwrap_or(8082);
-                    (s, hp, Some(state_path.clone()))
+                    None
                 };
+
+                let yaml_ref = yaml_opt.as_ref();
+
+                let socket_path = socket.unwrap_or_else(|| {
+                    PathBuf::from(config_or_env(yaml_ref, "/daemons/evidence/socket", "BGSWARM_EVIDENCE_SOCKET", "/var/run/bugswarm/evidence.sock"))
+                });
+                let port = http_port.unwrap_or_else(|| {
+                    config_or_env(yaml_ref, "/daemons/evidence/http_port", "BGSWARM_EVIDENCE_HTTP_PORT", "8082").parse::<u16>().unwrap_or(8082)
+                });
+                let sp = {
+                    let ev_state = config_or_env(yaml_ref, "/daemons/evidence/state_dir", "BGSWARM_EVIDENCE_STATE_DIR", "");
+                    let store_state = config_or_env(yaml_ref, "/storage/state_dir", "BGSWARM_STORAGE_STATE_DIR", "/var/lib/bugswarm");
+                    let dir = if ev_state.is_empty() { store_state } else { ev_state };
+                    PathBuf::from(dir).join("evidence.json")
+                };
+
+                // Log effective config (secrets redacted)
+                let log_level = config_or_env(yaml_ref, "/logging/level", "BGSWARM_LOG_LEVEL", "info");
+                info!(
+                    effective_config = %serde_json::json!({
+                        "schema_version": 1,
+                        "log_level": log_level,
+                        "evidence_socket": socket_path.display().to_string(),
+                        "evidence_http_port": port,
+                        "state_file": sp.display().to_string(),
+                    }),
+                    "Effective configuration loaded"
+                );
                 info!("Starting evidence daemon on {}", socket_path.display());
 
                 #[cfg(unix)]
@@ -127,7 +150,7 @@ fn main() {
                     });
                 }
 
-                bugswarm_evidence::daemon::run_daemon(socket_path, Some(port), sp).await
+                bugswarm_evidence::daemon::run_daemon(socket_path, Some(port), Some(sp)).await
                     .expect("Evidence daemon failed");
             });
         }
@@ -298,4 +321,14 @@ fn run_gate_tests() {
     } else {
         println!("{}✗ PHASE 5 GATE FAILED{}", R, N);
     }
+}
+
+fn config_or_env(yaml: Option<&serde_yaml::Value>, path: &str, env_name: &str, default: &str) -> String {
+    std::env::var(env_name).unwrap_or_else(|_| {
+        let mut current = yaml;
+        for key in path.split('/').skip(1) {
+            current = current.and_then(|v| v.get(key));
+        }
+        current.and_then(|v| v.as_str()).unwrap_or(default).to_string()
+    })
 }

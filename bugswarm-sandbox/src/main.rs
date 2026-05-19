@@ -11,6 +11,7 @@ use bugswarm_sandbox::config::{
 use bugswarm_sandbox::container::ContainerManager;
 use bugswarm_sandbox::error::SandboxError;
 use bugswarm_sandbox::error::SandboxResult;
+use bugswarm_sandbox::grep_engine;
 use bugswarm_sandbox::seccomp::SeccompProfile;
 
 /// Bug Swarm Sandbox Daemon — Isolated Proof-of-Concept Execution Engine
@@ -157,6 +158,49 @@ enum Commands {
 
     /// Print the default configuration.
     DefaultConfig,
+
+    /// Migrate old SandboxConfig format to unified BugSwarm config format.
+    /// Reads the old /etc/bugswarm/sandbox.yaml and prints the unified YAML to stdout.
+    MigrateConfig {
+        /// Path to the old sandbox config file.
+        #[arg(short, long, default_value = "/etc/bugswarm/sandbox.yaml")]
+        from: PathBuf,
+    },
+
+    /// Internal grep tool: search repository with regex pattern (used by agent).
+    Grep {
+        /// Repository root directory.
+        #[arg(long)]
+        repo: PathBuf,
+        /// Regex pattern to search for.
+        #[arg(long)]
+        pattern: String,
+        /// Glob pattern to filter files (e.g., "**/*.py").
+        #[arg(long, default_value = "**/*")]
+        path_filter: String,
+        /// Maximum results to return.
+        #[arg(long, default_value = "500")]
+        max_results: usize,
+        /// Lines of context before/after each match.
+        #[arg(long, default_value = "3")]
+        context: usize,
+        /// Case-insensitive matching.
+        #[arg(long, default_value_t = true)]
+        ignore_case: bool,
+    },
+
+    /// Internal glob tool: discover files matching a glob pattern (used by agent).
+    Glob {
+        /// Repository root directory.
+        #[arg(long)]
+        repo: PathBuf,
+        /// Glob pattern (e.g., "**/*.py", "src/**/*.rs").
+        #[arg(long, default_value = "**/*")]
+        pattern: String,
+        /// Maximum results to return.
+        #[arg(long, default_value = "200")]
+        max_results: usize,
+    },
 }
 
 fn parse_env_vars(env_args: &[String]) -> HashMap<String, String> {
@@ -189,7 +233,7 @@ async fn run_command(cli: Cli) -> SandboxResult<()> {
     let manager = ContainerManager::connect(config.clone()).await?;
 
     // Ensure image is available (skip for meta-commands that don't need it)
-    if !matches!(cli.command, Commands::ValidateEnv { .. } | Commands::SeccompProfile { .. } | Commands::DefaultConfig) {
+    if !matches!(cli.command, Commands::ValidateEnv { .. } | Commands::SeccompProfile { .. } | Commands::DefaultConfig | Commands::MigrateConfig { .. } | Commands::Grep { .. } | Commands::Glob { .. }) {
         manager.ensure_image().await?;
     }
 
@@ -355,6 +399,81 @@ async fn run_command(cli: Cli) -> SandboxResult<()> {
             let output = serde_yaml::to_string(&config)
                 .unwrap_or_else(|e| format!("Error serializing config: {}\n{}", e,
                     serde_json::to_string_pretty(&config).unwrap_or_else(|e2| format!("JSON fallback also failed: {}", e2))));
+            println!("{}", output);
+        }
+
+        Commands::MigrateConfig { from } => {
+            let content = std::fs::read_to_string(&from)?;
+            let old: SandboxConfig = match serde_yaml::from_str(&content) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to parse old sandbox config {}: {}", from.display(), e);
+                    std::process::exit(1);
+                }
+            };
+            let unified = serde_yaml::to_string(&serde_json::json!({
+                "schema_version": 1,
+                "logging": {
+                    "level": "info",
+                    "file": "/var/log/bugswarm/daemon.log"
+                },
+                "daemons": {
+                    "sandbox": {
+                        "socket": "/var/run/bugswarm/sandbox.sock",
+                        "pid_file": "/var/run/bugswarm/sandbox.pid",
+                        "http_port": 8080,
+                        "docker_image": old.image,
+                        "memory_limit_mb": old.memory_limit_mb,
+                        "timeout_secs": old.wall_clock_timeout_secs
+                    },
+                    "cpg": {
+                        "socket": "/var/run/bugswarm/cpg.sock",
+                        "pid_file": "/var/run/bugswarm/cpg.pid",
+                        "http_port": 8081
+                    },
+                    "evidence": {
+                        "socket": "/var/run/bugswarm/evidence.sock",
+                        "pid_file": "/var/run/bugswarm/evidence.pid",
+                        "http_port": 8082,
+                        "state_dir": "/var/lib/bugswarm"
+                    }
+                },
+                "storage": {
+                    "state_dir": "/var/lib/bugswarm",
+                    "chroma_persist_dir": "/var/lib/bugswarm/chroma"
+                }
+            }))
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to serialize unified config: {}", e);
+                std::process::exit(1);
+            });
+            println!("{}", unified);
+        }
+
+        Commands::Grep { repo, pattern, path_filter, max_results, context, ignore_case } => {
+            let (matches, total_found, truncated) = grep_engine::grep_repo(
+                &repo, &pattern, &path_filter, max_results, context, ignore_case,
+            );
+            let output = serde_json::json!({
+                "matches": matches,
+                "total_found": total_found,
+                "truncated": truncated,
+                "pattern": pattern,
+            });
+            println!("{}", serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string()));
+        }
+
+        Commands::Glob { repo, pattern, max_results } => {
+            let (files, total_found, truncated) = grep_engine::glob_repo(
+                &repo, &pattern, max_results,
+            );
+            let output = serde_json::json!({
+                "files": files,
+                "total_found": total_found,
+                "truncated": truncated,
+                "pattern": pattern,
+            });
+            println!("{}", serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string()));
         }
     }
 
@@ -398,12 +517,8 @@ async fn main() {
 #[cfg(feature = "telemetry")]
 fn init_telemetry() -> Result<(), Box<dyn std::error::Error>> {
     use tracing_subscriber::layer::SubscriberExt;
-    // OpenTelemetry initialization — requires OTLP collector at localhost:4317
-    // For production, set BGSWARM_OTEL_ENDPOINT env var
     let _endpoint = std::env::var("BGSWARM_OTEL_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
-    // Note: Full OTLP initialization requires opentelemetry_otlp crate version
-    // compatibility. Currently gated behind 'telemetry' feature for future use.
     tracing::info!("OpenTelemetry initialization stub — OTLP collector at {}", _endpoint);
     Ok(())
 }

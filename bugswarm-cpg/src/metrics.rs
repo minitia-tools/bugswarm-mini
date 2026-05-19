@@ -55,40 +55,32 @@ impl CpgMetrics {
 }
 
 pub async fn spawn_http_server(port: u16, metrics: Arc<CpgMetrics>) {
-    let addr = format!("0.0.0.0:{}", port);
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!("CPG HTTP server bind failed on {}: {}", addr, e);
-            return;
-        }
-    };
-    tracing::info!("CPG HTTP health/metrics on {}", addr);
-    loop {
-        match listener.accept().await {
-            Ok((mut socket, _)) => {
-                let m = metrics.clone();
-                tokio::spawn(async move {
-                    let mut buf = [0u8; 1024];
-                    let n = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await.unwrap_or(0);
-                    let request = String::from_utf8_lossy(&buf[..n]);
-                    let (status, content_type, body) = if request.contains("GET /metrics") {
-                        ("200 OK", "text/plain; charset=utf-8", m.render_prometheus())
-                    } else if request.contains("GET /ready") {
-                        ("200 OK", "application/json", r#"{"status":"ready"}"#.to_string())
-                    } else {
-                        ("200 OK", "application/json", r#"{"status":"healthy"}"#.to_string())
-                    };
-                    let response = format!(
-                        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        status, content_type, body.len(), body
-                    );
-                    let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes()).await;
-                });
-            }
-            Err(e) => {
-                tracing::warn!("CPG HTTP accept error: {}", e);
-            }
-        }
+    use axum::{Router, routing::get, Json, http::StatusCode, extract::State};
+
+    #[derive(Clone)]
+    struct AppState { metrics: Arc<CpgMetrics> }
+
+    async fn health() -> (StatusCode, Json<serde_json::Value>) {
+        (StatusCode::OK, Json(serde_json::json!({"status":"healthy","version":env!("CARGO_PKG_VERSION"),"service":"bugswarm-cpg"})))
     }
+
+    async fn ready() -> (StatusCode, Json<serde_json::Value>) {
+        (StatusCode::OK, Json(serde_json::json!({"status":"ready"})))
+    }
+
+    async fn metrics_handler(State(state): State<AppState>) -> String {
+        state.metrics.render_prometheus()
+    }
+
+    let state = AppState { metrics };
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(ready))
+        .route("/metrics", get(metrics_handler))
+        .with_state(state);
+
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    tracing::info!("CPG HTTP health/metrics server on {}", addr);
+    axum::serve(listener, app).await.unwrap();
 }

@@ -1039,6 +1039,126 @@ fn extract_stack_trace(content: &str) -> String {
     trace
 }
 
+/// Parsed ASAN report information.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct AsanInfo {
+    error_type: String,
+    access_size: u64,
+    address: u64,
+    thread_id: Option<String>,
+    allocated_by: Option<String>,
+    stack_frames: Vec<String>,
+}
+
+/// Extract CPU register values from crash output.
+#[allow(dead_code)]
+fn extract_registers(content: &str) -> HashMap<String, String> {
+    let mut regs = HashMap::new();
+    let reg_names = [
+        "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+        "rip", "rflags", "cs", "fs", "gs",
+        "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp", "eip",
+    ];
+    for line in content.lines() {
+        let trimmed = line.trim();
+        for &reg in &reg_names {
+            if let Some(pos) = trimmed.find(&format!("{}=", reg)) {
+                let rest = &trimmed[pos + reg.len() + 1..];
+                let end = rest.find(|c: char| c.is_whitespace() || c == ',').unwrap_or(rest.len());
+                let value = rest[..end].trim().to_string();
+                if !value.is_empty() && !value.starts_with('?') {
+                    regs.insert(reg.to_string(), value);
+                }
+            }
+        }
+    }
+    regs
+}
+
+/// Parse ASAN (AddressSanitizer) report from output.
+#[allow(dead_code)]
+fn parse_asan_report(content: &str) -> Option<AsanInfo> {
+    if !content.contains("AddressSanitizer") && !content.contains("ERROR: AddressSanitizer") {
+        return None;
+    }
+
+    let access_re = regex::Regex::new(
+        r"(READ|WRITE) of size (\d+) at (0x[0-9a-fA-F]+)"
+    ).ok()?;
+    let thread_re = regex::Regex::new(r"thread (T\d+)").ok()?;
+    let alloc_re = regex::Regex::new(r"allocated by thread (T\d+)").ok();
+    let frame_re = regex::Regex::new(r"#(\d+)\s+(0x[0-9a-fA-F]+)\s+(?:in\s+)?(.+)").ok()?;
+
+    let mut error_type = String::new();
+    let mut access_size: u64 = 0;
+    let mut address: u64 = 0;
+    let mut thread_id = None;
+    let mut allocated_by = None;
+    let mut stack_frames = Vec::new();
+    let mut found_access = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if !found_access {
+            if let Some(caps) = access_re.captures(trimmed) {
+                error_type = caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                access_size = caps.get(2)
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0);
+                if let Some(addr_str) = caps.get(3) {
+                    address = u64::from_str_radix(addr_str.as_str().trim_start_matches("0x"), 16).unwrap_or(0);
+                }
+                found_access = true;
+                stack_frames.push(format!("#0 {} {} {}",
+                    trimmed, error_type, access_size));
+            }
+        } else {
+            if let Some(caps) = frame_re.captures(trimmed) {
+                let _func = caps.get(3).map(|m| m.as_str().to_string()).unwrap_or_default();
+                stack_frames.push(trimmed.to_string());
+            }
+        }
+
+        if thread_id.is_none() {
+            if let Some(caps) = thread_re.captures(trimmed) {
+                thread_id = caps.get(1).map(|m| m.as_str().to_string());
+            }
+        }
+
+        if let Some(ref alloc_re) = alloc_re {
+            if allocated_by.is_none() {
+                if let Some(caps) = alloc_re.captures(trimmed) {
+                    allocated_by = caps.get(1).map(|m| m.as_str().to_string());
+                }
+            }
+        }
+    }
+
+    if !found_access {
+        return None;
+    }
+
+    Some(AsanInfo {
+        error_type,
+        access_size,
+        address,
+        thread_id,
+        allocated_by,
+        stack_frames,
+    })
+}
+
+/// Normalize addresses in a stack trace to remove ASLR variance between runs.
+/// Replaces hex addresses like `0x7f...` with `0x????????` for stable hashing.
+#[allow(dead_code)]
+fn normalize_addresses(trace: &str) -> String {
+    let re = regex::Regex::new(r"0x[0-9a-fA-F]{4,}").unwrap();
+    re.replace_all(trace, "0x????????").to_string()
+}
+
 fn detect_signal(content: &str) -> i32 {
     if content.contains("SIGSEGV") { libc::SIGSEGV }
     else if content.contains("SIGABRT") { libc::SIGABRT }

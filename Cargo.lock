@@ -356,6 +356,7 @@ name = "bugswarm-cpg"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "axum 0.7.9",
  "chrono",
  "clap",
  "hex",
@@ -386,6 +387,7 @@ name = "bugswarm-evidence"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "axum 0.7.9",
  "chrono",
  "clap",
  "fxhash",
@@ -442,6 +444,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
+ "walkdir",
  "xxhash-rust",
 ]
 

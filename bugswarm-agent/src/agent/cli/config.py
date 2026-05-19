@@ -43,7 +43,12 @@ class CLIConfig:
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> CLIConfig:
-        """Build from CLI args with env var overrides."""
+        """Build from CLI args with env var overrides and unified config loading."""
+        from agent.config import UnifiedConfig
+
+        config_path = args.config or os.getenv("BGSWARM_CONFIG", "/etc/bugswarm/config.yaml")
+        unified = UnifiedConfig.load(config_path)
+
         persona = Persona(args.persona) if args.persona else Persona.ADVERSARIAL
         model = args.model or os.getenv("BGSWARM_MODEL", "deepseek-v4-flash")
         provider = args.provider or os.getenv("BGSWARM_PROVIDER", "deepseek")
@@ -53,26 +58,14 @@ class CLIConfig:
         cost_budget = args.cost_budget or float(os.getenv("BGSWARM_COST_BUDGET", "50.0"))
         time_budget = args.time_budget or int(os.getenv("BGSWARM_TIME_BUDGET", "2400"))
 
-        # Load unified config for daemon socket paths
         cpg_binary = args.cpg_binary or os.getenv("BGSWARM_CPG_BIN", "bugswarm-cpg")
         sandbox_binary = args.sandbox_binary or os.getenv("BGSWARM_SANDBOX_BIN", "bugswarm-sandbox")
-        config_path = args.config or os.getenv("BGSWARM_CONFIG", "/etc/bugswarm/config.yaml")
-        if Path(config_path).exists():
-            try:
-                import yaml
-                with open(config_path) as f:
-                    unified = yaml.safe_load(f) or {}
-                # Set log level from unified config
-                log_level = unified.get("logging", {}).get("level", "info")
-                os.environ.setdefault("BGSWARM_LOG_LEVEL", log_level)
-                # Auto-configure daemon socket paths if not explicitly set
-                daemons = unified.get("daemons", {})
-                if not args.cpg_binary:
-                    os.environ.setdefault("BGSWARM_CPG_SOCKET", daemons.get("cpg", {}).get("socket", "/var/run/bugswarm/cpg.sock"))
-                if not args.sandbox_binary:
-                    os.environ.setdefault("BGSWARM_SANDBOX_SOCKET", daemons.get("sandbox", {}).get("socket", "/var/run/bugswarm/sandbox.sock"))
-            except Exception:
-                pass  # Config file is optional — use defaults
+
+        # Set daemon socket/env from unified config
+        os.environ.setdefault("BGSWARM_SANDBOX_SOCKET", unified.sandbox_socket)
+        os.environ.setdefault("BGSWARM_CPG_SOCKET", unified.cpg_socket)
+        os.environ.setdefault("BGSWARM_EVIDENCE_SOCKET", unified.evidence_socket)
+        os.environ.setdefault("BGSWARM_LOG_LEVEL", unified.log_level)
 
         return cls(
             repo=Path(args.repo).resolve(),
@@ -80,8 +73,8 @@ class CLIConfig:
             rounds=rounds, turns=turns,
             token_budget=token_budget, cost_budget=cost_budget,
             time_budget_minutes=time_budget,
-            cpg_binary=args.cpg_binary or os.getenv("BGSWARM_CPG_BIN", "bugswarm-cpg"),
-            sandbox_binary=args.sandbox_binary or os.getenv("BGSWARM_SANDBOX_BIN", "bugswarm-sandbox"),
+            cpg_binary=cpg_binary,
+            sandbox_binary=sandbox_binary,
             output=Path(args.output) if args.output else None,
             format=args.format or "json",
             json_mode=args.json or False,

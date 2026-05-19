@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub struct DaemonMetrics {
@@ -69,4 +70,35 @@ impl DaemonMetrics {
             self.invariant_runs_total.load(Ordering::Relaxed),
         )
     }
+}
+
+pub async fn spawn_http_server(port: u16, metrics: Arc<DaemonMetrics>) {
+    use axum::{Router, routing::get, Json, http::StatusCode, extract::State};
+
+    #[derive(Clone)]
+    struct AppState { metrics: Arc<DaemonMetrics> }
+
+    async fn health() -> (StatusCode, Json<serde_json::Value>) {
+        (StatusCode::OK, Json(serde_json::json!({"status":"healthy","version":env!("CARGO_PKG_VERSION"),"service":"bugswarm-sandbox"})))
+    }
+
+    async fn ready() -> (StatusCode, Json<serde_json::Value>) {
+        (StatusCode::OK, Json(serde_json::json!({"status":"ready"})))
+    }
+
+    async fn metrics_handler(State(state): State<AppState>) -> String {
+        state.metrics.render_prometheus()
+    }
+
+    let state = AppState { metrics };
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(ready))
+        .route("/metrics", get(metrics_handler))
+        .with_state(state);
+
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    tracing::info!("Sandbox HTTP health/metrics server on {}", addr);
+    axum::serve(listener, app).await.unwrap();
 }

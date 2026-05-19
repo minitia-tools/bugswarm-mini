@@ -8,6 +8,7 @@ pub mod delta;
 pub mod differential;
 pub mod error;
 pub mod fuzzer;
+pub mod grep_engine;
 pub mod invariant;
 pub mod logging;
 pub mod metrics;

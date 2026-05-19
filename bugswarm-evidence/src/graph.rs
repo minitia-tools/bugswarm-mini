@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::io::Write;
 use parking_lot::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::trigger;
 use crate::types::{
@@ -614,7 +616,7 @@ impl EvidenceGraph {
         self.edges.read().len()
     }
 
-    /// Save graph nodes and edges to a JSON file.
+    /// Save graph nodes and edges to a JSON file with atomic writes + backup rotation.
     pub fn save_graph(&self, path: &std::path::Path) -> Result<usize, String> {
         let nodes = self.nodes.read();
         let edges = self.edges.read();
@@ -623,16 +625,79 @@ impl EvidenceGraph {
             "edges": edges.as_slice(),
         });
         let json = serde_json::to_string_pretty(&data).map_err(|e| format!("serialize: {}", e))?;
-        std::fs::write(path, &json).map_err(|e| format!("write: {}", e))?;
+
+        let tmp_path = path.with_file_name(
+            format!("{}.tmp", path.file_name().unwrap_or_default().to_string_lossy())
+        );
+        let bak_path = path.with_file_name(
+            format!("{}.bak", path.file_name().unwrap_or_default().to_string_lossy())
+        );
+
+        // 1. Write to temporary file
+        let mut tmp_file = fs::File::create(&tmp_path)
+            .map_err(|e| format!("create tmp: {}", e))?;
+        tmp_file.write_all(json.as_bytes())
+            .map_err(|e| format!("write tmp: {}", e))?;
+        // fsync to ensure durability before rename
+        tmp_file.sync_all()
+            .map_err(|e| format!("sync tmp: {}", e))?;
+
+        // 2. Backup rotation: rename existing to .bak before overwriting
+        if path.exists() {
+            let _ = fs::remove_file(&bak_path); // remove stale .bak first
+            fs::rename(path, &bak_path)
+                .map_err(|e| format!("backup rename: {}", e))?;
+        }
+
+        // 3. Atomic rename: tmp -> final path
+        fs::rename(&tmp_path, path)
+            .map_err(|e| format!("atomic rename: {}", e))?;
+
+        info!("Graph saved: {} nodes to {}", nodes.len(), path.display());
         Ok(nodes.len())
     }
 
     /// Load graph nodes and edges from a JSON file, replacing current state.
+    /// Detects corruption, auto-falls back to .bak, verifies edge integrity.
     pub fn load_graph(&self, path: &std::path::Path) -> Result<usize, String> {
-        let json = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
-        let data: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("deserialize: {}", e))?;
-        let loaded_nodes: Vec<EvidenceNode> = serde_json::from_value(data["nodes"].clone()).map_err(|e| format!("nodes: {}", e))?;
-        let loaded_edges: Vec<EvidenceEdge> = serde_json::from_value(data["edges"].clone()).map_err(|e| format!("edges: {}", e))?;
+        let bak_path = path.with_file_name(
+            format!("{}.bak", path.file_name().unwrap_or_default().to_string_lossy())
+        );
+
+        let primary_result = Self::try_load_json(path);
+        let result = match primary_result {
+            Ok((nodes, edges)) => Ok((nodes, edges)),
+            Err(e) => {
+                warn!("Primary graph file corrupt ({}) — attempting .bak fallback", e);
+                if bak_path.exists() {
+                    Self::try_load_json(&bak_path).map_err(|bak_err| {
+                        format!("Primary corrupt ({}) and backup also corrupt ({}): unrecoverable", e, bak_err)
+                    })
+                } else {
+                    Err(format!("Primary corrupt ({}) and no .bak exists: unrecoverable", e))
+                }
+            }
+        }?;
+
+        let (loaded_nodes, loaded_edges) = result;
+
+        // Integrity check: every edge must reference valid node IDs
+        let node_count = loaded_nodes.len();
+        for (i, edge) in loaded_edges.iter().enumerate() {
+            if edge.from >= node_count {
+                return Err(format!(
+                    "Integrity error: edge {} references non-existent source node {} (node count: {})",
+                    i, edge.from, node_count
+                ));
+            }
+            if edge.to >= node_count {
+                return Err(format!(
+                    "Integrity error: edge {} references non-existent target node {} (node count: {})",
+                    i, edge.to, node_count
+                ));
+            }
+        }
+
         let count = loaded_nodes.len();
         *self.nodes.write() = loaded_nodes;
         *self.edges.write() = loaded_edges;
@@ -645,7 +710,45 @@ impl EvidenceGraph {
             out.entry(edge.from).or_default().push((i, edge.to));
             inp.entry(edge.to).or_default().push((i, edge.from));
         }
+        info!("Graph loaded: {} nodes, {} edges from {}", count, self.edges.read().len(), path.display());
         Ok(count)
+    }
+
+    /// Try to parse JSON graph from a file. Returns (nodes, edges) or error.
+    fn try_load_json(path: &std::path::Path) -> Result<(Vec<EvidenceNode>, Vec<EvidenceEdge>), String> {
+        if !path.exists() {
+            return Err(format!("File not found: {}", path.display()));
+        }
+
+        let json = fs::read_to_string(path)
+            .map_err(|e| format!("read '{}': {}", path.display(), e))?;
+
+        if json.trim().is_empty() {
+            return Err(format!("File is empty: {}", path.display()));
+        }
+
+        let data: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| format!("invalid JSON in '{}': {}", path.display(), e))?;
+
+        // Check JSON structure
+        let obj = data.as_object().ok_or_else(|| {
+            format!("Corruption: top-level value is not a JSON object in '{}'", path.display())
+        })?;
+
+        if !obj.contains_key("nodes") {
+            return Err(format!("Corruption: missing 'nodes' key in '{}'", path.display()));
+        }
+        if !obj.contains_key("edges") {
+            return Err(format!("Corruption: missing 'edges' key in '{}'", path.display()));
+        }
+
+        let loaded_nodes: Vec<EvidenceNode> = serde_json::from_value(data["nodes"].clone())
+            .map_err(|e| format!("node parse error in '{}': {}", path.display(), e))?;
+
+        let loaded_edges: Vec<EvidenceEdge> = serde_json::from_value(data["edges"].clone())
+            .map_err(|e| format!("edge parse error in '{}': {}", path.display(), e))?;
+
+        Ok((loaded_nodes, loaded_edges))
     }
 }
 
