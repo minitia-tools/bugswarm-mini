@@ -1,4 +1,12 @@
-BugSwarm — Automated Bug Hunting Pipeline
+```
+ ____              ____                              
+| __ ) _   _  __ _/ ___|_      ____ _ _ __ _ __ ___  
+|  _ \| | | |/ _` \___ \ \ /\ / / _` | '__| '_ ` _ \ 
+| |_) | |_| | (_| |___) \ V  V / (_| | |  | | | | | |
+|____/ \__,_|\__, |____/ \_/\_/ \__,_|_|  |_| |_| |_|
+             |___/                                   
+       Automated Bug Hunting Pipeline
+```
 
 ```text
 $ bugswarm --help
