@@ -1,9 +1,4 @@
-```
-╔╦╗╦ ╦╔═╗╔═╗╦ ╦╔═╗╔╦╗╔═╗
- ║ ║ ║╠═╣║  ╚═╣║ ║ ║║║║╣
- ╩ ╚═╝╩ ╩╚═╝╚═╝╚═╝╩ ╩╚═╝
-  Automated Bug Hunting Pipeline
-```
+BugSwarm — Automated Bug Hunting Pipeline
 
 ```text
 $ bugswarm --help
