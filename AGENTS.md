@@ -2,7 +2,29 @@
 
 Every line of code in this repository must meet these standards. No exceptions, no shortcuts, no "fix later." This file is non-negotiable. It is read by every developer, every reviewer, and every automated gate before merge.
 
+## Developer Quick Start
+
+```bash
+# One-time setup
+make pre-commit-install   # Install git hooks (runs on every commit)
+
+# Before every push
+make ci                   # Runs ALL gates locally — must pass before pushing
+
+# Individual gates
+make lint                 # clippy + ruff check + ruff format + safety comments
+make typecheck            # mypy --strict
+make test                 # cargo test + pytest
+make audit                # cargo audit + cargo fmt --check
+make fix                  # Auto-fix what can be fixed (ruff --fix + cargo fmt)
+
+# CI runs the same `make ci` target — if it passes locally it passes in CI.
+# See `.github/workflows/ci.yml` for the exact CI configuration.
+```
+
 ---
+
+## 1. Immutable Invariants
 
 ## 1. Immutable Invariants
 
@@ -396,6 +418,15 @@ A known production bug (that Bug Swarm missed in a previous run) is fed back via
 
 ### 2.1 Rust (Sandbox Daemon, CPG Builder, Orchestrator)
 
+**Enforcement (run `make lint` before push):**
+| Rule | Tool | CI Gate | Config |
+|------|------|---------|--------|
+| No `unsafe` without explicit allow + SAFETY comment | `cargo clippy -- -D warnings` + `ci/check_safety_comments.sh` | CI | `#![deny(unsafe_code)]` in all `lib.rs` |
+| No `unwrap()`/`expect()` in production code | `cargo clippy -- -D warnings` | CI | `#![deny(clippy::unwrap_used, clippy::expect_used)]` in all `lib.rs` |
+| All other clippy rules | `cargo clippy -- -D warnings` | CI | `.cargo/config.toml` |
+| Formatting | `cargo fmt --check` | CI | `rustfmt.toml` |
+| Dependency vulnerabilities | `cargo audit` | CI | N/A |
+
 **Safety:**
 - `unsafe` blocks require a written justification in a `// SAFETY:` comment citing the invariant that makes the block sound. Reviewers must verify the invariant.
 - All `unsafe` is gated behind `#[deny(unsafe_code)]` on the crate root; each `unsafe` block is explicitly `#[allow(unsafe_code)]` with justification.
@@ -428,6 +459,14 @@ A known production bug (that Bug Swarm missed in a previous run) is fed back via
 - Orchestrator has property-based tests (proptest) on state machine transitions: "for any sequence of agent timeouts, submissions, and judge verdicts, the system converges or terminates within budget."
 
 ### 2.2 Python (Agents, CLI, TUI, Judge Panel)
+
+**Enforcement (run `make lint` before push):**
+| Rule | Tool | CI Gate | Config |
+|------|------|---------|--------|
+| Lint (unused imports, naming, security, bugs) | `ruff check` | CI | `[tool.ruff.lint]` in `pyproject.toml` |
+| Formatting | `ruff format --check` | CI | `[tool.ruff.format]` in `pyproject.toml` |
+| Type checking | `mypy --strict` | CI (non-blocking) | `[tool.mypy]` in `pyproject.toml` |
+| Pre-commit hooks | `pre-commit run --all-files` | Developer | `.pre-commit-config.yaml` |
 
 **Typing:**
 - `mypy` with `--strict` passes with zero errors. No `# type: ignore` without a comment explaining why inference is impossible.
@@ -680,11 +719,19 @@ A known production bug (that Bug Swarm missed in a previous run) is fed back via
 
 ## 12. Quality Gates Summary
 
-| Gate | When | Blocks Merge? |
-|------|------|---------------|
-| `cargo fmt --check` / `ruff format --check` | Every push | Yes |
-| `cargo clippy -- -D warnings` / `ruff check` | Every push | Yes |
-| `mypy --strict` | Every push | Yes |
+Run `make ci` locally before every push — CI runs the identical commands.
+
+| Gate | Make Target | When | Blocks Merge? |
+|------|-------------|------|---------------|
+| `cargo fmt --check` | `make audit` | Every push | Yes |
+| `ruff format --check` | `make lint` | Every push | Yes |
+| `cargo clippy -- -D warnings` | `make lint` | Every push | Yes |
+| `ruff check` | `make lint` | Every push | Yes |
+| `ci/check_safety_comments.sh` | `make lint` | Every push | Yes |
+| `cargo test --workspace` | `make test` | Every push | Yes |
+| `pytest tests/unit/` | `make test` | Every push | Yes |
+| `mypy --strict` | `make typecheck` | Every push | Non-blocking (baseline: 659 errors) |
+| `cargo audit` | `make audit` | Every push | Yes |
 | Unit tests pass | Every push | Yes |
 | Coverage ≥ 85% | PR | Yes |
 | `cargo audit` + `pip-audit` clean | PR | Yes |
