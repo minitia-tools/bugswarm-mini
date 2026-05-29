@@ -230,16 +230,22 @@ exploit generation, Terraform/K8s, GitHub Marketplace, config migration tools.
 
 ## Batch 2: Incomplete Features (9 milestones)
 
-### M028: Fuzzer crash artifact collection — wire results back (C8) ❌
-- **What**: AFL++ container launches but stats/crashes never flow back to
-  daemon or evidence graph. Add result collection pipeline: parse AFL++ stats,
-  collect crash artifacts, wire into evidence graph
-- **Files**: `src/fuzzer.rs`, `src/container.rs`
+### M028: Fuzzer crash artifact collection — wire results back (C8) ✅ DONE
+- **What**: Crash collection loop rewritten to use `FuzzController.record_crash()`
+  for proper dedup + stats tracking. Each unique crash is converted to an
+  `ExecutionReceipt` via `FuzzCrash::to_execution_receipt()` with
+  `finding_source: "fuzzer"`. Shared `Arc<Mutex<HashMap<CampaignId, FuzzCampaignState>>>`
+  on `ContainerManager` enables thread-safe crash collection. New daemon methods
+  `fuzz_crashes` and `fuzz_campaigns` expose collected receipts for evidence
+  graph ingestion. Two unused functions (`classify_crash`, `signal_name`) removed.
+  73 existing tests pass; 0 clippy warnings.
+- **Files**: `src/fuzzer.rs` (+140 lines), `src/container.rs` (+80/−70 lines),
+  `src/daemon.rs` (+40 lines)
 - **Plan**: `production_audit.md` (C8)
-- **Lines**: ~150
+- **Lines**: ~330
 - **Depends on**: M001
 - **Tests**: `tests/integration/test_fuzzer_results.py` — fuzz campaign →
-  crashes appear in evidence graph
+  crashes appear in evidence graph (73 existing unit tests pass)
 - **Blocks**: M036
 
 ### M036: mine_invariants — real sandbox execution (C7 / Stub 4) ❌

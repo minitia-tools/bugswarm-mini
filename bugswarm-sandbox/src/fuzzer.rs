@@ -192,6 +192,89 @@ pub struct FuzzCrash {
     pub artifact_path: String,
 }
 
+impl FuzzCrash {
+    /// Convert this fuzzer crash into an [`ExecutionReceipt`] so it can be
+    /// stored in the evidence graph with `finding_source: "fuzzer"`.
+    pub fn to_execution_receipt(&self, image_sha: &str, command: &[String]) -> crate::config::ExecutionReceipt {
+        use crate::config::{
+            ExceptionHandling, ExecutionStatus, MemoryProfile, ReceiptHealthCheck, StackFrame,
+        };
+
+        let exception_type = Some(format!("FuzzerCrash({})", self.signal_name));
+        let exception_message = Some(format!(
+            "Fuzzer triggered {} at address 0x{:x} ({}B input)",
+            self.signal_name, self.crash_address, self.input_size
+        ));
+
+        // Build stack frames from the raw stack trace (one frame per line).
+        // The first non-empty line is used as the function name; all lines
+        // contribute to the file context (the crash artifact path).
+        let stack_frames: Vec<StackFrame> = self
+            .stack_trace
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .enumerate()
+            .map(|(i, line)| StackFrame {
+                file: self.artifact_path.clone(),
+                line: Some(i as u32 + 1),
+                function: Some(line.trim().to_string()),
+                locals_hash: None,
+            })
+            .collect();
+
+        let stdout = format!(
+            "Fuzzer crash: {} signal={} address=0x{:x} input_size={}",
+            self.signal_name, self.signal, self.crash_address, self.input_size
+        );
+        let stdout_sha256 = format!("{:x}", Sha256::digest(stdout.as_bytes()));
+        let stderr_sha256 = format!("{:x}", Sha256::digest(self.stderr_output.as_bytes()));
+
+        crate::config::ExecutionReceipt {
+            execution_id: self.crash_id.to_string(),
+            poc_sha256: self.stack_hash.clone(),
+            image_sha256: image_sha.to_string(),
+            command: command.to_vec(),
+            exit_code: Some(self.signal as i64),
+            status: ExecutionStatus::Failed,
+            duration_secs: 0.0,
+            cpu_time_secs: None,
+            memory_profile: MemoryProfile {
+                peak_mb: 0,
+                growth_rate_mb_per_sec: 0.0,
+                growth_duration_secs: 0.0,
+                oom_killed: false,
+            },
+            exception_type,
+            exception_message,
+            exception_handling: ExceptionHandling::Uncaught,
+            stack_frames,
+            stdout_truncated: stdout,
+            stderr_truncated: self.stderr_output.clone(),
+            stdout_sha256,
+            stderr_sha256,
+            timeout_reason: None,
+            pre_kill_diagnostics: None,
+            health_check: ReceiptHealthCheck {
+                before_timestamp: self.discovered_at,
+                after_timestamp: Utc::now(),
+                daemon_healthy_before: true,
+                daemon_healthy_after: true,
+                docker_daemon_ok: true,
+            },
+            pii_redactions: 0,
+            env_vars: HashMap::new(),
+            started_at: self.discovered_at,
+            ended_at: Utc::now(),
+            independently_verified: false,
+            independent_receipt_id: None,
+            tainted: false,
+            taint_reason: None,
+            sanitizer_report: None,
+            finding_source: Some("fuzzer".to_string()),
+        }
+    }
+}
+
 /// Data needed to create a trigger condition (serializable, no evidence dep).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriggerConditionData {

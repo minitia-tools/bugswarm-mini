@@ -19,7 +19,9 @@ use crate::config::{ExecutionReceipt, ExecutionStatus, SandboxConfig};
 use crate::container::ContainerManager;
 use crate::delta::{DeltaConfig, DeltaMinimizer, OracleFn};
 use crate::error::SandboxResult;
-use crate::fuzzer::FuzzRequest;
+use crate::fuzzer::{CampaignId, FuzzRequest};
+use std::str::FromStr;
+use uuid::Uuid;
 #[cfg(feature = "symbolic")]
 use bugswarm_symbolic::concolic::{ConcolicConfig, ConcolicEngine};
 
@@ -318,6 +320,8 @@ async fn dispatch_request(
         "execute_statistical" => handle_execute_statistical(request, manager).await,
         "health" => DaemonResponse { success: true, receipt: None, error: None },
         "fuzz" => handle_fuzz(raw_line, manager).await,
+        "fuzz_crashes" => handle_fuzz_crashes(raw_line, manager).await,
+        "fuzz_campaigns" => handle_fuzz_campaigns(manager).await,
         "diff" => handle_diff(raw_line).await,
         "generate_pairs" => handle_generate_pairs(raw_line).await,
         "delta" => handle_delta(raw_line, manager).await,
@@ -361,6 +365,45 @@ async fn handle_fuzz(raw_line: &str, manager: &std::sync::Arc<ContainerManager>)
             Err(e) => DaemonResponse { success: false, receipt: None, error: Some(e.to_string()) },
         },
         Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid FuzzRequest: {}", e)) },
+    }
+}
+
+async fn handle_fuzz_crashes(raw_line: &str, manager: &std::sync::Arc<ContainerManager>) -> DaemonResponse {
+    match serde_json::from_str::<serde_json::Value>(raw_line) {
+        Ok(req) => {
+            let campaign_str = req.get("campaign_id").and_then(|v| v.as_str()).unwrap_or("");
+            match Uuid::from_str(campaign_str) {
+                Ok(uuid) => {
+                    let cid = CampaignId(uuid);
+                    let receipts = manager.get_fuzz_crash_receipts(&cid);
+                    DaemonResponse {
+                        success: true,
+                        receipt: None,
+                        error: Some(serde_json::to_string(&serde_json::json!({
+                            "campaign_id": campaign_str,
+                            "crash_count": receipts.len(),
+                            "crash_receipts": receipts,
+                        })).unwrap_or_default()),
+                    }
+                }
+                Err(_) => DaemonResponse {
+                    success: false, receipt: None,
+                    error: Some(format!("Invalid campaign_id: {}", campaign_str)),
+                },
+            }
+        }
+        Err(e) => DaemonResponse { success: false, receipt: None, error: Some(format!("Invalid JSON: {}", e)) },
+    }
+}
+
+async fn handle_fuzz_campaigns(manager: &std::sync::Arc<ContainerManager>) -> DaemonResponse {
+    let summary = manager.get_fuzz_campaigns_summary();
+    DaemonResponse {
+        success: true,
+        receipt: None,
+        error: Some(serde_json::to_string(&serde_json::json!({
+            "active_campaigns": summary,
+        })).unwrap_or_default()),
     }
 }
 

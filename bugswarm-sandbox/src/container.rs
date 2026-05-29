@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bollard::container::{
@@ -23,7 +24,7 @@ use crate::config::{
     SandboxConfig, StackFrame, TimeoutReason, ALLOWED_ENV_VARS, BLOCKED_ENV_VARS, TMPFS_MOUNTS,
 };
 use crate::error::{SandboxError, SandboxResult};
-use crate::fuzzer::{DedupConfig, FuzzConfig, FuzzController, FuzzResponse, FuzzerError};
+use crate::fuzzer::{CampaignId, DedupConfig, FuzzConfig, FuzzController, FuzzResponse, FuzzerError};
 use crate::scanner::OutputScanner;
 
 /// Full output from a container execution.
@@ -45,6 +46,19 @@ pub struct ContainerManager {
     docker: Docker,
     pub(crate) config: SandboxConfig,
     scanner: OutputScanner,
+    /// Active fuzzing campaigns — keyed by campaign ID, holds the controller
+    /// and the list of ExecutionReceipts produced from crashes.
+    pub(crate) active_fuzz_campaigns: Arc<Mutex<HashMap<CampaignId, FuzzCampaignState>>>,
+}
+
+/// Shared mutable state for an active fuzzing campaign.
+pub struct FuzzCampaignState {
+    pub controller: FuzzController,
+    /// Execution receipts generated from fuzzer crashes, each tagged with
+    /// `finding_source: "fuzzer"` so the evidence graph can ingest them.
+    pub crash_receipts: Vec<crate::config::ExecutionReceipt>,
+    pub image_sha: String,
+    pub command: Vec<String>,
 }
 
 impl ContainerManager {
@@ -60,7 +74,12 @@ impl ContainerManager {
 
         let scanner = OutputScanner::new()?;
 
-        Ok(Self { docker, config, scanner })
+        Ok(Self {
+            docker,
+            config,
+            scanner,
+            active_fuzz_campaigns: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
     /// Connect to Docker with retry logic for transient unavailability.
@@ -716,8 +735,10 @@ impl ContainerManager {
             });
         }
 
-        // Create and start the campaign controller
+        // Create the campaign controller
         let mut controller = FuzzController::new(fz_config, DedupConfig::default());
+
+        let image_sha = self.config.fuzz_image.clone();
 
         // Pre-create corpus directories on host
         for dir in &["/fuzz/corpus/in", "/fuzz/corpus/out"] {
@@ -727,16 +748,22 @@ impl ContainerManager {
         }
 
         // Phase 21C: Load danger map if enabled
-        controller.load_danger_map_if_configured()?;
+        if let Err(e) = controller.load_danger_map_if_configured() {
+            tracing::warn!("danger_map_load_failed campaign={:?}: {}", controller.campaign_id(), e);
+        }
 
+        // Start the campaign — transitions from Provisioning → Running
         controller.start()?;
+
+        let campaign_id = controller.campaign_id();
 
         // Build AFL++ command from the controller
         let afl_cmd = controller.build_afl_command("/corpus/in", "/corpus/out");
+        let command = afl_cmd.clone();
         let cmd_shell = afl_cmd.join(" ");
 
         let stream_id = Uuid::new_v4().to_string();
-        let container_name = format!("bugswarm-fuzz-{}", controller.campaign_id());
+        let container_name = format!("bugswarm-fuzz-{}", campaign_id);
 
         let host_config = HostConfig {
             memory: Some(i64::MAX),
@@ -776,60 +803,163 @@ impl ContainerManager {
 
         info!("Fuzz campaign started: container={}", container_name);
 
+        // ── Crash Collection Loop ──
+        // Uses FuzzController.record_crash() for proper dedup + stats tracking,
+        // then converts each unique crash into an ExecutionReceipt with
+        // finding_source: "fuzzer" so the evidence graph can ingest it.
         let crash_dir = std::path::PathBuf::from("/fuzz/corpus/out/crashes");
         let output_path = std::path::PathBuf::from("/tmp/bugswarm-crashes.jsonl");
-        let campaign_id_str = format!("{:?}", controller.campaign_id());
+        let campaigns = self.active_fuzz_campaigns.clone();
+        let cmd_clone = command.clone();
+        let image_sha_clone = image_sha.clone();
+
+        // Register the campaign in shared state before starting the collector.
+        {
+            let mut map = match campaigns.lock() {
+                Ok(m) => m,
+                Err(poison) => {
+                    tracing::warn!("Campaign lock poison recovered: {}", poison);
+                    poison.into_inner()
+                }
+            };
+            map.insert(campaign_id, FuzzCampaignState {
+                controller,
+                crash_receipts: Vec::new(),
+                image_sha: image_sha_clone,
+                command: cmd_clone,
+            });
+        }
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-            let mut seen = HashSet::new();
+            // Track seen file paths so we don't process the same crash file twice.
+            let mut seen_paths = HashSet::new();
             loop {
                 interval.tick().await;
                 if let Ok(entries) = std::fs::read_dir(&crash_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.is_file() {
-                            let file_hash = format!("{:?}", path);
-                            if seen.insert(file_hash.clone()) {
-                                if let Ok(content) = std::fs::read(&path) {
-                                    // Attempt to extract stack trace from crash file
-                                    let content_str = String::from_utf8_lossy(&content);
-                                    let stack_trace = extract_stack_trace(&content_str);
-                                    let stack_hash = format!("{:x}", sha2::Sha256::digest(stack_trace.as_bytes()));
-                                    let signal = detect_signal(&content_str);
-                                    let classification = classify_crash(&content_str, signal);
-                                    
-                                    let record = serde_json::json!({
-                                        "crash_id": uuid::Uuid::new_v4().to_string(),
-                                        "campaign_id": campaign_id_str,
-                                        "stack_hash": stack_hash,
-                                        "crashing_input_size": content.len(),
-                                        "signal": signal,
-                                        "signal_name": signal_name(signal),
-                                        "stack_trace": stack_trace,
-                                        "classification": format!("{:?}", classification),
-                                        "crash_address": extract_crash_address(&content_str),
-                                        "discovered_at": chrono::Utc::now().to_rfc3339(),
-                                        "artifact_path": path.to_string_lossy(),
-                                    });
-                                    let mut file = std::fs::OpenOptions::new()
-                                        .create(true).append(true)
-                                        .open(&output_path).unwrap_or_else(|e| {
-                                            tracing::warn!("Failed to open crash log: {}", e);
-                                            std::fs::File::create("/dev/null").unwrap_or_else(|_| {
-                                                panic!("Cannot create /dev/null")
-                                            })
-                                        });
-                                    writeln!(file, "{}", record).ok();
-                                    tracing::info!("Crash collected: hash={} size={}", &stack_hash[..8], content.len());
-                                }
+                        if !path.is_file() {
+                            continue;
+                        }
+                        let path_key = format!("{:?}", path);
+                        if !seen_paths.insert(path_key) {
+                            continue;
+                        }
+                        // Read the crash artefact file
+                        let content = match std::fs::read(&path) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!("Crash read error {}: {}", path.display(), e);
+                                continue;
                             }
+                        };
+                        let content_str = String::from_utf8_lossy(&content);
+                        let stack_trace = extract_stack_trace(&content_str);
+                        let signal = detect_signal(&content_str);
+                        let crash_addr = extract_crash_address(&content_str);
+
+                        // Record crash via the controller (dedup + stats)
+                        let receipt_opt = {
+            let mut map = match campaigns.lock() {
+                Ok(m) => m,
+                Err(poison) => {
+                    tracing::error!("Campaign lock poisoned, recovering: {}", poison);
+                    poison.into_inner()
+                }
+            };
+                            let state = match map.get_mut(&campaign_id) {
+                                Some(s) => s,
+                                None => {
+                                    // Campaign was removed — stop the collector.
+                                    tracing::info!("Campaign {} removed, stopping crash collector", campaign_id);
+                                    return;
+                                }
+                            };
+
+                            if let Some(crash) = state.controller.record_crash(
+                                content.clone(),
+                                stack_trace.clone(),
+                                signal,
+                                content_str.to_string(),
+                                crash_addr,
+                            ) {
+                                let receipt = crash.to_execution_receipt(&state.image_sha, &state.command);
+                                state.crash_receipts.push(receipt.clone());
+                                // Write JSONL for debugging / offline analysis
+                                let record = serde_json::json!({
+                                    "crash_id": crash.crash_id.to_string(),
+                                    "campaign_id": crash.campaign_id.to_string(),
+                                    "stack_hash": crash.stack_hash,
+                                    "input_size": crash.input_size,
+                                    "signal": crash.signal,
+                                    "signal_name": crash.signal_name,
+                                    "classification": format!("{:?}", crash.classification),
+                                    "crash_address": crash.crash_address,
+                                    "discovered_at": crash.discovered_at.to_rfc3339(),
+                                    "artifact_path": crash.artifact_path,
+                                });
+                                let out_file = std::fs::OpenOptions::new()
+                                    .create(true).append(true)
+                                    .open(&output_path);
+                                if let Ok(mut file) = out_file {
+                                    let _ = writeln!(file, "{}", record);
+                                }
+                                Some(receipt)
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(receipt) = receipt_opt {
+                            tracing::info!(
+                                "Crash collected: receipt={} hash={} signal={} input_size={}",
+                                &receipt.execution_id[..8],
+                                &receipt.poc_sha256[..8],
+                                receipt.exit_code.unwrap_or(-1),
+                                content.len(),
+                            );
                         }
                     }
                 }
             }
         });
 
-        Ok(controller.to_response(stream_id))
+        Ok(FuzzResponse {
+            campaign_id,
+            state: crate::fuzzer::CampaignState::Running,
+            stream_id,
+        })
+    }
+
+    /// Return the execution receipts produced by a fuzzing campaign.
+    /// Used by the daemon's `fuzz_crashes` method to wire results back
+    /// to the evidence graph client.
+    pub fn get_fuzz_crash_receipts(&self, campaign_id: &CampaignId) -> Vec<crate::config::ExecutionReceipt> {
+        let map = match self.active_fuzz_campaigns.lock() {
+            Ok(m) => m,
+            Err(_) => return Vec::new(),
+        };
+        map.get(campaign_id)
+            .map(|s| s.crash_receipts.clone())
+            .unwrap_or_default()
+    }
+
+    /// Return summary information about all active campaigns.
+    pub fn get_fuzz_campaigns_summary(&self) -> Vec<serde_json::Value> {
+        let map = match self.active_fuzz_campaigns.lock() {
+            Ok(m) => m,
+            Err(_) => return Vec::new(),
+        };
+        map.iter().map(|(cid, state)| {
+            serde_json::json!({
+                "campaign_id": cid.to_string(),
+                "state": format!("{:?}", state.controller.state()),
+                "unique_crashes": state.controller.stats().unique_crashes,
+                "total_execs": state.controller.stats().total_execs,
+                "crash_receipts": state.crash_receipts.len(),
+            })
+        }).collect()
     }
 
     pub async fn independent_reexecute(&self, poc_content: &str, env_vars: &HashMap<String, String>) -> SandboxResult<ExecutionReceipt> {
@@ -1226,26 +1356,6 @@ fn detect_signal(content: &str) -> i32 {
     else { 0 }
 }
 
-fn classify_crash(content: &str, signal: i32) -> crate::fuzzer::CrashClassification {
-    match signal {
-        libc::SIGSEGV => crate::fuzzer::CrashClassification::Segfault,
-        libc::SIGABRT => crate::fuzzer::CrashClassification::Abort,
-        libc::SIGILL => crate::fuzzer::CrashClassification::IllegalInstruction,
-        libc::SIGFPE => crate::fuzzer::CrashClassification::ArithmeticException,
-        libc::SIGBUS => crate::fuzzer::CrashClassification::BusError,
-        _ => {
-            if content.contains("AddressSanitizer") || content.contains("heap-buffer-overflow")
-                || content.contains("stack-buffer-overflow") {
-                crate::fuzzer::CrashClassification::Segfault
-            } else if content.contains("timeout") || content.contains("TIMEOUT") {
-                crate::fuzzer::CrashClassification::Timeout
-            } else {
-                crate::fuzzer::CrashClassification::Unknown
-            }
-        }
-    }
-}
-
 fn extract_crash_address(content: &str) -> u64 {
     for line in content.lines() {
         if let Some(pos) = line.find("0x") {
@@ -1259,13 +1369,3 @@ fn extract_crash_address(content: &str) -> u64 {
     0
 }
 
-fn signal_name(signal: i32) -> &'static str {
-    match signal {
-        libc::SIGSEGV => "SIGSEGV",
-        libc::SIGABRT => "SIGABRT",
-        libc::SIGILL => "SIGILL",
-        libc::SIGFPE => "SIGFPE",
-        libc::SIGBUS => "SIGBUS",
-        _ => "UNKNOWN",
-    }
-}
