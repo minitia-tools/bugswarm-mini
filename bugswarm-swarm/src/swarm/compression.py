@@ -12,6 +12,7 @@ import re
 from collections import OrderedDict
 
 import structlog
+from gateway.tokenizer import count_tokens, count_tool_output
 
 logger = structlog.get_logger(__name__)
 
@@ -231,7 +232,7 @@ class ContextCompressor:
         current_len = 0
         for msg in messages:
             content = msg.get("content", "")
-            token_est = len(content) // 4
+            token_est = count_tokens(content)
             if current_len + token_est > self.segment_size_tokens and current:
                 segments.append(current)
                 current = []
@@ -457,7 +458,7 @@ class RelevanceScorer:
         self.content_cache[output_hash] = tool_output
 
         # 2. Size heuristic
-        token_est = len(tool_output) // 4
+        token_est = count_tool_output(tool_output)
         if token_est < 200:
             return 1.0, "keep: small output"
 

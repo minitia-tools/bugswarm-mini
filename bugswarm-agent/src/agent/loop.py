@@ -13,6 +13,7 @@ from pathlib import Path
 
 import structlog
 from gateway.client import LLMClient
+from gateway.tokenizer import count_tokens
 from gateway.types import ChatMessage, ChatRequest, MessageRole, ProviderType
 
 from agent.parser import OutputParser, OutputType, ParsedFinding
@@ -162,7 +163,7 @@ class ContextManager:
 
     @property
     def estimated_tokens(self) -> int:
-        return sum(len(m.content) // 4 + 4 for m in self._messages)
+        return sum(count_tokens(m.content) + 4 for m in self._messages)
 
     @property
     def usage_pct(self) -> float:

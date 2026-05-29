@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 import structlog
+from gateway.tokenizer import count_tokens
 
 from .fidelity import compute_fidelity
 
@@ -137,7 +138,7 @@ class ContextCompressor:
         current_len = 0
         for msg in messages:
             content = msg.get("content", "")
-            token_est = len(content) // 4
+            token_est = count_tokens(content)
             if current_len + token_est > self.segment_size_tokens and current:
                 segments.append(current)
                 current = []

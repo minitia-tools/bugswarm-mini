@@ -195,23 +195,33 @@ exploit generation, Terraform/K8s, GitHub Marketplace, config migration tools.
   `test_python_startup_under_seccomp`
 - **Blocks**: none
 
-### M087: core.py Exception handling — specific error types (M27) ❌
-- **What**: Catch-all `except Exception` swallows both infrastructure failures
-  and security failures with the same handler. Replace with specific error
-  types; security errors at WARN, infra errors at ERROR
-- **Files**: `agent/core.py`
+### M087: core.py Exception handling — specific error types (M27) ✅ DONE
+- **What**: Exception hierarchy in `agent/exceptions.py` with 25+ typed
+  exception classes across 4 categories (Infrastructure, Security, Config).
+  All 9 `except Exception` blocks in core.py replaced with specific types.
+  Security events (PII, escape, injection, path traversal) logged at WARN.
+  Infrastructure errors logged at ERROR. All `print()` replaced with structlog.
+- **Files**: `agent/exceptions.py` (new), `agent/core.py`
 - **Plan**: `production_audit.md` (M27)
-- **Lines**: ~40
+- **Lines**: ~280 (new module + refactor)
 - **Depends on**: none
 - **Tests**: Security errors logged at WARN, infra errors at ERROR
 - **Blocks**: none
 
-### M092: Token counting — replace len//4 fallback (L13) ❌
-- **What**: Token counting uses `len//4` which is inaccurate for non-English
-  text and code. Replace with proper tiktoken-based counting
-- **Files**: `gateway/tokenizer.py`, `mini/gateway/cost_tracker.py`
+### M092: Token counting — replace len//4 fallback (L13) ✅ DONE
+- **What**: Centralized `gateway/tokenizer.py` with `count_tokens()`,
+  `count_message_tokens()`, `count_tool_output()` — tiktoken-backed with
+  LRU cache, model→encoding mapping for 15+ models, graceful heuristic
+  fallback. All 6 `len//4` call sites replaced (agent/loop.py,
+  swarm/{compression,relevance,compressor}.py). All 3 provider adapters
+  (base, openai, anthropic) delegate to the centralized module.
+  tiktoken dependency added to agent and swarm pyproject.toml.
+- **Files**: `gateway/tokenizer.py` (new), `agent/loop.py`,
+  `swarm/compression.py`, `swarm/relevance.py`, `swarm/compressor.py`,
+  `gateway/providers/base.py`, `gateway/providers/openai.py`,
+  `gateway/providers/anthropic.py`
 - **Plan**: `production_audit.md` (L13)
-- **Lines**: ~30
+- **Lines**: ~140 (new module + 8 call-site updates)
 - **Depends on**: none
 - **Tests**: Token count within 5% of actual tiktoken count
 - **Blocks**: none

@@ -10,6 +10,7 @@ import hashlib
 import re
 
 import structlog
+from gateway.tokenizer import count_tool_output
 
 logger = structlog.get_logger(__name__)
 
@@ -38,7 +39,7 @@ class RelevanceScorer:
         self.content_cache[output_hash] = tool_output
 
         # 2. Size heuristic — small outputs always kept
-        token_est = len(tool_output) // 4
+        token_est = count_tool_output(tool_output)
         if token_est < 200:
             self.stats["kept"] += 1
             return 1.0, "keep: small output"

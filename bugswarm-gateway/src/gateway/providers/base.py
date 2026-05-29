@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 
 import structlog
 
+from ..tokenizer import count_message_tokens, count_tokens
 from ..types import (
     ChatMessage,
     ChatRequest,
@@ -55,19 +56,12 @@ class BaseProviderAdapter(ABC):
         yield response.content
 
     def _estimate_tokens(self, content: str) -> int:
-        """Estimate token count. Uses tiktoken if available, falls back to character heuristic."""
-        try:
-            import tiktoken
-
-            enc = tiktoken.get_encoding("cl100k_base")
-            return len(enc.encode(content))
-        except ImportError:
-            # Improved heuristic: ~3.5 chars per token for English code/text
-            return max(1, int(len(content) / 3.5))
+        """Estimate token count. Delegates to centralized tokenizer."""
+        return count_tokens(content)
 
     async def count_tokens(self, messages: list[ChatMessage]) -> int:
-        """Count tokens for a message list. Override for provider-specific tokenizers."""
-        return sum(self._estimate_tokens(m.content) for m in messages)
+        """Count tokens for a message list. Delegates to centralized tokenizer."""
+        return count_message_tokens([{"content": m.content, "role": m.role.value} for m in messages])
 
     def estimate_cost(self, input_tokens: int, output_tokens: int) -> CostInfo:
         """Estimate cost from token counts and provider pricing."""

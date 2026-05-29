@@ -19,10 +19,38 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import structlog
+
 from gateway.client import LLMClient
 from gateway.types import ChatMessage, ChatRequest, MessageRole, ProviderType
 
 from agent.cli.signals import register_temp_file
+from agent.exceptions import (
+    CPGConnectionError,
+    CPGResponseError,
+    CPGTimeoutError,
+    EscapeAttemptError,
+    FileAbsentError,
+    FileAccessDeniedError,
+    FileReadFailedError,
+    LLMInfrastructureError,
+    LLMInvalidRequestError,
+    LLMTimeoutError,
+    PathTraversalError,
+    PIIError,
+    PromptInjectionError,
+    SandboxInfrastructureError,
+    SandboxTimeoutError,
+    ToolExecutionError,
+    ToolFormatError,
+    ToolJSONParseError,
+    classify_cpg_error,
+    classify_filesystem_error,
+    classify_llm_error,
+    classify_sandbox_error,
+)
+
+logger = structlog.get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════
 # System Prompts
@@ -130,6 +158,7 @@ class ToolDispatcher:
         if permission == "execute":
             exec_count = sum(1 for t in self.tool_history if TOOL_PERMISSIONS.get(t["tool"]) == "execute")
             if exec_count > 20:
+                logger.warning("tool_rate_limit_exceeded", tool=tool_name, exec_count=exec_count)
                 return ToolResult(False, "Execute rate limit exceeded — too many executions in one session")
 
         if tool_name == "query_cpg":
@@ -176,13 +205,21 @@ class ToolDispatcher:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
                 data = json.loads(stdout.decode())
                 return ToolResult(True, json.dumps(data, indent=2), {"source": "cpg"})
-        except TimeoutError:
+        except TimeoutError as e:
+            err = CPGTimeoutError(str(e))
+            err.log(tool="query_cpg", timeout=30)
             return ToolResult(False, "CPG query timed out (30s)")
         except (ConnectionError, OSError) as e:
+            err = CPGConnectionError(str(e))
+            err.log(tool="query_cpg")
             return ToolResult(False, f"CPG service unavailable: {e}")
         except json.JSONDecodeError as e:
+            err = CPGResponseError(str(e))
+            err.log(tool="query_cpg")
             return ToolResult(False, f"CPG invalid response: {e}")
         except Exception as e:
+            err = classify_cpg_error(e)
+            err.log(tool="query_cpg")
             return ToolResult(False, f"CPG query failed: {e}")
 
     async def _trace_dependency(self, args: dict) -> ToolResult:
@@ -204,27 +241,43 @@ class ToolDispatcher:
                 lines = [l for l in text.split("\n") if func in l]
                 return ToolResult(True, "\n".join(lines[:20]), {"function": func, "radius": radius})
             return ToolResult(True, text[:2000], {"function": func, "radius": radius})
-        except TimeoutError:
+        except TimeoutError as e:
+            err = CPGTimeoutError(str(e))
+            err.log(tool="trace_dependency", timeout=30)
             return ToolResult(False, "Trace dependency timed out (30s)")
         except (ConnectionError, OSError) as e:
+            err = CPGConnectionError(str(e))
+            err.log(tool="trace_dependency")
             return ToolResult(False, f"Trace service unavailable: {e}")
         except Exception as e:
+            err = classify_cpg_error(e)
+            err.log(tool="trace_dependency")
             return ToolResult(False, f"Trace dependency failed: {e}")
 
     async def _list_dir(self, args: dict) -> ToolResult:
         path_str = args.get("path", ".")
         if not path_str:
+            err = PathTraversalError("Empty path in list_dir")
+            err.log(args=args)
             return ToolResult(False, "Path traversal blocked: empty path")
         if "\0" in path_str:
+            err = PathTraversalError("Null byte in list_dir path")
+            err.log(args=args)
             return ToolResult(False, "Path traversal blocked: null byte in path")
         stripped_path = path_str.lstrip()
         if len(stripped_path) >= 2 and stripped_path[1] == ":":
+            err = PathTraversalError("Windows drive letter in list_dir path")
+            err.log(args=args)
             return ToolResult(False, "Path traversal blocked: Windows drive letter paths not allowed")
         if path_str.startswith("/"):
+            err = PathTraversalError("Absolute path in list_dir")
+            err.log(args=args)
             return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
         normalized = path_str.replace("\\", "/")
         segments = normalized.split("/")
         if ".." in segments:
+            err = PathTraversalError("Parent directory navigation in list_dir")
+            err.log(args=args)
             return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
         try:
             target = self.repo_path / path_str
@@ -235,10 +288,16 @@ class ToolDispatcher:
             entries.insert(0, f"Contents of {target}:")
             return ToolResult(True, "\n".join(entries))
         except PermissionError as e:
+            err = FileAccessDeniedError(str(e))
+            err.log(operation="list_dir", path=path_str)
             return ToolResult(False, f"Permission denied: {e}")
         except OSError as e:
+            err = FileReadFailedError(str(e))
+            err.log(operation="list_dir", path=path_str)
             return ToolResult(False, f"List dir failed: {e}")
         except Exception as e:
+            err = classify_filesystem_error(e)
+            err.log(operation="list_dir", path=path_str)
             return ToolResult(False, f"List dir failed: {e}")
 
     async def _exec_sandbox(self, args: dict) -> ToolResult:
@@ -249,10 +308,14 @@ class ToolDispatcher:
         # PII scan before execution
         cleaned, pii_count = self.scanner.scan(poc_code)
         if pii_count > 0:
+            err = PIIError(f"PoC contains {pii_count} PII/sensitive patterns")
+            err.log(pii_count=pii_count, action="rejected")
             return ToolResult(False, f"PoC contains {pii_count} PII/sensitive patterns — rejected")
 
         # Escape attempt detection
         if self.scanner.detect_escape(poc_code):
+            err = EscapeAttemptError("Sandbox escape pattern detected in PoC")
+            err.log(action="rejected")
             return ToolResult(False, "PoC contains sandbox escape patterns — REJECTED")
 
         # Write PoC to temp file
@@ -274,6 +337,9 @@ class ToolDispatcher:
             # Scan output for PII
             output_text = stdout.decode()
             cleaned_output, out_pii = self.scanner.scan(output_text)
+            if out_pii > 0:
+                err = PIIError(f"Sandbox output contains {out_pii} PII patterns")
+                err.log(out_pii=out_pii, action="redacted")
 
             try:
                 receipt = json.loads(cleaned_output)
@@ -288,11 +354,17 @@ class ToolDispatcher:
                 )
             except json.JSONDecodeError:
                 return ToolResult(True, cleaned_output[:2000], {"raw": True})
-        except TimeoutError:
+        except TimeoutError as e:
+            err = SandboxTimeoutError(str(e))
+            err.log(timeout=130)
             return ToolResult(False, "Sandbox execution timed out (130s)")
         except (ConnectionError, OSError) as e:
+            err = SandboxInfrastructureError(str(e))
+            err.log()
             return ToolResult(False, f"Sandbox infrastructure error: {e}")
         except Exception as e:
+            err = classify_sandbox_error(e)
+            err.log()
             return ToolResult(False, f"Sandbox execution failed: {e}")
         finally:
             try:
@@ -309,27 +381,41 @@ class ToolDispatcher:
 
         # H12: Path traversal prevention (multi-layer defense)
         if not path:
+            err = PathTraversalError("Empty path in read_file")
+            err.log()
             return ToolResult(False, "Path traversal blocked: empty path")
         if "\0" in path:
+            err = PathTraversalError("Null byte in read_file path")
+            err.log(path=path)
             return ToolResult(False, "Path traversal blocked: null byte in path")
         if path.startswith("/"):
+            err = PathTraversalError("Absolute path in read_file")
+            err.log(path=path)
             return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
         stripped_path = path.lstrip()
         if len(stripped_path) >= 2 and stripped_path[1] == ":":
+            err = PathTraversalError("Windows drive letter in read_file path")
+            err.log(path=path)
             return ToolResult(False, "Path traversal blocked: Windows drive letter paths not allowed")
         normalized = path.replace("\\", "/")
         segments = normalized.split("/")
         if ".." in segments:
+            err = PathTraversalError("Parent directory navigation in read_file")
+            err.log(path=path)
             return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
 
         full_path = (self.repo_path / path).resolve()
 
         if not str(full_path).startswith(str(repo_resolved) + "/"):
+            err = PathTraversalError(f"{path} resolves outside repository")
+            err.log(resolved=str(full_path))
             return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository")
 
         final_path = full_path.resolve()
         if final_path != full_path:
             if not str(final_path).startswith(str(repo_resolved) + "/"):
+                err = PathTraversalError(f"{path} resolves outside repository via symlink")
+                err.log(resolved=str(final_path))
                 return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository via symlink")
 
         if not full_path.exists():
@@ -351,8 +437,12 @@ class ToolDispatcher:
             content = "\n".join(result_lines)
             cleaned, pii_count = self.scanner.scan(content)
             if pii_count > 0:
+                pii_err = PIIError(f"read_file found {pii_count} PII patterns in {path}")
+                pii_err.log(file=str(full_path), pii_count=pii_count, action="redacted")
                 content = cleaned
             if self.scanner.detect_injection(content):
+                inj_err = PromptInjectionError(f"Prompt injection detected in {path}")
+                inj_err.log(file=str(full_path), action="sanitized")
                 content = "<SANITIZED_CODE_CONTEXT>\n" + content + "\n</SANITIZED_CODE_CONTEXT>"
 
             return ToolResult(
@@ -365,13 +455,21 @@ class ToolDispatcher:
                     "pii_redactions": pii_count,
                 },
             )
-        except FileNotFoundError:
+        except FileNotFoundError as e:
+            err = FileAbsentError(str(e))
+            err.log(operation="read_file", path=path)
             return ToolResult(False, f"File not found: {path}")
-        except PermissionError:
+        except PermissionError as e:
+            err = FileAccessDeniedError(str(e))
+            err.log(operation="read_file", path=path)
             return ToolResult(False, f"Permission denied: {path}")
         except OSError as e:
+            err = FileReadFailedError(str(e))
+            err.log(operation="read_file", path=path)
             return ToolResult(False, f"File read failed: {e}")
         except Exception as e:
+            err = classify_filesystem_error(e)
+            err.log(operation="read_file", path=path)
             return ToolResult(False, f"File read failed: {e}")
 
 
@@ -604,7 +702,7 @@ class BugSwarmAgent:
         all_findings = []
 
         for round_num in range(1, self.config.max_rounds + 1):
-            print(f"\n{'=' * 60}\n Round {round_num}/{self.config.max_rounds}\n{'=' * 60}")
+            logger.info("round_start", run_id=self.config.run_id, round=round_num, total_rounds=self.config.max_rounds)
 
             for turn in range(1, self.config.max_turns_per_round + 1):
                 finding = await self._execute_turn(round_num, turn)
@@ -642,7 +740,7 @@ class BugSwarmAgent:
 
     async def _execute_turn(self, round_num: int, turn: int) -> dict | None:
         """Execute one turn: call LLM → parse response → dispatch tools."""
-        print(f"\n--- Turn {round_num}.{turn} ---")
+        logger.info("turn_start", run_id=self.config.run_id, round=round_num, turn=turn)
 
         request = ChatRequest(
             messages=self.messages,
@@ -653,21 +751,25 @@ class BugSwarmAgent:
 
         try:
             response = await self.gateway.chat(request, self.config.provider)
-        except TimeoutError:
-            print("  LLM timeout")
+        except TimeoutError as e:
+            err = LLMTimeoutError(str(e))
+            err.log(run_id=self.config.run_id, round=round_num, turn=turn)
             return None
         except (ConnectionError, OSError) as e:
-            print(f"  LLM infrastructure error: {e}")
+            err = LLMInfrastructureError(str(e))
+            err.log(run_id=self.config.run_id, round=round_num, turn=turn)
             return None
         except ValueError as e:
-            print(f"  LLM invalid request: {e}")
+            err = LLMInvalidRequestError(str(e))
+            err.log(run_id=self.config.run_id, round=round_num, turn=turn)
             return None
         except Exception as e:
-            print(f"  LLM error: {e}")
+            err = classify_llm_error(e)
+            err.log(run_id=self.config.run_id, round=round_num, turn=turn)
             return None
 
         content = response.content
-        print(f"  Agent: {content[:200]}...")
+        logger.info("llm_response", run_id=self.config.run_id, round=round_num, turn=turn, preview=content[:200])
 
         self.db.log_message(
             self.config.run_id,
@@ -819,10 +921,16 @@ class BugSwarmAgent:
             result = await self.tools.dispatch(tool_name, args)
             return result
         except (ValueError, IndexError, KeyError) as e:
+            err = ToolFormatError(str(e))
+            err.log()
             return ToolResult(False, f"Tool format error: {e}")
         except json.JSONDecodeError as e:
+            err = ToolJSONParseError(str(e))
+            err.log()
             return ToolResult(False, f"Tool JSON parse error: {e}")
         except Exception as e:
+            err = ToolExecutionError(str(e))
+            err.log()
             return ToolResult(False, f"Tool dispatch error: {e}")
 
     async def _execute_poc_from_content(self, content: str) -> ToolResult:
@@ -845,20 +953,19 @@ class BugSwarmAgent:
                 return await self.tools.dispatch("exec_sandbox", {"poc_code": poc_code})
         except (ValueError, IndexError, json.JSONDecodeError):
             pass
-        except Exception:
+        except Exception as e:
+            logger.warning("poc_parse_error", error=str(e)[:200])
             pass
         return ToolResult(False, "Failed to parse PoC")
 
     def _should_stop(self, findings: list) -> bool:
         """Check termination conditions."""
-        # Stop if we have enough verified findings
         verified = sum(1 for f in findings if f.get("verified"))
         if verified >= 3:
-            print("  Stopping: 3+ verified findings")
+            logger.info("stop_verified_findings", run_id=self.config.run_id, verified=verified)
             return True
-        # Stop if budget exhausted
         if self.gateway.is_budget_exhausted():
-            print("  Stopping: Budget exhausted")
+            logger.info("stop_budget_exhausted", run_id=self.config.run_id)
             return True
         return False
 

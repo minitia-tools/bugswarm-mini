@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 import structlog
 from anthropic import AsyncAnthropic
 
+from ..tokenizer import count_message_tokens
 from ..types import (
     ChatMessage,
     ChatRequest,
@@ -119,11 +120,8 @@ class AnthropicAdapter(BaseProviderAdapter):
         return system_prompt, user_messages
 
     async def count_tokens(self, messages: list[ChatMessage]) -> int:
-        """Approximate Claude token count using cl100k_base."""
-        try:
-            import tiktoken
-
-            enc = tiktoken.get_encoding("cl100k_base")
-            return sum(len(enc.encode(m.content)) for m in messages)
-        except Exception:
-            return await super().count_tokens(messages)
+        """Approximate Claude token count using centralized tokenizer."""
+        return count_message_tokens(
+            [{"content": m.content, "role": m.role.value} for m in messages],
+            model=self.config.default_model,
+        )

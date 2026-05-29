@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 import structlog
 from openai import APIError, APITimeoutError, AsyncOpenAI, AuthenticationError, RateLimitError
 
+from ..tokenizer import count_message_tokens
 from ..types import (
     ChatMessage,
     ChatRequest,
@@ -132,16 +133,8 @@ class OpenAIAdapter(BaseProviderAdapter):
         return converted
 
     async def count_tokens(self, messages: list[ChatMessage]) -> int:
-        """Use tiktoken for accurate OpenAI token counting."""
-        try:
-            import tiktoken
-
-            enc = tiktoken.encoding_for_model(self.config.default_model)
-            total = 0
-            for msg in messages:
-                total += len(enc.encode(msg.content))
-                total += 4  # Message framing overhead
-            total += 2  # Reply priming
-            return total
-        except Exception:
-            return await super().count_tokens(messages)
+        """Use centralized tokenizer for accurate OpenAI token counting."""
+        return count_message_tokens(
+            [{"content": m.content, "role": m.role.value} for m in messages],
+            model=self.config.default_model,
+        )
