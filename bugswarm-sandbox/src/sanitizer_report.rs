@@ -1,9 +1,9 @@
-/// Sanitizer Report — Peak Implementation
-///
-/// State-machine parser (C6.2.1): single-pass DFA, zero allocation on hot path.
-/// Sliding window storage (C6.2.2): receipt gets first 10KB + last 1KB, full log on disk.
-///
-/// Parses ASAN, UBSAN, TSAN, MSAN, LSAN stderr into typed structs.
+//! Sanitizer Report — Peak Implementation
+//!
+//! State-machine parser (C6.2.1): single-pass DFA, zero allocation on hot path.
+//! Sliding window storage (C6.2.2): receipt gets first 10KB + last 1KB, full log on disk.
+//!
+//! Parses ASAN, UBSAN, TSAN, MSAN, LSAN stderr into typed structs.
 
 use serde::{Deserialize, Serialize};
 
@@ -53,7 +53,9 @@ enum ParserState {
     InAsanError,
     InUbsanError,
     InTsanWarning,
+    #[allow(dead_code)]
     InAccess,
+    #[allow(dead_code)]
     InAddress,
     InStackFrame,
     InAllocation,
@@ -78,6 +80,12 @@ pub struct SanitizerParser {
     cur_file: String,
     cur_line: u32,
     cur_column: u32,
+}
+
+impl Default for SanitizerParser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SanitizerParser {

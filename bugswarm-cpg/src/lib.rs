@@ -1,4 +1,4 @@
-#![deny(clippy::unwrap_used)]
+#![deny(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
 
 pub mod cfg;
 pub mod daemon;

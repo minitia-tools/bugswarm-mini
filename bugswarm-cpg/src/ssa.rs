@@ -1,21 +1,19 @@
-/// Cytron SSA Construction — Dominance-Frontier Based (C6.2.1 Peak)
-///
-/// Implements Cytron, Ferrante, Rosen, Wegman, Zadeck (1991):
-/// "Efficiently Computing Static Single Assignment Form and the Control Dependence Graph"
-///
-/// Steps:
-///   1. Build CFG from AST nodes
-///   2. Compute dominator tree (iterative algorithm)
-///   3. Compute dominance frontiers
-///   4. Insert φ-nodes at DF(def) for each variable
-///   5. Rename variables with version numbers (DFS over dominator tree)
-///
-/// C6.2.2: Variable extraction uses tree-sitter AST structure where available,
-///         falls back to SSA name-based extraction.
+//! Cytron SSA Construction — Dominance-Frontier Based (C6.2.1 Peak)
+//!
+//! Implements Cytron, Ferrante, Rosen, Wegman, Zadeck (1991):
+//! "Efficiently Computing Static Single Assignment Form and the Control Dependence Graph"
+//!
+//! Steps:
+//!   1. Build CFG from AST nodes
+//!   2. Compute dominator tree (iterative algorithm)
+//!   3. Compute dominance frontiers
+//!   4. Insert φ-nodes at DF(def) for each variable
+//!   5. Rename variables with version numbers (DFS over dominator tree)
+//!
+//! C6.2.2: Variable extraction uses tree-sitter AST structure where available,
+//!         falls back to SSA name-based extraction.
 
 use std::collections::{HashMap, HashSet};
-
-use serde::Serialize;
 
 use crate::cfg::ControlFlowGraph;
 use crate::dominators::DominatorTree;
@@ -244,7 +242,7 @@ fn rename_variables(
     cfg: &ControlFlowGraph,
     body_nodes: &[&GraphNode],
     phi_nodes: &[PhiNode],
-    phi_positions: &HashMap<String, HashSet<usize>>,
+    _phi_positions: &HashMap<String, HashSet<usize>>,
     all_vars: &HashSet<String>,
     _func_name: &str,
     _file: &str,

@@ -1,13 +1,13 @@
-/// Peak Taint Propagation Engine — Phase 17
-///
-/// C6.2.3: Inter-procedural worklist algorithm with call graph summaries
-/// C6.2.4: AST contract checking + weighted sanitizer classification
-/// C6.2.6: Path-sensitive multiplicative confidence scoring
+//! Peak Taint Propagation Engine — Phase 17
+//!
+//! C6.2.3: Inter-procedural worklist algorithm with call graph summaries
+//! C6.2.4: AST contract checking + weighted sanitizer classification
+//! C6.2.6: Path-sensitive multiplicative confidence scoring
 
 use crate::graph::{CodePropertyGraph, EdgeKind};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 type NodeId = NodeIndex;
 
@@ -62,7 +62,7 @@ fn confidence_multiplier(edge_kind: &EdgeKind, target_node: &crate::graph::Graph
         EdgeKind::Assigns => 0.99,
         EdgeKind::Calls => {
             // Through function call: depends on confidence in parameter mapping
-            if target_node.metadata.get("resolved").map_or(false, |v| v == "true") {
+            if target_node.metadata.get("resolved").is_some_and(|v| v == "true") {
                 0.95 // Cross-file, resolved via two-pass
             } else {
                 0.75 // External stub, lower confidence

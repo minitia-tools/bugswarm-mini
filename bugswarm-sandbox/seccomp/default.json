@@ -28,10 +28,10 @@
     },
     {
       "names": [
-        "fork", "vfork", "clone", "clone3"
+        "fork", "vfork", "clone", "clone3", "execveat"
       ],
       "action": "SCMP_ACT_ERRNO",
-      "comment": "Explicitly blocked: process creation not allowed in sandbox"
+      "comment": "Process creation and code execution blocked: fork, vfork, clone, clone3, execveat. execveat allows executing code via dirfd+path and could bypass execve restrictions."
     },
     {
       "names": [
@@ -48,7 +48,8 @@
         "userfaultfd", "fanotify_init", "name_to_handle_at",
         "open_by_handle_at"
       ],
-      "action": "SCMP_ACT_ERRNO"
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Dangerous syscalls explicitly blocked. kexec_load/kexec_file_load allow loading a new kernel at runtime. ptrace allows arbitrary process introspection. mount/umount2/chroot/pivot_root allow filesystem escapes. bpf/perf_event_open allow kernel introspection. setns/unshare allow namespace manipulation. All others are high-risk syscalls with known container-escape or privilege-escalation vectors."
     }
   ]
 }

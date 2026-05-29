@@ -111,7 +111,7 @@ impl DeltaMinimizer {
         {
             iterations += 1;
             let mut progress = false;
-            let chunk_size = (current.len() + n - 1) / n;
+            let chunk_size = current.len().div_ceil(n);
 
             // Test complements of each chunk
             for i in 0..n {
@@ -195,17 +195,15 @@ pub fn detect_strategy(input: &[u8]) -> SplitStrategy {
     // Check if text (high ratio of printable ASCII)
     let printable = preview
         .iter()
-        .filter(|&&b| b >= 0x20 && b <= 0x7E || b == b'\n' || b == b'\r')
+        .filter(|&&b| (0x20..=0x7E).contains(&b) || b == b'\n' || b == b'\r')
         .count();
-    if preview.len() > 0 && printable as f64 / preview.len() as f64 > 0.8 {
+    if !preview.is_empty() && printable as f64 / preview.len() as f64 > 0.8 {
         return SplitStrategy::Text;
     }
 
     // Check for bytecode (ELF magic, WASM magic, etc.)
-    if preview.len() >= 4 {
-        if &preview[..4] == b"\x7fELF" || &preview[..4] == b"\0asm" {
-            return SplitStrategy::Instruction;
-        }
+    if preview.len() >= 4 && (&preview[..4] == b"\x7fELF" || &preview[..4] == b"\0asm") {
+        return SplitStrategy::Instruction;
     }
 
     SplitStrategy::Byte
@@ -229,7 +227,7 @@ pub fn build_chunks(input: &[u8], n: usize, strategy: SplitStrategy) -> Vec<Vec<
     match strategy {
         SplitStrategy::Text => split_on_delimiter(input, n, b'\n'),
         SplitStrategy::Byte => {
-            let chunk_size = (input.len() + n - 1) / n;
+            let chunk_size = input.len().div_ceil(n);
             (0..n)
                 .map(|i| {
                     let start = i * chunk_size;
@@ -242,7 +240,7 @@ pub fn build_chunks(input: &[u8], n: usize, strategy: SplitStrategy) -> Vec<Vec<
         SplitStrategy::Instruction => {
             // For bytecode, split on instruction boundaries (4-byte aligned)
             let aligned = &input[..(input.len() / 4) * 4];
-            let chunk_size = (aligned.len() / 4 + n - 1) / n * 4;
+            let chunk_size = (aligned.len() / 4).div_ceil(n) * 4;
             (0..n)
                 .map(|i| {
                     let start = (i * chunk_size).min(input.len());
@@ -256,7 +254,7 @@ pub fn build_chunks(input: &[u8], n: usize, strategy: SplitStrategy) -> Vec<Vec<
 
 fn split_on_delimiter(input: &[u8], n: usize, delim: u8) -> Vec<Vec<u8>> {
     let lines: Vec<&[u8]> = input.split(|&b| b == delim).collect();
-    let chunk_size = (lines.len() + n - 1) / n;
+    let chunk_size = lines.len().div_ceil(n);
     (0..n)
         .map(|i| {
             let start = i * chunk_size;
@@ -279,7 +277,7 @@ fn split_structured(input: &[u8], n: usize) -> Vec<Vec<u8>> {
         .split_inclusive(&[',', '{', '}', '[', ']', ':', '"', '<', '>', '/'][..])
         .collect();
     let n = n.max(2);
-    let chunk_size = (tokens.len() + n - 1) / n;
+    let chunk_size = tokens.len().div_ceil(n);
     (0..n)
         .map(|i| {
             let start = i * chunk_size;

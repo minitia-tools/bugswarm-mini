@@ -32,8 +32,23 @@ AGENT_DIR = Path("/root/a/bugswarm-agent")
 G = "\033[0;32m"; R = "\033[0;31m"; Y = "\033[1;33m"; N = "\033[0m"
 passed = 0; failed = 0; results = {}
 
-def P(name, detail=""): global passed; msg = f"  {G}PASS{N} {name}"; if detail: msg += f" -- {detail}"; print(msg); passed += 1; results[name] = "PASS"
-def F(name, detail=""): global failed; msg = f"  {R}FAIL{N} {name}"; if detail: msg += f" -- {detail}"; print(msg); failed += 1; results[name] = f"FAIL: {detail}"
+def P(name, detail=""):
+    global passed
+    msg = f"  {G}PASS{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+    print(msg)
+    passed += 1
+    results[name] = "PASS"
+
+def F(name, detail=""):
+    global failed
+    msg = f"  {R}FAIL{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+    print(msg)
+    failed += 1
+    results[name] = f"FAIL: {detail}"
 
 def run_cmd(cmd, timeout=60, check=True):
     try:
@@ -212,23 +227,26 @@ else:
     tools.register(ToolDefinition("list_dir", "List dir", {"type":"object","properties":{"path":{"type":"string"}}}, sync_handler(list_dir_handler), timeout_secs=5, cache_ttl_secs=30))
     tools.register(ToolDefinition("trace_dependency", "Trace deps", {"type":"object","properties":{"function_name":{"type":"string"}},"required":["function_name"]}, sync_handler(trace_handler), timeout_secs=30, cache_ttl_secs=15))
 
-    iep_config = IEPConfig(repo_path=BUG_REPO, persona=Persona.ADVERSARIAL, model="deepseek-v4-flash", provider=ProviderType.DEEPSEEK, max_rounds=2, max_turns_per_round=5)
-    engine = IEPEngine(iep_config, tools, parser, gateway)
+    async def run_agent_stage():
+        iep_config = IEPConfig(repo_path=BUG_REPO, persona=Persona.ADVERSARIAL, model="deepseek-v4-flash", provider=ProviderType.DEEPSEEK, max_rounds=2, max_turns_per_round=5)
+        engine = IEPEngine(iep_config, tools, parser, gateway)
+        t0 = time.time()
+        report = await engine.run()
+        t1 = time.time()
+        return report, t1 - t0
 
-    t0 = time.time()
-    report = await engine.run()
-    t1 = time.time()
+    report, duration = asyncio.run(run_agent_stage())
 
     findings = report.findings
     verified = report.verified_count
 
     if len(findings) >= 1:
-        P("Agent Findings", f"{len(findings)} bugs found, {verified} verified by sandbox ({t1-t0:.0f}s, ${report.cost_usd:.4f})")
+        P("Agent Findings", f"{len(findings)} bugs found, {verified} verified by sandbox ({duration:.0f}s, ${report.cost_usd:.4f})")
         for i, f in enumerate(findings[:5]):
             vmark = "✓" if f.verified else " "
             print(f"      [{vmark}] {f.claim[:100]}")
     else:
-        F("Agent Findings", f"0 bugs found in {t1-t0:.0f}s")
+        F("Agent Findings", f"0 bugs found in {duration:.0f}s")
 
 # ═══════════════════════════════════════════════════════════════
 # STAGE 3: Sandbox Verification

@@ -10,7 +10,9 @@ use crate::graph::{
 };
 use petgraph::visit::EdgeRef;
 
+#[allow(clippy::expect_used)]
 static PYTHON_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"(?:import|from)\s+(\S+)").expect("valid regex"));
+#[allow(clippy::expect_used)]
 static JS_IMPORT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"(?:import|require)\s*\(?["']([^"']+)["']"#).expect("valid regex"));
 
 /// Detect the language of a file based on its extension.
@@ -78,11 +80,11 @@ pub fn parse_file(cpg: &mut CodePropertyGraph, path: &Path) -> anyhow::Result<()
     let root = tree.root_node();
 
     // Add file node
-    let _file_node = if language_name == "python" {
+    if language_name == "python" {
         parse_python_file(cpg, &file_path, &content, root, language_name)
     } else {
         parse_javascript_file(cpg, &file_path, &content, root, language_name)
-    };
+    }
 
     // Track file info
     let lines = content.lines().count();
@@ -201,7 +203,7 @@ fn parse_python_file(
     });
 
     let mut cursor = root.walk();
-    let _stack = vec![(root, file_id)];
+    let _stack = [(root, file_id)];
 
     // Walk the AST
     for child in root.children(&mut cursor) {
@@ -266,7 +268,7 @@ fn handle_python_function(
     collect_python_calls(node, content, &mut calls);
 
     // Detect async
-    let is_async = node.child(0).map_or(false, |c| c.kind() == "async");
+    let is_async = node.child(0).is_some_and(|c| c.kind() == "async");
 
     let func_id = cpg.add_node(GraphNode {
         id: format!("func:{}:{}", file, name),
@@ -687,7 +689,7 @@ fn handle_js_function(
     let mut calls = Vec::new();
     collect_js_calls(node, content, &mut calls);
 
-    let is_async = node.child(0).map_or(false, |c| c.kind() == "async");
+    let is_async = node.child(0).is_some_and(|c| c.kind() == "async");
 
     let func_id = cpg.add_node(GraphNode {
         id: format!("func:{}:{}", file, name),

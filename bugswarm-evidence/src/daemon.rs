@@ -1,20 +1,21 @@
-/// Daemon mode — Unix socket server for the Evidence Graph.
-///
-/// Listens on /var/run/bugswarm/evidence.sock (configurable).
-/// Methods: add_claim, add_sandbox_run, link_result, confirm_bug, stats, query,
-///          score_agent, verify, health.
+//! Daemon mode — Unix socket server for the Evidence Graph.
+//!
+//! Listens on /var/run/bugswarm/evidence.sock (configurable).
+//! Methods: add_claim, add_sandbox_run, link_result, confirm_bug, stats, query,
+//!          score_agent, verify, health.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::task::JoinSet;
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 use crate::chain;
 use crate::graph::EvidenceGraph;
@@ -128,48 +129,85 @@ pub async fn run_daemon(socket_path: PathBuf, http_port: Option<u16>, state_path
         }
     }
 
-    // Graceful shutdown: save graph on SIGTERM
-    let graph_clone = graph.clone();
-    let state_clone = state_path.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        if let Some(ref path) = state_clone {
-            info!("Shutting down — saving evidence graph to {}", path.display());
-            match graph_clone.save_graph(path) {
-                Ok(n) => info!("Saved {} evidence nodes to {}", n, path.display()),
-                Err(e) => error!("Failed to save graph: {}", e),
-            }
-        }
-        std::process::exit(0);
-    });
-
     if let Some(port) = http_port {
         let metrics = Arc::new(crate::metrics::EvidenceMetrics::new());
         tokio::spawn(crate::metrics::spawn_http_server(port, metrics));
         info!("Evidence HTTP health/metrics server on port {}", port);
     }
 
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                match result {
-                    Ok((stream, _)) => {
-                        let g = graph.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_connection(stream, g).await {
-                                error!("Evidence connection error: {}", e);
-                            }
-                        });
+    let mut join_set: JoinSet<anyhow::Result<()>> = JoinSet::new();
+
+    let state_path2 = state_path.clone();
+    let graph2 = graph.clone();
+    let mut autosave_interval = tokio::time::interval(Duration::from_secs(30));
+    autosave_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let shutdown = async {
+        loop {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received SIGTERM, shutting down gracefully...");
+                    break;
+                }
+                _ = autosave_interval.tick() => {
+                    if let Some(ref sp) = state_path2 {
+                        if let Err(e) = graph2.save_graph(sp) {
+                            warn!("Autosave failed: {}", e);
+                        }
                     }
-                    Err(e) => error!("Evidence accept error: {}", e),
+                }
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _)) => {
+                            let g = graph.clone();
+                            join_set.spawn(async move {
+                                if let Err(e) = handle_connection(stream, g).await {
+                                    error!("Evidence connection error: {}", e);
+                                }
+                                Ok(())
+                            });
+                        }
+                        Err(e) => error!("Evidence accept error: {}", e),
+                    }
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Received SIGTERM, shutting down gracefully...");
-                break Ok(());
+        }
+    };
+
+    shutdown.await;
+
+    // Save evidence graph on shutdown
+    if let Some(ref path) = state_path {
+        info!("Shutting down — saving evidence graph to {}", path.display());
+        match graph.save_graph(path) {
+            Ok(n) => info!("Saved {} evidence nodes to {}", n, path.display()),
+            Err(e) => error!("Failed to save graph: {}", e),
+        }
+    }
+
+    tracing::info!("Draining {} active evidence connections...", join_set.len());
+    let drain_timeout = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(drain_timeout);
+    loop {
+        tokio::select! {
+            _ = &mut drain_timeout => {
+                tracing::warn!("Evidence drain timeout reached — {} connections still active", join_set.len());
+                break;
+            }
+            result = join_set.join_next() => {
+                match result {
+                    Some(Ok(Ok(()))) => continue,
+                    Some(Ok(Err(e))) => warn!("Evidence connection task error during drain: {}", e),
+                    Some(Err(e)) => warn!("Evidence connection task panicked during drain: {}", e),
+                    None => break,
+                }
             }
         }
     }
+
+    tracing::info!("Evidence daemon shut down complete");
+    Ok(())
 }
 
 async fn handle_connection(stream: UnixStream, graph: Arc<EvidenceGraph>) -> anyhow::Result<()> {

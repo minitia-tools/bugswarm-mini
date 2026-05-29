@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import time
 from dataclasses import dataclass, field
@@ -11,6 +12,15 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+def secrets_compare(a: str, b: str) -> bool:
+    """Constant-time comparison of two secret strings.
+
+    Uses hmac.compare_digest to prevent timing side-channel attacks
+    when comparing API keys, tokens, or other sensitive values.
+    """
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
 def _load_api_key(key_name: str) -> str:

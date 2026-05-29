@@ -1,7 +1,7 @@
-/// Full Control Flow Graph — Branch-aware for Cytron SSA (C6.2.1 PEAK)
-///
-/// Builds CFG from AST nodes using NodeKind variants.
-/// Handles: if/else, for/while loops, return, sequential code.
+//! Full Control Flow Graph — Branch-aware for Cytron SSA (C6.2.1 PEAK)
+//!
+//! Builds CFG from AST nodes using NodeKind variants.
+//! Handles: if/else, for/while loops, return, sequential code.
 
 use std::collections::HashMap;
 
@@ -143,7 +143,7 @@ impl ControlFlowGraph {
         }
 
         // Remove trailing empty block if present
-        while blocks.last().map_or(false, |b| b.nodes.is_empty() && !b.is_entry) {
+        while blocks.last().is_some_and(|b| b.nodes.is_empty() && !b.is_entry) {
             blocks.pop();
         }
 

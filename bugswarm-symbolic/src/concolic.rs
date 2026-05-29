@@ -141,8 +141,7 @@ impl Eq for NegationCandidate {}
 
 impl PartialOrd for NegationCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // BinaryHeap is max-heap; we want lower priority first, so reverse.
-        other.priority.partial_cmp(&self.priority)
+        Some(self.cmp(other))
     }
 }
 impl Ord for NegationCandidate {
@@ -650,7 +649,7 @@ pub struct SolverAdapter {
 impl SolverAdapter {
     pub fn new(timeout_ms: u64, enable_warm_start: bool, flush_interval: u32) -> Self {
         // Try to initialize Z3.
-        let z3_available = match Self::try_init_z3() {
+        match Self::try_init_z3() {
             Ok((ctx, solver)) => {
                 // Successfully initialized Z3 and created a solver.
                 Self {
@@ -674,8 +673,7 @@ impl SolverAdapter {
                     enable_warm_start,
                 }
             }
-        };
-        z3_available
+        }
     }
 
     fn try_init_z3() -> Result<(z3::Context, z3::Solver), String> {
@@ -703,7 +701,7 @@ impl SolverAdapter {
         // Strategy 2: Z3 with warm-start if available.
         if self.z3_available {
             let flush_needed = self.enable_warm_start
-                && query_num % self.flush_interval == 0
+                && query_num.is_multiple_of(self.flush_interval)
                 && query_num > 0;
             let enabled_warm = self.enable_warm_start;
 
@@ -1050,18 +1048,16 @@ impl ConcolicEngine {
             }
 
             // Starvation detection.
-            if coverage.is_starving() {
-                if self.config.adaptive_fallback {
-                    // Mark remaining unfeasible to terminate gracefully.
-                    let remaining: Vec<u64> = coverage.branches.iter()
-                        .filter(|b| !b.covered && !b.infeasible)
-                        .map(|b| b.branch_id)
-                        .collect();
-                    for bid in remaining {
-                        coverage.mark_infeasible(bid, "starvation-timeout");
-                    }
-                    break;
+            if coverage.is_starving() && self.config.adaptive_fallback {
+                // Mark remaining unfeasible to terminate gracefully.
+                let remaining: Vec<u64> = coverage.branches.iter()
+                    .filter(|b| !b.covered && !b.infeasible)
+                    .map(|b| b.branch_id)
+                    .collect();
+                for bid in remaining {
+                    coverage.mark_infeasible(bid, "starvation-timeout");
                 }
+                break;
             }
         }
 
@@ -1186,7 +1182,7 @@ fn extract_variable_names(condition: &str) -> Vec<String> {
     for part in condition.split(|c: char| !c.is_alphanumeric() && c != '_') {
         let p = part.trim();
         if !p.is_empty()
-            && !p.chars().next().expect("p is non-empty per is_empty() guard").is_numeric()
+            && p.chars().next().is_none_or(|c| !c.is_numeric())
             && p != "true"
             && p != "false"
             && p != "NULL"

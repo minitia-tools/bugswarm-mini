@@ -123,11 +123,18 @@ async fn main() -> anyhow::Result<()> {
     let subscriber = tracing_subscriber::registry().with(env_filter).with(fmt_layer);
 
     if let Some(ref path) = cli.log_file {
-        let file = std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
-            .expect("Failed to open log file");
+        {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Failed to open log file {}: {}", path, e);
+                subscriber.try_init().ok();
+                return Err(anyhow::anyhow!("Failed to open log file {}: {}", path, e));
+            }
+        };
         let file_layer = fmt::layer()
             .with_writer(std::sync::Mutex::new(file))
             .json();
@@ -167,11 +174,11 @@ async fn main() -> anyhow::Result<()> {
 
             let filtered: Vec<_> = paths.iter()
                 .filter(|p| {
-                    let src_match = source.as_ref().map_or(true, |s| {
-                        cpg.get_node(p.source).map_or(false, |n| n.name.contains(s))
+                    let src_match = source.as_ref().is_none_or(|s| {
+                        cpg.get_node(p.source).is_some_and(|n| n.name.contains(s))
                     });
-                    let sink_match = sink.as_ref().map_or(true, |s| {
-                        cpg.get_node(p.sink).map_or(false, |n| n.name.contains(s))
+                    let sink_match = sink.as_ref().is_none_or(|s| {
+                        cpg.get_node(p.sink).is_some_and(|n| n.name.contains(s))
                     });
                     src_match && sink_match
                 })

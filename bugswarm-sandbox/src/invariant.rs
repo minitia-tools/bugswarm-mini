@@ -172,7 +172,7 @@ fn generate_typed_value(type_hint: &str, seed: usize) -> String {
             format!("{}", vals[seed % vals.len()])
         }
         "bool" | "boolean" => {
-            format!("{}", seed % 2 == 0)
+            format!("{}", seed.is_multiple_of(2))
         }
         "string" | "str" | "text" | "&str" => {
             let repeated = "a".repeat(seed % 100);
@@ -273,7 +273,7 @@ fn mine_type_invariants(traces: &[ExecutionTrace], config: &InvariantConfig) -> 
     if total == 0 { return vec![]; }
     
     let non_null = traces.iter().filter(|t| {
-        t.return_value.as_ref().map_or(true, |v| v != "None" && v != "null" && v != "nil")
+        t.return_value.as_ref().is_none_or(|v| v != "None" && v != "null" && v != "nil")
     }).count();
     
     let mut results = Vec::new();
@@ -462,47 +462,43 @@ fn check_violation(trace: &ExecutionTrace, invariant: &InferredInvariant) -> Opt
                 }
             }
         }
-        InvariantType::TypeConstraint => {
-            if invariant.predicate.contains("None") {
-                let is_none = trace.return_value.as_deref() == Some("None") 
-                           || trace.return_value.as_deref() == Some("null");
-                if is_none {
-                    return Some(InvariantViolation {
-                        invariant_id: invariant.id.clone(),
-                        function_name: trace.function_name.clone(),
-                        description: "Type invariant violated: returned None/null".to_string(),
-                        violating_input: format!("input#{}", trace.input_id),
-                        expected_behavior: "non-null return".to_string(),
-                        actual_behavior: "returned None".to_string(),
-                        severity: 5,
-                        reproducible: false,
-                    });
-                }
-            }
-        }
-        InvariantType::StateInvariant => {
-            if trace.exit_code != 0 {
+        InvariantType::TypeConstraint if invariant.predicate.contains("None") => {
+            let is_none = trace.return_value.as_deref() == Some("None") 
+                       || trace.return_value.as_deref() == Some("null");
+            if is_none {
                 return Some(InvariantViolation {
                     invariant_id: invariant.id.clone(),
                     function_name: trace.function_name.clone(),
-                    description: format!("State invariant violated: exit code {}", trace.exit_code),
+                    description: "Type invariant violated: returned None/null".to_string(),
                     violating_input: format!("input#{}", trace.input_id),
-                    expected_behavior: "exit_code == 0".to_string(),
-                    actual_behavior: format!("exit_code == {}", trace.exit_code),
-                    severity: 7,
+                    expected_behavior: "non-null return".to_string(),
+                    actual_behavior: "returned None".to_string(),
+                    severity: 5,
                     reproducible: false,
                 });
             }
         }
-        InvariantType::ExceptionPattern => {
-            if invariant.predicate.contains("no exception") && trace.exception.is_some() {
+        InvariantType::StateInvariant if trace.exit_code != 0 => {
+            return Some(InvariantViolation {
+                invariant_id: invariant.id.clone(),
+                function_name: trace.function_name.clone(),
+                description: format!("State invariant violated: exit code {}", trace.exit_code),
+                violating_input: format!("input#{}", trace.input_id),
+                expected_behavior: "exit_code == 0".to_string(),
+                actual_behavior: format!("exit_code == {}", trace.exit_code),
+                severity: 7,
+                reproducible: false,
+            });
+        }
+        InvariantType::ExceptionPattern if invariant.predicate.contains("no exception") => {
+            if let Some(ref exc) = trace.exception {
                 return Some(InvariantViolation {
                     invariant_id: invariant.id.clone(),
                     function_name: trace.function_name.clone(),
-                    description: format!("Exception invariant violated: {}", trace.exception.as_ref().expect("exception is Some per guard")),
+                    description: format!("Exception invariant violated: {}", exc),
                     violating_input: format!("input#{}", trace.input_id),
                     expected_behavior: "no exceptions".to_string(),
-                    actual_behavior: format!("raised {}", trace.exception.as_ref().expect("exception is Some per guard")),
+                    actual_behavior: format!("raised {}", exc),
                     severity: 6,
                     reproducible: false,
                 });

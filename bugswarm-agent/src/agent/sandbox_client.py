@@ -314,13 +314,13 @@ class SandboxClient:
 
     # ─── Differential Analysis ───
 
-    async def diff_execute(self, output_a: str, output_b: str,
+    async def diff_execute(self, input_str: str, reference: str,
                            normalizer: str = "Text") -> dict:
         """Compare two outputs using differential analysis.
         
         Args:
-            output_a: First output to compare
-            output_b: Second output to compare
+            input_str: First (baseline) output to compare
+            reference: Second (changed) output to compare
             normalizer: Output normalizer (Json, Xml, Dict, Text, Binary)
             
         Returns DiffExecution dict with is_different, diff_magnitude, etc.
@@ -328,8 +328,8 @@ class SandboxClient:
         import json as _json
         payload = _json.dumps({
             "method": "diff",
-            "input": output_a,
-            "reference": output_b,
+            "input": input_str,
+            "reference": reference,
             "normalizer": normalizer,
             "request_id": self._request_id or "",
         })

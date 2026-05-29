@@ -81,6 +81,7 @@ impl SeccompProfile {
         }
 
         let required_blocked = [
+            "fork", "vfork", "clone", "clone3", "execveat",
             "ptrace", "mount", "kexec_load", "bpf", "perf_event_open",
             "create_module", "init_module", "delete_module", "finit_module",
             "pivot_root", "chroot", "setns", "unshare", "personality",
@@ -128,9 +129,18 @@ mod tests {
     fn test_dangerous_syscalls_blocked() {
         let profile = SeccompProfile::default_profile().unwrap();
         let allowed = profile.allowed_syscalls();
-        let dangerous = ["ptrace", "mount", "bpf", "kexec_load", "chroot"];
+        let dangerous = ["ptrace", "mount", "bpf", "kexec_load", "chroot", "fork", "clone", "execveat"];
         for d in &dangerous {
             assert!(!allowed.contains(&d.to_string()), "{} must be blocked", d);
+        }
+    }
+
+    #[test]
+    fn test_process_creation_blocked() {
+        let profile = SeccompProfile::default_profile().unwrap();
+        let blocked = profile.blocked_syscalls();
+        for syscall in &["fork", "vfork", "clone", "clone3", "execveat"] {
+            assert!(blocked.contains(&syscall.to_string()), "{} must be explicitly in a DENY block", syscall);
         }
     }
 

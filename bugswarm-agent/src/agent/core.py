@@ -210,11 +210,21 @@ class ToolDispatcher:
 
     async def _list_dir(self, args: dict) -> ToolResult:
         path_str = args.get("path", ".")
+        if not path_str:
+            return ToolResult(False, "Path traversal blocked: empty path")
+        if "\0" in path_str:
+            return ToolResult(False, "Path traversal blocked: null byte in path")
+        stripped_path = path_str.lstrip()
+        if len(stripped_path) >= 2 and stripped_path[1] == ":":
+            return ToolResult(False, "Path traversal blocked: Windows drive letter paths not allowed")
+        if path_str.startswith("/"):
+            return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
+        normalized = path_str.replace("\\", "/")
+        segments = normalized.split("/")
+        if ".." in segments:
+            return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
         try:
             target = self.repo_path / path_str
-            if not target.exists():
-                # Try listing the repo root
-                target = self.repo_path
             entries = []
             for entry in sorted(target.iterdir()):
                 t = "DIR" if entry.is_dir() else "FILE"
@@ -288,16 +298,30 @@ class ToolDispatcher:
 
         repo_resolved = self.repo_path.resolve()
 
-        # H12: Path traversal prevention
+        # H12: Path traversal prevention (multi-layer defense)
+        if not path:
+            return ToolResult(False, "Path traversal blocked: empty path")
+        if "\0" in path:
+            return ToolResult(False, "Path traversal blocked: null byte in path")
         if path.startswith("/"):
             return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
-        if ".." in path:
+        stripped_path = path.lstrip()
+        if len(stripped_path) >= 2 and stripped_path[1] == ":":
+            return ToolResult(False, "Path traversal blocked: Windows drive letter paths not allowed")
+        normalized = path.replace("\\", "/")
+        segments = normalized.split("/")
+        if ".." in segments:
             return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
 
         full_path = (self.repo_path / path).resolve()
 
-        if not str(full_path).startswith(str(repo_resolved)):
+        if not str(full_path).startswith(str(repo_resolved) + "/"):
             return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository")
+
+        final_path = full_path.resolve()
+        if final_path != full_path:
+            if not str(final_path).startswith(str(repo_resolved) + "/"):
+                return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository via symlink")
 
         if not full_path.exists():
             return ToolResult(False, f"File not found: {path}")

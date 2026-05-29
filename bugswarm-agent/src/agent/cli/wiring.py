@@ -169,10 +169,10 @@ def wire_everything(config: CLIConfig) -> tuple[IEPEngine, PersistenceManager, L
         name="diff_execute",
         description="Compare two outputs using differential analysis. Detects semantic regressions by normalizing volatile fields and computing diff magnitude.",
         parameters={"type": "object", "properties": {
-            "output_a": {"type": "string", "description": "First output to compare"},
-            "output_b": {"type": "string", "description": "Second output to compare"},
+            "input": {"type": "string", "description": "First (baseline) output to compare"},
+            "reference": {"type": "string", "description": "Second (changed) output to compare"},
             "normalizer": {"type": "string", "description": "Output normalizer: Json, Xml, Dict, Text, Binary (default: Text)"},
-        }, "required": ["output_a", "output_b"]},
+        }, "required": ["input", "reference"]},
         handler=lambda args: _diff_execute(sandbox, args),
         timeout_secs=10.0,
         cache_ttl_secs=0.0,
@@ -442,16 +442,30 @@ async def _read_file_async(repo, scanner, args):
 
         repo_resolved = repo.resolve()
 
-        # H12: Path traversal prevention
+        # H12: Path traversal prevention (multi-layer defense)
+        if not path:
+            return ToolResult(False, "Path traversal blocked: empty path")
+        if "\0" in path:
+            return ToolResult(False, "Path traversal blocked: null byte in path")
+        stripped_path = path.lstrip()
+        if len(stripped_path) >= 2 and stripped_path[1] == ":":
+            return ToolResult(False, "Path traversal blocked: Windows drive letter paths not allowed")
         if path.startswith("/"):
             return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
-        if ".." in path:
+        normalized = path.replace("\\", "/")
+        segments = normalized.split("/")
+        if ".." in segments:
             return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
 
         full = (repo / path).resolve()
 
-        if not str(full).startswith(str(repo_resolved)):
+        if not str(full).startswith(str(repo_resolved) + "/"):
             return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository")
+
+        final_path = full.resolve()
+        if final_path != full:
+            if not str(final_path).startswith(str(repo_resolved) + "/"):
+                return ToolResult(False, f"Path traversal blocked: {path} resolves outside repository via symlink")
 
         if not full.exists():
             return ToolResult(False, f"File not found: {path}")
@@ -508,6 +522,19 @@ def _exec_sandbox(sandbox, scanner, args):
 async def _list_dir_async(repo, args):
     try:
         path = args.get("path", ".")
+        if not path:
+            return ToolResult(False, "Path traversal blocked: empty path")
+        if "\0" in path:
+            return ToolResult(False, "Path traversal blocked: null byte in path")
+        stripped_path = path.lstrip()
+        if len(stripped_path) >= 2 and stripped_path[1] == ":":
+            return ToolResult(False, "Path traversal blocked: Windows drive letter paths not allowed")
+        if path.startswith("/"):
+            return ToolResult(False, "Path traversal blocked: absolute paths are not allowed")
+        normalized = path.replace("\\", "/")
+        segments = normalized.split("/")
+        if ".." in segments:
+            return ToolResult(False, "Path traversal blocked: parent directory navigation not allowed")
         target = repo / path if path != "." else repo
         entries = [f"  [{'DIR' if e.is_dir() else 'FILE'}] {e.name}"
                    for e in sorted(target.iterdir())]
@@ -577,10 +604,10 @@ def _get_trigger_matrix_evidence(evidence, args):
 
 async def _diff_execute_async(sandbox, args):
     try:
-        output_a = args.get("output_a", "")
-        output_b = args.get("output_b", "")
+        input_str = args.get("input", "")
+        reference = args.get("reference", "")
         normalizer = args.get("normalizer", "Text")
-        result = await sandbox.diff_execute(output_a, output_b, normalizer)
+        result = await sandbox.diff_execute(input_str, reference, normalizer)
         import json
         return ToolResult(True, json.dumps(result, indent=2))
     except Exception as e:

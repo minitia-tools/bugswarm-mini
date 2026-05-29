@@ -80,7 +80,7 @@ fn compile_glob_pattern(pattern: &str) -> String {
                 i += 1;
             }
             '/' => {
-                re.push_str("/");
+                re.push('/');
                 i += 1;
             }
             _ => {
@@ -114,9 +114,7 @@ pub fn grep_repo(
         Err(_) => return (matches, 0, false),
     };
 
-    let glob_re = match compile_glob_pattern(path_filter) {
-        re_str => Regex::new(&re_str).ok(),
-    };
+    let glob_re = Regex::new(&compile_glob_pattern(path_filter)).ok();
 
     let repo_str = repo.to_string_lossy().to_string();
 

@@ -289,7 +289,7 @@ impl TriggerMatrix {
                         return false;
                     }
                     if sim >= crate::spec::DEDUP_BORDERLINE_THRESHOLD
-                        && (best_borderline.is_none() || sim > best_borderline.unwrap().1)
+                        && best_borderline.is_none_or(|(_, best_sim)| sim > best_sim)
                     {
                         best_borderline = Some((idx, sim));
                     }
@@ -517,7 +517,7 @@ impl TriggerMatrix {
         };
 
         let effective_score = base_score as f64 * density_bonus * layer_bonus;
-        self.completeness_score = effective_score.max(COMPLETENESS_MIN_FLOOR).min(1.0) as f32;
+        self.completeness_score = effective_score.clamp(COMPLETENESS_MIN_FLOOR, 1.0) as f32;
     }
 
     pub fn meets_phase30_gate(&self) -> bool {
@@ -548,8 +548,8 @@ pub fn normalize_description(desc: &str) -> String {
     let s = replace_word(&s, "none", "empty");
     let s = replace_word(&s, "nil", "empty");
     let s = s.replace("''", "empty").replace("\"\"", "empty");
-    let s = s.replace(" is ", " = ").replace("==", "=").replace(" = ", " = ");
-    while s.contains("  ") {
+    let s = s.replace(" is ", " = ").replace("==", "=");
+    if s.contains("  ") {
         let words: Vec<&str> = s.split_whitespace().collect();
         return words.join(" ");
     }
@@ -641,6 +641,12 @@ impl TriggerMetrics {
     }
 }
 
+impl Default for TriggerMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Trigger Matrix Manager — stores all matrices indexed by bug_id.
 pub struct TriggerManager {
     matrices: HashMap<String, TriggerMatrix>,
@@ -729,6 +735,12 @@ impl TriggerManager {
             }
         }
         Ok(count)
+    }
+}
+
+impl Default for TriggerManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

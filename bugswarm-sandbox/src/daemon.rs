@@ -1,16 +1,18 @@
-/// Daemon mode — Unix socket server for the Execution Sandbox.
-///
-/// Listens on /var/run/bugswarm/sandbox.sock (configurable).
-/// Accepts JSON request lines, returns JSON receipt lines.
-/// Supports concurrent connections via tokio.
+//! Daemon mode — Unix socket server for the Execution Sandbox.
+//!
+//! Listens on /var/run/bugswarm/sandbox.sock (configurable).
+//! Accepts JSON request lines, returns JSON receipt lines.
+//! Supports concurrent connections via tokio.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
 use crate::config::{ExecutionReceipt, ExecutionStatus, SandboxConfig};
@@ -31,7 +33,7 @@ struct DaemonRequest {
     #[serde(default)]
     flaky: bool,
     #[serde(default)]
-    count: u32,
+    _count: u32,
     #[serde(default)]
     request_id: Option<String>,
 }
@@ -118,29 +120,62 @@ pub async fn run_daemon(socket_path: PathBuf, config: SandboxConfig, http_port: 
     let manager = std::sync::Arc::new(ContainerManager::connect(config).await?);
     manager.ensure_image().await?;
 
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                match result {
-                    Ok((stream, _)) => {
-                        let mgr = manager.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_connection(stream, mgr).await {
-                                error!("Connection error: {}", e);
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("Accept error: {}", e);
+    let mut join_set: JoinSet<SandboxResult<()>> = JoinSet::new();
+
+    let shutdown = async {
+        loop {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received SIGTERM, shutting down gracefully...");
+                    break;
+                }
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _)) => {
+                            let mgr = manager.clone();
+                            join_set.spawn(async move {
+                                if let Err(e) = handle_connection(stream, mgr).await {
+                                    error!("Connection error: {}", e);
+                                }
+                                Ok(())
+                            });
+                        }
+                        Err(e) => {
+                            error!("Accept error: {}", e);
+                        }
                     }
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Received SIGTERM, shutting down gracefully...");
+        }
+    };
+
+    shutdown.await;
+
+    tracing::info!("Draining {} active connections...", join_set.len());
+    let drain_timeout = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(drain_timeout);
+    loop {
+        tokio::select! {
+            _ = &mut drain_timeout => {
+                tracing::warn!("Drain timeout reached — {} connections still active", join_set.len());
                 break;
+            }
+            result = join_set.join_next() => {
+                match result {
+                    Some(Ok(Ok(()))) => continue,
+                    Some(Ok(Err(e))) => warn!("Connection task error during drain: {}", e),
+                    Some(Err(e)) => warn!("Connection task panicked during drain: {}", e),
+                    None => break,
+                }
             }
         }
     }
+
+    tracing::info!("Cleaning up running containers...");
+    manager.drain_all_containers().await;
+    tracing::info!("Sandbox daemon shut down complete");
+
     Ok(())
 }
 
@@ -540,10 +575,10 @@ async fn handle_solve_reachability(raw_line: &str) -> DaemonResponse {
     let target = req.get("target").and_then(|v| v.as_str()).unwrap_or("");
     let conditions: Vec<(u32, String)> = req.get("conditions")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| {
+        .map(|arr| arr.iter().map(|v| {
             let line = v.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as u32;
             let cond = v.get("condition").and_then(|c| c.as_str()).unwrap_or("");
-            Some((line, cond.to_string()))
+            (line, cond.to_string())
         }).collect())
         .unwrap_or_default();
 

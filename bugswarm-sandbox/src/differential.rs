@@ -10,8 +10,11 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
 
+#[allow(clippy::expect_used)]
 static XML_COMMENT_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<!--.*?-->").expect("valid regex"));
+#[allow(clippy::expect_used)]
 static XML_PI_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<\?.*?\?>").expect("valid regex"));
+#[allow(clippy::expect_used)]
 static XML_NAMESPACE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r#"xmlns(:\w+)?="[^"]*""#).expect("valid regex"));
 
 /// The four differential comparison modes.

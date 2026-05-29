@@ -17,11 +17,18 @@ pub fn init_logging(default_level: &str, log_file: Option<&str>) {
         .with(fmt_layer);
 
     if let Some(path) = log_file {
-        let file = std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
-            .expect("Failed to open log file");
+        {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Failed to open log file {}: {}", path, e);
+                subscriber.init();
+                return;
+            }
+        };
         let file_layer = fmt::layer()
             .with_writer(std::sync::Mutex::new(file))
             .json();

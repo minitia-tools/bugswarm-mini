@@ -1,7 +1,7 @@
-/// Dominator Tree — Lengauer-Tarjan algorithm.
-///
-/// C6.2.1: Computes dominators and dominance frontiers for φ-node insertion.
-/// Used by Cytron et al. SSA construction.
+//! Dominator Tree — Lengauer-Tarjan algorithm.
+//!
+//! C6.2.1: Computes dominators and dominance frontiers for φ-node insertion.
+//! Used by Cytron et al. SSA construction.
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,9 +39,9 @@ impl DominatorTree {
         dom[entry].insert(entry);
 
         // All other blocks: initially dominated by ALL blocks
-        for i in 0..n {
+        for (i, dom_i) in dom.iter_mut().enumerate() {
             if i != entry {
-                dom[i] = (0..n).collect();
+                *dom_i = (0..n).collect();
             }
         }
 

@@ -507,31 +507,31 @@ impl ChainSemanticMatcher {
     ) -> (Vec<Vec<f64>>, Vec<Vec<f64>>, bool) {
         let mut used_fallback = false;
 
-        let has_embedder = !self.circuit_breaker_open
-            && self.embedder.as_ref().map(|e| e.is_available()).unwrap_or(false);
+        if !self.circuit_breaker_open {
+            if let Some(ref embedder) = self.embedder {
+                if embedder.is_available() {
+                    let all_texts: Vec<String> = effect_descs
+                        .iter()
+                        .chain(precond_descs.iter())
+                        .cloned()
+                        .collect();
 
-        if has_embedder {
-            let embedder = self.embedder.as_ref().expect("embedder is Some per has_embedder guard");
-            let all_texts: Vec<String> = effect_descs
-                .iter()
-                .chain(precond_descs.iter())
-                .cloned()
-                .collect();
-
-            match embedder.embed_batch(&all_texts) {
-                Ok(all_vectors) => {
-                    self.consecutive_failures = 0;
-                    let n = effect_descs.len();
-                    let effect_vecs = all_vectors[..n].to_vec();
-                    let precond_vecs = all_vectors[n..].to_vec();
-                    return (effect_vecs, precond_vecs, false);
-                }
-                Err(_) => {
-                    self.consecutive_failures += 1;
-                    if self.consecutive_failures >= self.max_consecutive_failures {
-                        self.circuit_breaker_open = true;
+                    match embedder.embed_batch(&all_texts) {
+                        Ok(all_vectors) => {
+                            self.consecutive_failures = 0;
+                            let n = effect_descs.len();
+                            let effect_vecs = all_vectors[..n].to_vec();
+                            let precond_vecs = all_vectors[n..].to_vec();
+                            return (effect_vecs, precond_vecs, false);
+                        }
+                        Err(_) => {
+                            self.consecutive_failures += 1;
+                            if self.consecutive_failures >= self.max_consecutive_failures {
+                                self.circuit_breaker_open = true;
+                            }
+                            used_fallback = true;
+                        }
                     }
-                    used_fallback = true;
                 }
             }
         }
@@ -1003,7 +1003,10 @@ pub fn detect_chains_with_config(
             if hops >= max_hops {
                 continue;
             }
-            let current = path.last().expect("path is non-empty per loop invariant (just returned from pop_front)");
+            let current = match path.last() {
+                Some(c) => c,
+                None => continue,
+            };
 
             if let Some(neighbors) = graph.get(current) {
                 for (next_bug, score, _low_conf) in neighbors {

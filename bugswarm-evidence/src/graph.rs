@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::Write;
 use parking_lot::RwLock;
-use tracing::{info, warn};
+use tracing::info;
+use rusqlite::params;
 
 use crate::trigger;
 use crate::types::{
@@ -350,7 +349,7 @@ impl EvidenceGraph {
                 _ => {}
             }
         }
-        best.map(|(id, label, strength, count)| (id, label, strength, count))
+        best
     }
 
     /// Find contradictory evidence — pairs of edges that disagree.
@@ -616,70 +615,194 @@ impl EvidenceGraph {
         self.edges.read().len()
     }
 
-    /// Save graph nodes and edges to a JSON file with atomic writes + backup rotation.
+    /// Save graph to a SQLite database with WAL journaling.
     pub fn save_graph(&self, path: &std::path::Path) -> Result<usize, String> {
+        use rusqlite::Connection;
+
         let nodes = self.nodes.read();
         let edges = self.edges.read();
-        let data = serde_json::json!({
-            "nodes": nodes.as_slice(),
-            "edges": edges.as_slice(),
-        });
-        let json = serde_json::to_string_pretty(&data).map_err(|e| format!("serialize: {}", e))?;
 
-        let tmp_path = path.with_file_name(
-            format!("{}.tmp", path.file_name().unwrap_or_default().to_string_lossy())
-        );
-        let bak_path = path.with_file_name(
-            format!("{}.bak", path.file_name().unwrap_or_default().to_string_lossy())
-        );
+        let mut conn = Connection::open(path).map_err(|e| format!("open db: {}", e))?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA foreign_keys=ON;"
+        ).map_err(|e| format!("set pragmas: {}", e))?;
 
-        // 1. Write to temporary file
-        let mut tmp_file = fs::File::create(&tmp_path)
-            .map_err(|e| format!("create tmp: {}", e))?;
-        tmp_file.write_all(json.as_bytes())
-            .map_err(|e| format!("write tmp: {}", e))?;
-        // fsync to ensure durability before rename
-        tmp_file.sync_all()
-            .map_err(|e| format!("sync tmp: {}", e))?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                migrated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS nodes (
+                id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                label TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                author TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                immutable INTEGER NOT NULL DEFAULT 0,
+                content_hash TEXT,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                severity INTEGER,
+                independently_verified INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS edges (
+                kind TEXT NOT NULL,
+                from_id INTEGER NOT NULL,
+                to_id INTEGER NOT NULL,
+                confidence REAL NOT NULL,
+                label TEXT,
+                created_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}'
+             );"
+        ).map_err(|e| format!("create tables: {}", e))?;
 
-        // 2. Backup rotation: rename existing to .bak before overwriting
-        if path.exists() {
-            let _ = fs::remove_file(&bak_path); // remove stale .bak first
-            fs::rename(path, &bak_path)
-                .map_err(|e| format!("backup rename: {}", e))?;
+        let tx = conn.transaction().map_err(|e| format!("begin tx: {}", e))?;
+
+        tx.execute("DELETE FROM nodes", []).map_err(|e| format!("clear nodes: {}", e))?;
+        tx.execute("DELETE FROM edges", []).map_err(|e| format!("clear edges: {}", e))?;
+
+        for node in nodes.iter() {
+            let kind_json = serde_json::to_string(&node.kind)
+                .unwrap_or_else(|_| format!("{:?}", node.kind));
+            let metadata_json = serde_json::to_string(&node.metadata)
+                .unwrap_or_else(|_| "{}".to_string());
+            let severity: Option<i32> = node.severity.map(|s| s as i32);
+
+            tx.execute(
+                "INSERT INTO nodes (id, kind, label, description, author, created_at, immutable, content_hash, metadata, severity, independently_verified)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    node.id as i64, kind_json, node.label, node.description,
+                    node.author, node.created_at.to_rfc3339(),
+                    node.immutable as i32, node.content_hash, metadata_json,
+                    severity, node.independently_verified as i32,
+                ],
+            ).map_err(|e| format!("insert node {}: {}", node.id, e))?;
         }
 
-        // 3. Atomic rename: tmp -> final path
-        fs::rename(&tmp_path, path)
-            .map_err(|e| format!("atomic rename: {}", e))?;
+        for edge in edges.iter() {
+            let kind_json = serde_json::to_string(&edge.kind)
+                .unwrap_or_else(|_| format!("{:?}", edge.kind));
+            let metadata_json = serde_json::to_string(&edge.metadata)
+                .unwrap_or_else(|_| "{}".to_string());
 
-        info!("Graph saved: {} nodes to {}", nodes.len(), path.display());
+            tx.execute(
+                "INSERT INTO edges (kind, from_id, to_id, confidence, label, created_at, metadata)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    kind_json, edge.from as i64, edge.to as i64,
+                    edge.confidence, edge.label, edge.created_at.to_rfc3339(),
+                    metadata_json,
+                ],
+            ).map_err(|e| format!("insert edge: {}", e))?;
+        }
+
+        tx.execute(
+            "INSERT OR REPLACE INTO schema_version (version, migrated_at) VALUES (1, datetime('now'))",
+            [],
+        ).map_err(|e| format!("write version: {}", e))?;
+
+        tx.commit().map_err(|e| format!("commit tx: {}", e))?;
+
+        info!("Graph saved to SQLite: {} nodes, {} edges at {}", nodes.len(), edges.len(), path.display());
         Ok(nodes.len())
     }
 
-    /// Load graph nodes and edges from a JSON file, replacing current state.
-    /// Detects corruption, auto-falls back to .bak, verifies edge integrity.
+    /// Load graph from a SQLite database with WAL journaling and migration support.
     pub fn load_graph(&self, path: &std::path::Path) -> Result<usize, String> {
-        let bak_path = path.with_file_name(
-            format!("{}.bak", path.file_name().unwrap_or_default().to_string_lossy())
-        );
+        use rusqlite::Connection;
 
-        let primary_result = Self::try_load_json(path);
-        let result = match primary_result {
-            Ok((nodes, edges)) => Ok((nodes, edges)),
-            Err(e) => {
-                warn!("Primary graph file corrupt ({}) — attempting .bak fallback", e);
-                if bak_path.exists() {
-                    Self::try_load_json(&bak_path).map_err(|bak_err| {
-                        format!("Primary corrupt ({}) and backup also corrupt ({}): unrecoverable", e, bak_err)
-                    })
-                } else {
-                    Err(format!("Primary corrupt ({}) and no .bak exists: unrecoverable", e))
-                }
-            }
-        }?;
+        let conn = Connection::open(path).map_err(|e| format!("open db: {}", e))?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(|e| format!("set wal: {}", e))?;
 
-        let (loaded_nodes, loaded_edges) = result;
+        // Migration framework: read current schema version
+        let version: i32 = conn.query_row(
+            "SELECT COALESCE((SELECT version FROM schema_version ORDER BY version DESC LIMIT 1), 0)",
+            [],
+            |row| row.get(0),
+        ).map_err(|e| format!("read version: {}", e))?;
+
+        if version < 1 {
+            return Err(format!("Unsupported database schema version: {}. Expected >= 1.", version));
+        }
+        if version > 1 {
+            return Err(format!("Database schema version {} is newer than this binary (max 1). Upgrade required.", version));
+        }
+
+        // Load nodes
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, label, description, author, created_at, immutable, content_hash, metadata, severity, independently_verified
+             FROM nodes ORDER BY id"
+        ).map_err(|e| format!("prepare nodes: {}", e))?;
+
+        let loaded_nodes: Vec<EvidenceNode> = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let kind_str: String = row.get(1)?;
+            let label: String = row.get(2)?;
+            let description: String = row.get(3)?;
+            let author: String = row.get(4)?;
+            let created_at_str: String = row.get(5)?;
+            let immutable: i32 = row.get(6)?;
+            let content_hash: Option<String> = row.get(7)?;
+            let metadata_str: String = row.get(8)?;
+            let severity_raw: Option<i32> = row.get(9)?;
+            let independently_verified: i32 = row.get(10)?;
+
+            let kind: NodeKind = serde_json::from_str(&kind_str)
+                .unwrap_or(NodeKind::Claim);
+            let metadata: HashMap<String, String> = serde_json::from_str(&metadata_str)
+                .unwrap_or_default();
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.to_utc())
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            Ok(EvidenceNode {
+                id: id as usize,
+                kind, label, description, author,
+                created_at,
+                immutable: immutable != 0,
+                content_hash,
+                metadata,
+                severity: severity_raw.map(|s| s as u8),
+                independently_verified: independently_verified != 0,
+            })
+        }).map_err(|e| format!("query nodes: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        // Load edges
+        let mut stmt = conn.prepare(
+            "SELECT kind, from_id, to_id, confidence, label, created_at, metadata
+             FROM edges"
+        ).map_err(|e| format!("prepare edges: {}", e))?;
+
+        let loaded_edges: Vec<EvidenceEdge> = stmt.query_map([], |row| {
+            let kind_str: String = row.get(0)?;
+            let from_id: i64 = row.get(1)?;
+            let to_id: i64 = row.get(2)?;
+            let confidence: f64 = row.get(3)?;
+            let label: Option<String> = row.get(4)?;
+            let created_at_str: String = row.get(5)?;
+            let metadata_str: String = row.get(6)?;
+
+            let kind: EdgeKind = serde_json::from_str(&kind_str)
+                .unwrap_or(EdgeKind::Supports);
+            let metadata: HashMap<String, String> = serde_json::from_str(&metadata_str)
+                .unwrap_or_default();
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.to_utc())
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            Ok(EvidenceEdge {
+                kind, from: from_id as usize, to: to_id as usize,
+                confidence, label, created_at, metadata,
+            })
+        }).map_err(|e| format!("query edges: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
 
         // Integrity check: every edge must reference valid node IDs
         let node_count = loaded_nodes.len();
@@ -710,45 +833,8 @@ impl EvidenceGraph {
             out.entry(edge.from).or_default().push((i, edge.to));
             inp.entry(edge.to).or_default().push((i, edge.from));
         }
-        info!("Graph loaded: {} nodes, {} edges from {}", count, self.edges.read().len(), path.display());
+        info!("Graph loaded from SQLite: {} nodes, {} edges at {}", count, self.edges.read().len(), path.display());
         Ok(count)
-    }
-
-    /// Try to parse JSON graph from a file. Returns (nodes, edges) or error.
-    fn try_load_json(path: &std::path::Path) -> Result<(Vec<EvidenceNode>, Vec<EvidenceEdge>), String> {
-        if !path.exists() {
-            return Err(format!("File not found: {}", path.display()));
-        }
-
-        let json = fs::read_to_string(path)
-            .map_err(|e| format!("read '{}': {}", path.display(), e))?;
-
-        if json.trim().is_empty() {
-            return Err(format!("File is empty: {}", path.display()));
-        }
-
-        let data: serde_json::Value = serde_json::from_str(&json)
-            .map_err(|e| format!("invalid JSON in '{}': {}", path.display(), e))?;
-
-        // Check JSON structure
-        let obj = data.as_object().ok_or_else(|| {
-            format!("Corruption: top-level value is not a JSON object in '{}'", path.display())
-        })?;
-
-        if !obj.contains_key("nodes") {
-            return Err(format!("Corruption: missing 'nodes' key in '{}'", path.display()));
-        }
-        if !obj.contains_key("edges") {
-            return Err(format!("Corruption: missing 'edges' key in '{}'", path.display()));
-        }
-
-        let loaded_nodes: Vec<EvidenceNode> = serde_json::from_value(data["nodes"].clone())
-            .map_err(|e| format!("node parse error in '{}': {}", path.display(), e))?;
-
-        let loaded_edges: Vec<EvidenceEdge> = serde_json::from_value(data["edges"].clone())
-            .map_err(|e| format!("edge parse error in '{}': {}", path.display(), e))?;
-
-        Ok((loaded_nodes, loaded_edges))
     }
 }
 
@@ -849,7 +935,7 @@ fn append_journal_entry(path: &std::path::Path, entry: &MigrationJournalEntry) -
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
     let line = serde_json::to_string(entry)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error: {}", e)))?;
+        .map_err(|e| std::io::Error::other(format!("serialize error: {}", e)))?;
     writeln!(file, "{}", line)?;
     file.sync_all()?;
     Ok(())
@@ -872,7 +958,8 @@ where F: Fn(&serde_json::Value) -> Option<crate::trigger::TriggerCondition>,
         read_completed_bugs_from_journal(jp)
     } else { std::collections::HashSet::new() };
 
-    let confirmed_bugs: Vec<(NodeId, String, Vec<(NodeId, String)>)> = {
+    type ConfirmedBugEntry = (NodeId, String, Vec<(NodeId, String)>);
+    let confirmed_bugs: Vec<ConfirmedBugEntry> = {
         let nodes = graph.nodes.read();
         nodes.iter()
             .filter(|n| n.kind == NodeKind::ConfirmedBug)
@@ -899,7 +986,7 @@ where F: Fn(&serde_json::Value) -> Option<crate::trigger::TriggerCondition>,
             .collect()
     };
 
-    for (_i, (bug_node_id, bug_label, sandbox_data)) in confirmed_bugs.iter().enumerate() {
+    for (bug_node_id, bug_label, sandbox_data) in confirmed_bugs.iter() {
         {
             let nodes = graph.nodes.read();
             if nodes.iter().any(|n| n.kind == NodeKind::TriggerMatrix && n.label == *bug_label) {

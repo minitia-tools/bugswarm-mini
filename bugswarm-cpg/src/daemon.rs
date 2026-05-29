@@ -1,17 +1,19 @@
-/// Daemon mode — Unix socket server for the Code Property Graph.
-///
-/// Listens on /var/run/bugswarm/cpg.sock (configurable).
-/// Methods: stats, taint, call_path, index, test_file, health.
+//! Daemon mode — Unix socket server for the Code Property Graph.
+//!
+//! Listens on /var/run/bugswarm/cpg.sock (configurable).
+//! Methods: stats, taint, call_path, index, test_file, health.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tracing::{error, info};
-use uuid::Uuid;
+use tokio::task::JoinSet;
+use tracing::{error, info, warn};
+
 
 use crate::graph::CodePropertyGraph;
 use crate::parser;
@@ -22,14 +24,17 @@ struct DaemonRequest {
     #[serde(default)]
     repo: String,
     #[serde(default)]
+    #[allow(dead_code)]
     file: String,
     #[serde(default)]
+    #[allow(dead_code)]
     name: String,
     #[serde(default)]
     from_func: String,
     #[serde(default)]
     to_func: String,
     #[serde(default)]
+    #[allow(dead_code)]
     prune: bool,
     #[serde(default = "default_decay")]
     decay: f32,
@@ -119,27 +124,58 @@ pub async fn run_daemon(socket_path: PathBuf, http_port: Option<u16>) -> anyhow:
         info!("CPG HTTP health/metrics server on port {}", port);
     }
 
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                match result {
-                    Ok((stream, _)) => {
-                        let c = cache.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_connection(stream, c).await {
-                                error!("CPG connection error: {}", e);
-                            }
-                        });
+    let mut join_set: JoinSet<anyhow::Result<()>> = JoinSet::new();
+
+    let shutdown = async {
+        loop {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received SIGTERM, shutting down gracefully...");
+                    break;
+                }
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _)) => {
+                            let c = cache.clone();
+                            join_set.spawn(async move {
+                                if let Err(e) = handle_connection(stream, c).await {
+                                    error!("CPG connection error: {}", e);
+                                }
+                                Ok(())
+                            });
+                        }
+                        Err(e) => error!("CPG accept error: {}", e),
                     }
-                    Err(e) => error!("CPG accept error: {}", e),
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Received SIGTERM, shutting down gracefully...");
-                break Ok(());
+        }
+    };
+
+    shutdown.await;
+
+    tracing::info!("Draining {} active CPG connections...", join_set.len());
+    let drain_timeout = tokio::time::sleep(Duration::from_secs(5));
+    tokio::pin!(drain_timeout);
+    loop {
+        tokio::select! {
+            _ = &mut drain_timeout => {
+                tracing::warn!("CPG drain timeout reached — {} connections still active", join_set.len());
+                break;
+            }
+            result = join_set.join_next() => {
+                match result {
+                    Some(Ok(Ok(()))) => continue,
+                    Some(Ok(Err(e))) => warn!("CPG connection task error during drain: {}", e),
+                    Some(Err(e)) => warn!("CPG connection task panicked during drain: {}", e),
+                    None => break,
+                }
             }
         }
     }
+
+    tracing::info!("CPG daemon shut down complete");
+    Ok(())
 }
 
 async fn handle_connection(stream: UnixStream, cache: Arc<CpgCache>) -> anyhow::Result<()> {

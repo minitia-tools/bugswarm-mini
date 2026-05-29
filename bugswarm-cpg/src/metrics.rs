@@ -54,6 +54,12 @@ impl CpgMetrics {
     }
 }
 
+impl Default for CpgMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub async fn spawn_http_server(port: u16, metrics: Arc<CpgMetrics>) {
     use axum::{Router, routing::get, Json, http::StatusCode, extract::State};
 
@@ -80,7 +86,15 @@ pub async fn spawn_http_server(port: u16, metrics: Arc<CpgMetrics>) {
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("Failed to bind metrics server on {}: {}", addr, e);
+            return;
+        }
+    };
     tracing::info!("CPG HTTP health/metrics server on {}", addr);
-    axum::serve(listener, app).await.unwrap();
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("Metrics server error: {}", e);
+    }
 }

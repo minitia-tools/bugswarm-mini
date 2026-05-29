@@ -129,7 +129,13 @@ impl OutputScanner {
 
 impl Default for OutputScanner {
     fn default() -> Self {
-        Self::new().expect("Failed to create default OutputScanner")
+        Self::new().unwrap_or_else(|e| {
+            tracing::warn!("Failed to create default OutputScanner: {}; using empty fallback", e);
+            OutputScanner {
+                pii_patterns: Vec::new(),
+                escape_patterns: Vec::new(),
+            }
+        })
     }
 }
 

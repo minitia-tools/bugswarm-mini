@@ -202,7 +202,7 @@ fn parse_str_op(s: &str, op: &str) -> Option<(String, String)> {
 fn extract_value_from_constraint(expr: &str, _var: &str) -> Option<String> {
     if expr.contains(">") {
         // (assert (> VAR VAL)) → VAR = VAL + 1
-        if let Some(val_str) = expr.split(' ').last() {
+        if let Some(val_str) = expr.split(' ').next_back() {
             let val = val_str.trim_end_matches(')');
             if let Ok(n) = val.parse::<i64>() {
                 return Some((n + 1).to_string());
@@ -214,7 +214,7 @@ fn extract_value_from_constraint(expr: &str, _var: &str) -> Option<String> {
         }
     }
     if expr.contains("=") {
-        if let Some(val_str) = expr.split(' ').last() {
+        if let Some(val_str) = expr.split(' ').next_back() {
             let val = val_str.trim_end_matches(')');
             return Some(val.to_string());
         }

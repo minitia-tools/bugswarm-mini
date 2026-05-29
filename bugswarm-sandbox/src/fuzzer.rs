@@ -694,7 +694,7 @@ impl FuzzController {
             let _n_after = n_before as u64 + 1;
             self.stats.danger_score_min = if n_before == 0.0 { danger_score } else { self.stats.danger_score_min.min(danger_score) };
             self.stats.danger_score_max = self.stats.danger_score_max.max(danger_score);
-            self.stats.danger_score_p50 = if n_before == 0.0 { danger_score } else { (self.stats.danger_score_p50 * n_before as f32 + danger_score) / (n_before + 1.0) };
+            self.stats.danger_score_p50 = if n_before == 0.0 { danger_score } else { (self.stats.danger_score_p50 * n_before + danger_score) / (n_before + 1.0) };
 
             self.stats.unique_crashes += 1;
             self.crashes.push(crash.clone());

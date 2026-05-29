@@ -12,8 +12,14 @@ from agent.tools import (
     _validate_run_mutations, _validate_solve_reachability, _validate_explore_paths,
     _validate_describe_trigger, _validate_get_trigger_matrix, _validate_suggest_chain,
     _validate_predict_fix_impact,
+    _validate_query_cpg, _validate_list_dir, _validate_trace_dependency,
+    _validate_grep, _validate_glob, _validate_write_file, _validate_edit_file,
+    _validate_web_fetch, _validate_todo_write, _validate_kill_shell,
+    _validate_arg_types,
     TOOL_VALIDATORS, MAX_POC_SIZE_BYTES, MAX_INPUT_SIZE_BYTES, MAX_SOURCE_SIZE_BYTES,
-    MAX_COUNT, MAX_QUERIES, MAX_HOPS,
+    MAX_COUNT, MAX_QUERIES, MAX_HOPS, MAX_CONTENT_BYTES, MAX_EDIT_BYTES,
+    RATE_LIMIT_WINDOW_SECS, MAX_CALLS_PER_WINDOW,
+    VALID_TOOL_ACTIONS, VALID_TOOL_STATUSES, VALID_SIGNALS,
 )
 
 
@@ -93,11 +99,11 @@ class TestDeltaDebugValidation:
 
 class TestDiffExecuteValidation:
     def test_empty_outputs_rejected(self):
-        ok, reason = _validate_diff_execute({"output_a": "", "output_b": ""})
+        ok, reason = _validate_diff_execute({"input": "", "reference": ""})
         assert not ok
 
     def test_valid_accepted(self):
-        ok, reason = _validate_diff_execute({"output_a": "hello", "output_b": "world"})
+        ok, reason = _validate_diff_execute({"input": "hello", "reference": "world"})
         assert ok
 
 
@@ -231,19 +237,21 @@ class TestPredictFixImpactValidation:
 
 
 class TestValidatorRegistry:
-    def test_all_13_tools_have_validators(self):
+    def test_all_23_tools_have_validators(self):
         expected = {
             "exec_sandbox", "read_file", "fuzz_target", "delta_debug",
             "diff_execute", "mine_invariants", "run_mutations",
             "solve_reachability", "explore_paths", "describe_trigger",
             "get_trigger_matrix", "suggest_chain", "predict_fix_impact",
+            "query_cpg", "list_dir", "trace_dependency",
+            "grep", "glob", "write_file", "edit_file",
+            "web_fetch", "todo_write", "kill_shell",
         }
         assert set(TOOL_VALIDATORS.keys()) == expected, \
             f"Missing validators: {expected - set(TOOL_VALIDATORS.keys())}"
 
     def test_every_validator_returns_tuple(self):
         for name, validator in TOOL_VALIDATORS.items():
-            # Test with minimal valid args
             minimal = {"path": "test.py", "poc_code": "x", "target_path": "bin",
                        "function_name": "f", "bug_id": "B1", "bug_ids": ["B1"],
                        "source_code": "x", "target_location": "f:1",
@@ -251,10 +259,248 @@ class TestValidatorRegistry:
                        "original_line": "x", "replacement_line": "y",
                        "input_base64": "AA", "max_iterations": 200,
                        "max_queries": 100, "max_hops": 10, "count": 100,
-                       "dimension": "Input", "exec_timeout_ms": 1000}
+                       "dimension": "Input", "exec_timeout_ms": 1000,
+                       "name": "f", "kind": "function",
+                       "pattern": "test", "max_results": 100,
+                       "content": "x", "old_string": "a", "new_string": "b",
+                       "replace_all": False, "url": "https://example.com",
+                       "action": "list", "status": "pending", "priority": 5,
+                       "signal": "SIGTERM", "kill_all": False,
+                       "process_id": None}
             ok, reason = validator(minimal)
             assert isinstance(ok, bool), f"{name} validator returned non-bool"
             assert isinstance(reason, str), f"{name} validator returned non-str reason"
+
+
+class TestQueryCpgValidation:
+    def test_valid_empty_accepted(self):
+        ok, reason = _validate_query_cpg({})
+        assert ok
+
+    def test_invalid_name_type_rejected(self):
+        ok, reason = _validate_query_cpg({"name": 123})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_query_cpg({"name": "login", "kind": "function"})
+        assert ok
+
+
+class TestListDirValidation:
+    def test_empty_path_rejected(self):
+        ok, reason = _validate_list_dir({"path": ""})
+        assert not ok
+
+    def test_null_byte_rejected(self):
+        ok, reason = _validate_list_dir({"path": "dir\0file"})
+        assert not ok
+
+    def test_absolute_path_rejected(self):
+        ok, reason = _validate_list_dir({"path": "/etc"})
+        assert not ok
+
+    def test_traversal_rejected(self):
+        ok, reason = _validate_list_dir({"path": "../etc"})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_list_dir({"path": "subdir"})
+        assert ok
+
+    def test_default_path_accepted(self):
+        ok, reason = _validate_list_dir({})
+        assert ok
+
+
+class TestTraceDependencyValidation:
+    def test_empty_function_rejected(self):
+        ok, reason = _validate_trace_dependency({"function_name": ""})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_trace_dependency({"function_name": "login", "radius": 5})
+        assert ok
+
+
+class TestGrepValidation:
+    def test_empty_pattern_rejected(self):
+        ok, reason = _validate_grep({"pattern": ""})
+        assert not ok
+
+    def test_max_results_too_high_rejected(self):
+        ok, reason = _validate_grep({"pattern": "test", "max_results": 5001})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_grep({"pattern": "import os", "max_results": 100})
+        assert ok
+
+
+class TestGlobValidation:
+    def test_max_results_too_high_rejected(self):
+        ok, reason = _validate_glob({"max_results": 10001})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_glob({"pattern": "**/*.py", "max_results": 50})
+        assert ok
+
+    def test_empty_args_accepted(self):
+        ok, reason = _validate_glob({})
+        assert ok
+
+
+class TestWriteFileValidation:
+    def test_empty_path_rejected(self):
+        ok, reason = _validate_write_file({"path": "", "content": "x"})
+        assert not ok
+
+    def test_null_byte_rejected(self):
+        ok, reason = _validate_write_file({"path": "f\0ile", "content": "x"})
+        assert not ok
+
+    def test_absolute_path_rejected(self):
+        ok, reason = _validate_write_file({"path": "/etc/passwd", "content": "x"})
+        assert not ok
+
+    def test_traversal_rejected(self):
+        ok, reason = _validate_write_file({"path": "../etc/passwd", "content": "x"})
+        assert not ok
+
+    def test_empty_content_rejected(self):
+        ok, reason = _validate_write_file({"path": "test.py", "content": ""})
+        assert not ok
+
+    def test_oversized_content_rejected(self):
+        ok, reason = _validate_write_file({"path": "test.py", "content": "x" * (MAX_CONTENT_BYTES + 1)})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_write_file({"path": "src/main.py", "content": "print(1)"})
+        assert ok
+
+
+class TestEditFileValidation:
+    def test_empty_path_rejected(self):
+        ok, reason = _validate_edit_file({"path": "", "old_string": "a", "new_string": "b"})
+        assert not ok
+
+    def test_null_byte_rejected(self):
+        ok, reason = _validate_edit_file({"path": "f\0ile", "old_string": "a", "new_string": "b"})
+        assert not ok
+
+    def test_absolute_path_rejected(self):
+        ok, reason = _validate_edit_file({"path": "/etc/passwd", "old_string": "a", "new_string": "b"})
+        assert not ok
+
+    def test_traversal_rejected(self):
+        ok, reason = _validate_edit_file({"path": "../etc/passwd", "old_string": "a", "new_string": "b"})
+        assert not ok
+
+    def test_empty_old_string_rejected(self):
+        ok, reason = _validate_edit_file({"path": "f.py", "old_string": "", "new_string": "b"})
+        assert not ok
+
+    def test_empty_new_string_rejected(self):
+        ok, reason = _validate_edit_file({"path": "f.py", "old_string": "a", "new_string": ""})
+        assert not ok
+
+    def test_invalid_replace_all_type_rejected(self):
+        ok, reason = _validate_edit_file({"path": "f.py", "old_string": "a", "new_string": "b", "replace_all": "yes"})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_edit_file({"path": "f.py", "old_string": "a", "new_string": "b"})
+        assert ok
+
+
+class TestWebFetchValidation:
+    def test_empty_url_rejected(self):
+        ok, reason = _validate_web_fetch({"url": ""})
+        assert not ok
+
+    def test_invalid_scheme_rejected(self):
+        ok, reason = _validate_web_fetch({"url": "ftp://example.com"})
+        assert not ok
+
+    def test_valid_accepted(self):
+        ok, reason = _validate_web_fetch({"url": "https://github.com"})
+        assert ok
+
+
+class TestTodoWriteValidation:
+    def test_empty_action_rejected(self):
+        ok, reason = _validate_todo_write({"action": ""})
+        assert not ok
+
+    def test_invalid_action_rejected(self):
+        ok, reason = _validate_todo_write({"action": "delete"})
+        assert not ok
+
+    def test_invalid_status_rejected(self):
+        ok, reason = _validate_todo_write({"action": "add", "status": "cancelled"})
+        assert not ok
+
+    def test_priority_out_of_range_rejected(self):
+        ok, reason = _validate_todo_write({"action": "add", "priority": 11})
+        assert not ok
+
+    def test_valid_add_accepted(self):
+        ok, reason = _validate_todo_write({"action": "add", "description": "Fix bug", "priority": 5})
+        assert ok
+
+    def test_valid_list_accepted(self):
+        ok, reason = _validate_todo_write({"action": "list"})
+        assert ok
+
+
+class TestKillShellValidation:
+    def test_invalid_signal_rejected(self):
+        ok, reason = _validate_kill_shell({"signal": "SIGHUP"})
+        assert not ok
+
+    def test_invalid_kill_all_type_rejected(self):
+        ok, reason = _validate_kill_shell({"kill_all": "yes"})
+        assert not ok
+
+    def test_valid_sigterm_accepted(self):
+        ok, reason = _validate_kill_shell({"signal": "SIGTERM"})
+        assert ok
+
+    def test_valid_sigkill_accepted(self):
+        ok, reason = _validate_kill_shell({"signal": "SIGKILL"})
+        assert ok
+
+    def test_default_signal_accepted(self):
+        ok, reason = _validate_kill_shell({})
+        assert ok
+
+
+class TestArgTypesValidation:
+    def test_integer_arg_rejects_string(self):
+        ok, reason = _validate_arg_types("test", {"count": "not_an_int"}, {"properties": {"count": {"type": "integer"}}})
+        assert not ok
+
+    def test_boolean_arg_rejects_string(self):
+        ok, reason = _validate_arg_types("test", {"flag": "yes"}, {"properties": {"flag": {"type": "boolean"}}})
+        assert not ok
+
+    def test_string_arg_rejects_int(self):
+        ok, reason = _validate_arg_types("test", {"name": 42}, {"properties": {"name": {"type": "string"}}})
+        assert not ok
+
+    def test_array_arg_rejects_string(self):
+        ok, reason = _validate_arg_types("test", {"items": "not_array"}, {"properties": {"items": {"type": "array"}}})
+        assert not ok
+
+    def test_valid_types_accepted(self):
+        ok, reason = _validate_arg_types("test", {"count": 5, "flag": True, "name": "x"},
+                                          {"properties": {"count": {"type": "integer"}, "flag": {"type": "boolean"}, "name": {"type": "string"}}})
+        assert ok
+
+    def test_unknown_arg_ignored(self):
+        ok, reason = _validate_arg_types("test", {"unknown": "whatever"}, {"properties": {}})
+        assert ok
 
 
 class TestRateLimitConstants:

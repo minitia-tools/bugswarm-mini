@@ -1,7 +1,6 @@
 use bugswarm_evidence::graph::EvidenceGraph;
-use bugswarm_evidence::types::{EvidenceNode, NodeKind, EvidenceEdge, EdgeKind, EvidenceQuery};
+use bugswarm_evidence::types::{EvidenceNode, NodeKind, EvidenceQuery};
 use clap::{Parser, Subcommand};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
@@ -58,11 +57,17 @@ fn main() {
 
     let subscriber = tracing_subscriber::registry().with(env_filter).with(fmt_layer);
     if let Some(ref path) = cli.log_file {
-        let file = std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
-            .expect("Failed to open log file");
+        {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Failed to open log file {}: {}", path, e);
+                return;
+            }
+        };
         let file_layer = fmt::layer()
             .with_writer(std::sync::Mutex::new(file))
             .json();
@@ -76,8 +81,14 @@ fn main() {
         Commands::Stats => run_stats(),
         Commands::Verify => run_verify(),
         Commands::Test => run_gate_tests(),
-        Commands::RunServer { config, socket, http_port, state_path } => {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        Commands::RunServer { config, socket, http_port, state_path: _ } => {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Failed to create tokio runtime: {}", e);
+                    return;
+                }
+            };
             rt.block_on(async {
                 // Read unified config with schema_version validation
                 let yaml_opt: Option<serde_yaml::Value> = if config.exists() {
@@ -150,8 +161,9 @@ fn main() {
                     });
                 }
 
-                bugswarm_evidence::daemon::run_daemon(socket_path, Some(port), Some(sp)).await
-                    .expect("Evidence daemon failed");
+                if let Err(e) = bugswarm_evidence::daemon::run_daemon(socket_path, Some(port), Some(sp)).await {
+                    eprintln!("Evidence daemon failed: {}", e);
+                }
             });
         }
     }
@@ -162,8 +174,8 @@ fn run_demo() {
     let g = EvidenceGraph::new();
 
     // Register agents
-    let agent_a = g.add_node(EvidenceNode::new(0, NodeKind::Agent, "Agent A (Adversarial)", "A"));
-    let agent_b = g.add_node(EvidenceNode::new(1, NodeKind::Agent, "Agent B (Causal)", "B"));
+    let _agent_a = g.add_node(EvidenceNode::new(0, NodeKind::Agent, "Agent A (Adversarial)", "A"));
+    let _agent_b = g.add_node(EvidenceNode::new(1, NodeKind::Agent, "Agent B (Causal)", "B"));
 
     // Agent A: finds SQL injection
     let claim1 = g.add_claim("SQL injection in login()", "A", "auth.py:42", 9);
@@ -234,7 +246,7 @@ fn run_gate_tests() {
     println!("=== Phase 5 Gate: Immutability Assault ===\n");
     let mut passed = 0;
     let mut failed = 0;
-    let G = "\x1b[0;32m"; let R = "\x1b[0;31m"; let N = "\x1b[0m";
+    let _g = "\x1b[0;32m"; let _r = "\x1b[0;31m"; let _n = "\x1b[0m";
 
     let g = EvidenceGraph::new();
 
@@ -254,7 +266,13 @@ fn run_gate_tests() {
     if t1 { passed += 1; } else { failed += 1; }
 
     // Test 2: Sandbox nodes are immutable
-    let node = g.get_node(r).unwrap();
+    let node = match g.get_node(r) {
+        Some(n) => n,
+        None => {
+            eprintln!("FATAL: Node {} not found during gate test", r);
+            std::process::exit(1);
+        }
+    };
     let t2 = node.immutable && node.content_hash.is_some();
     println!("  [{}] Sandbox node immutable + hashed", if t2 {"PASS"} else {"FAIL"});
     if t2 { passed += 1; } else { failed += 1; }
@@ -294,7 +312,12 @@ fn run_gate_tests() {
         let g = g2.clone();
         handles.push(std::thread::spawn(move || { g.stats(); }));
     }
-    for h in handles { h.join().unwrap(); }
+    for h in handles {
+        if let Err(e) = h.join() {
+            eprintln!("Thread join failed: {:?}", e);
+            std::process::exit(1);
+        }
+    }
     let t7 = true;
     println!("  [{}] 100 concurrent reads complete", if t7 {"PASS"} else {"FAIL"});
     if t7 { passed += 1; } else { failed += 1; }
@@ -308,18 +331,18 @@ fn run_gate_tests() {
         g3.link_sandbox_result(run, pred, true, 0.5);
     }
     let start = std::time::Instant::now();
-    let stats3 = g3.stats();
+    let _stats3 = g3.stats();
     let dur = start.elapsed();
     let t8 = dur.as_millis() < 1000;
     println!("  [{}] 1000-node graph stats in {}ms", if t8 {"PASS"} else {"FAIL"}, dur.as_millis());
     if t8 { passed += 1; } else { failed += 1; }
 
     println!("\n═══ Phase 5 Gate: {}{} passed{}, {}{} failed{}, {} total ═══",
-        G, passed, N, R, failed, N, passed + failed);
+        _g, passed, _n, _r, failed, _n, passed + failed);
     if failed == 0 {
-        println!("{}✓ PHASE 5 GATE PASSED — Evidence Graph immutable + queryable{}", G, N);
+        println!("{}✓ PHASE 5 GATE PASSED — Evidence Graph immutable + queryable{}", _g, _n);
     } else {
-        println!("{}✗ PHASE 5 GATE FAILED{}", R, N);
+        println!("{}✗ PHASE 5 GATE FAILED{}", _r, _n);
     }
 }
 

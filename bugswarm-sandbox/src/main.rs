@@ -239,7 +239,7 @@ async fn run_command(cli: Cli) -> SandboxResult<()> {
 
     match cli.command {
         Commands::Execute { poc, env, output, flaky } => {
-            let poc_content = if poc == PathBuf::from("-") {
+            let poc_content = if poc.to_str() == Some("-") {
                 std::io::read_to_string(std::io::stdin())?
             } else {
                 std::fs::read_to_string(&poc)?

@@ -1,0 +1,1128 @@
+{
+  "version": 1,
+  "updated": "2026-05-28",
+  "notes": "Models with known pricing and capabilities. New models discovered via provider API are probed dynamically.",
+  "models": [
+    {
+      "id": "gpt-4o",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "input_cost_per_mtok": 2.50,
+        "output_cost_per_mtok": 10.00
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "gpt-4o-mini",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.15,
+        "output_cost_per_mtok": 0.60
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "gpt-4-turbo",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 10.00,
+        "output_cost_per_mtok": 30.00
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2023-12-01"
+    },
+    {
+      "id": "gpt-4",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 8192,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 30.00,
+        "output_cost_per_mtok": 60.00
+      },
+      "context_window": 8192,
+      "knowledge_cutoff": "2021-09-01"
+    },
+    {
+      "id": "gpt-3.5-turbo",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 16384,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.50,
+        "output_cost_per_mtok": 1.50
+      },
+      "context_window": 16384,
+      "knowledge_cutoff": "2021-09-01"
+    },
+    {
+      "id": "o1",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": false,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 100000
+      },
+      "pricing": {
+        "input_cost_per_mtok": 15.00,
+        "output_cost_per_mtok": 60.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "o1-mini",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": false,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 65536
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.10,
+        "output_cost_per_mtok": 4.40
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "o3-mini",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": false,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 100000
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.10,
+        "output_cost_per_mtok": 4.40
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "provider": "DeepSeek",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 384000
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.14,
+        "output_cost_per_mtok": 0.28
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2025-05-01"
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "provider": "DeepSeek",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 384000
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.74,
+        "output_cost_per_mtok": 3.48
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2025-05-01"
+    },
+    {
+      "id": "deepseek-r1",
+      "provider": "DeepSeek",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.55,
+        "output_cost_per_mtok": 2.19
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2025-01-01"
+    },
+    {
+      "id": "deepseek-r2",
+      "provider": "DeepSeek",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.55,
+        "output_cost_per_mtok": 2.19
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2025-04-01"
+    },
+    {
+      "id": "deepseek-chat",
+      "provider": "DeepSeek",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 384000
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.14,
+        "output_cost_per_mtok": 0.28
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2025-05-01"
+    },
+    {
+      "id": "deepseek-coder",
+      "provider": "DeepSeek",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.14,
+        "output_cost_per_mtok": 0.28
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "claude-sonnet-4-20250514",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 3.00,
+        "output_cost_per_mtok": 15.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2025-04-01"
+    },
+    {
+      "id": "claude-sonnet-4",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 3.00,
+        "output_cost_per_mtok": 15.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2025-04-01"
+    },
+    {
+      "id": "claude-3.5-sonnet",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 3.00,
+        "output_cost_per_mtok": 15.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2024-04-01"
+    },
+    {
+      "id": "claude-3-opus",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 15.00,
+        "output_cost_per_mtok": 75.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2023-08-01"
+    },
+    {
+      "id": "claude-3-sonnet",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 3.00,
+        "output_cost_per_mtok": 15.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2023-08-01"
+    },
+    {
+      "id": "claude-3-haiku",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.25,
+        "output_cost_per_mtok": 1.25
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2023-08-01"
+    },
+    {
+      "id": "claude-2.1",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": false,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 8.00,
+        "output_cost_per_mtok": 24.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2023-01-01"
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "provider": "Google",
+      "protocol": "google",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 65536
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.15,
+        "output_cost_per_mtok": 0.60
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2025-05-01"
+    },
+    {
+      "id": "gemini-2.5-pro",
+      "provider": "Google",
+      "protocol": "google",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 65536
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.25,
+        "output_cost_per_mtok": 10.00
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2025-05-01"
+    },
+    {
+      "id": "gemini-2.0-flash",
+      "provider": "Google",
+      "protocol": "google",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.10,
+        "output_cost_per_mtok": 0.40
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "gemini-1.5-pro",
+      "provider": "Google",
+      "protocol": "google",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 2000000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.25,
+        "output_cost_per_mtok": 5.00
+      },
+      "context_window": 2000000,
+      "knowledge_cutoff": "2023-11-01"
+    },
+    {
+      "id": "gemini-1.5-flash",
+      "provider": "Google",
+      "protocol": "google",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.075,
+        "output_cost_per_mtok": 0.30
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2023-11-01"
+    },
+    {
+      "id": "llama-3.3-70b-versatile",
+      "provider": "Groq",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.59,
+        "output_cost_per_mtok": 0.79
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-12-01"
+    },
+    {
+      "id": "llama-3.1-70b-versatile",
+      "provider": "Groq",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.59,
+        "output_cost_per_mtok": 0.79
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "llama-3.1-8b-instant",
+      "provider": "Groq",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.05,
+        "output_cost_per_mtok": 0.08
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "mixtral-8x7b-32768",
+      "provider": "Groq",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 32768,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.24,
+        "output_cost_per_mtok": 0.24
+      },
+      "context_window": 32768,
+      "knowledge_cutoff": "2023-12-01"
+    },
+    {
+      "id": "gemma2-9b-it",
+      "provider": "Groq",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 8192,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.06,
+        "output_cost_per_mtok": 0.06
+      },
+      "context_window": 8192,
+      "knowledge_cutoff": "2024-06-01"
+    },
+    {
+      "id": "deepseek-r1-distill-llama-70b",
+      "provider": "Groq",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.75,
+        "output_cost_per_mtok": 0.99
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2025-01-01"
+    },
+    {
+      "id": "qwen-2.5-72b-chat",
+      "provider": "Together",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 32768,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.80,
+        "output_cost_per_mtok": 0.80
+      },
+      "context_window": 32768,
+      "knowledge_cutoff": "2024-09-01"
+    },
+    {
+      "id": "llama-3.3-70b-chat",
+      "provider": "Together",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.59,
+        "output_cost_per_mtok": 0.79
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-12-01"
+    },
+    {
+      "id": "mistral-7b-instruct",
+      "provider": "Together",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 32768,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.20,
+        "output_cost_per_mtok": 0.20
+      },
+      "context_window": 32768,
+      "knowledge_cutoff": "2023-09-01"
+    },
+    {
+      "id": "mixtral-8x22b-instruct",
+      "provider": "Together",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 65536,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.90,
+        "output_cost_per_mtok": 0.90
+      },
+      "context_window": 65536,
+      "knowledge_cutoff": "2024-04-01"
+    },
+    {
+      "id": "deepseek-r1-distill-llama-70b",
+      "provider": "Together",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.75,
+        "output_cost_per_mtok": 0.99
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2025-01-01"
+    },
+    {
+      "id": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+      "provider": "Fireworks",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.90,
+        "output_cost_per_mtok": 0.90
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-12-01"
+    },
+    {
+      "id": "accounts/fireworks/models/mixtral-8x22b-instruct",
+      "provider": "Fireworks",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 65536,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.20,
+        "output_cost_per_mtok": 1.20
+      },
+      "context_window": 65536,
+      "knowledge_cutoff": "2024-04-01"
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-r1-distill-llama-70b",
+      "provider": "Fireworks",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": true,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 32768
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.75,
+        "output_cost_per_mtok": 0.99
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2025-01-01"
+    },
+    {
+      "id": "sonar-pro",
+      "provider": "Perplexity",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 3.00,
+        "output_cost_per_mtok": 15.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2024-12-01"
+    },
+    {
+      "id": "sonar",
+      "provider": "Perplexity",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 127000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.00,
+        "output_cost_per_mtok": 1.00
+      },
+      "context_window": 127000,
+      "knowledge_cutoff": "2024-12-01"
+    },
+    {
+      "id": "llama-3.1-sonar-huge-128k",
+      "provider": "Perplexity",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 5.00,
+        "output_cost_per_mtok": 5.00
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "mistral-large-latest",
+      "provider": "Mistral",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 2.00,
+        "output_cost_per_mtok": 6.00
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "mistral-small-latest",
+      "provider": "Mistral",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 32768,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.00,
+        "output_cost_per_mtok": 3.00
+      },
+      "context_window": 32768,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "codestral-latest",
+      "provider": "Mistral",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 256000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 1.00,
+        "output_cost_per_mtok": 3.00
+      },
+      "context_window": 256000,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "pixtral-large-latest",
+      "provider": "Mistral",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 2.00,
+        "output_cost_per_mtok": 6.00
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-09-01"
+    },
+    {
+      "id": "grok-2",
+      "provider": "xAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 131072,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 2.00,
+        "output_cost_per_mtok": 10.00
+      },
+      "context_window": 131072,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "grok-2-mini",
+      "provider": "xAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 131072,
+        "max_output_tokens": 4096
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.30,
+        "output_cost_per_mtok": 1.50
+      },
+      "context_window": 131072,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "gpt-4o-2024-08-06",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "input_cost_per_mtok": 2.50,
+        "output_cost_per_mtok": 10.00
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-08-01"
+    },
+    {
+      "id": "gpt-4o-2024-11-20",
+      "provider": "OpenAI",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "input_cost_per_mtok": 2.50,
+        "output_cost_per_mtok": 10.00
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-11-01"
+    },
+    {
+      "id": "claude-3.5-haiku",
+      "provider": "Anthropic",
+      "protocol": "anthropic",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.80,
+        "output_cost_per_mtok": 4.00
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2024-07-01"
+    },
+    {
+      "id": "gemini-2.0-flash-lite",
+      "provider": "Google",
+      "protocol": "google",
+      "capabilities": {
+        "supports_tools": false,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.075,
+        "output_cost_per_mtok": 0.30
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "deepseek-v4-flash-8b",
+      "provider": "DeepSeek",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 384000
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.02,
+        "output_cost_per_mtok": 0.04
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2025-05-01"
+    },
+    {
+      "id": "qwen-2.5-coder-32b-instruct",
+      "provider": "Together",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 32768,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.80,
+        "output_cost_per_mtok": 0.80
+      },
+      "context_window": 32768,
+      "knowledge_cutoff": "2024-11-01"
+    },
+    {
+      "id": "github-models-gpt-4o",
+      "provider": "GitHub Models",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.15,
+        "output_cost_per_mtok": 0.60
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "github-models-gpt-4o-mini",
+      "provider": "GitHub Models",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16384
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.03,
+        "output_cost_per_mtok": 0.12
+      },
+      "context_window": 128000,
+      "knowledge_cutoff": "2024-10-01"
+    },
+    {
+      "id": "github-models-deepseek-v4-flash",
+      "provider": "GitHub Models",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 384000
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.014,
+        "output_cost_per_mtok": 0.028
+      },
+      "context_window": 1000000,
+      "knowledge_cutoff": "2025-05-01"
+    },
+    {
+      "id": "github-models-claude-sonnet-4",
+      "provider": "GitHub Models",
+      "protocol": "openai-compatible",
+      "capabilities": {
+        "supports_tools": true,
+        "supports_json_mode": true,
+        "supports_thinking": false,
+        "supports_streaming": true,
+        "max_input_tokens": 200000,
+        "max_output_tokens": 8192
+      },
+      "pricing": {
+        "input_cost_per_mtok": 0.30,
+        "output_cost_per_mtok": 1.50
+      },
+      "context_window": 200000,
+      "knowledge_cutoff": "2025-04-01"
+    }
+  ]
+}

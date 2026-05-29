@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 use anyhow::Context;
 
@@ -217,21 +219,21 @@ impl Default for DangerConfig {
 
 impl DangerConfig {
     /// Validate configuration values.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> anyhow::Result<()> {
         if self.taint_weight < 0.0 {
-            return Err(format!("taint_weight must be >= 0.0, got {}", self.taint_weight));
+            anyhow::bail!("taint_weight must be >= 0.0, got {}", self.taint_weight);
         }
         if self.coverage_weight < 0.0 {
-            return Err(format!("coverage_weight must be >= 0.0, got {}", self.coverage_weight));
+            anyhow::bail!("coverage_weight must be >= 0.0, got {}", self.coverage_weight);
         }
         if self.decay_factor < 0.0 {
-            return Err(format!("decay_factor must be >= 0.0, got {}", self.decay_factor));
+            anyhow::bail!("decay_factor must be >= 0.0, got {}", self.decay_factor);
         }
         Ok(())
     }
 
     /// Create with validation.
-    pub fn new_validated(taint_weight: f32, coverage_weight: f32, decay_factor: f32) -> Result<Self, String> {
+    pub fn new_validated(taint_weight: f32, coverage_weight: f32, decay_factor: f32) -> anyhow::Result<Self> {
         let config = Self { enabled: true, taint_weight, coverage_weight, decay_factor };
         config.validate()?;
         Ok(config)
@@ -240,10 +242,10 @@ impl DangerConfig {
     /// Blend coverage rarity and danger score into a power-schedule value
     /// clamped to [0.0, 1.0].
     pub fn compute_power_schedule(&self, coverage_rarity: f32, danger_score: f32) -> f32 {
-        let cov = coverage_rarity.max(0.0).min(1.0);
-        let dng = danger_score.max(0.0).min(1.0);
+        let cov = coverage_rarity.clamp(0.0, 1.0);
+        let dng = danger_score.clamp(0.0, 1.0);
         let score = cov * self.coverage_weight + dng * self.taint_weight;
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 }
 
@@ -260,6 +262,7 @@ pub fn compute_power_score(danger_score: f32, coverage_rarity: f32, config: &Dan
 pub fn shm_create(name: &str, size: usize) -> anyhow::Result<i32> {
     let c_name = std::ffi::CString::new(name)
         .with_context(|| format!("invalid SHM name: {}", name))?;
+    debug_assert!(name.len() < libc::PATH_MAX as usize, "SHM name too long");
     // SAFETY: shm_open is called with a valid NUL-terminated CString pointer,
     // O_RDWR|O_CREAT|O_EXCL for exclusive creation, and mode 0o600.
     // The CString lives for the duration of this call.
@@ -273,10 +276,12 @@ pub fn shm_create(name: &str, size: usize) -> anyhow::Result<i32> {
     if fd < 0 {
         anyhow::bail!("shm_open({}) failed: {}", name, std::io::Error::last_os_error());
     }
+    debug_assert!(fd >= 0, "ftruncate: invalid fd {}", fd);
     // SAFETY: ftruncate is called with a valid fd from shm_open (checked >= 0 above),
     // and the size argument matches the requested segment size.
     if unsafe { libc::ftruncate(fd, size as libc::off_t) } < 0 {
         let err = std::io::Error::last_os_error();
+        debug_assert!(fd >= 0, "close/shm_unlink: invalid fd {}", fd);
         // SAFETY: close and shm_unlink are called with a valid fd and valid CString
         // to clean up resources on ftruncate failure.
         unsafe {
@@ -290,6 +295,8 @@ pub fn shm_create(name: &str, size: usize) -> anyhow::Result<i32> {
 
 /// Mmap a shared memory segment read-write, returning a raw pointer.
 pub fn shm_map(fd: i32, size: usize) -> anyhow::Result<*mut u8> {
+    debug_assert!(fd >= 0, "mmap: invalid fd {}", fd);
+    debug_assert!(size > 0, "mmap: zero size");
     // SAFETY: mmap is called with a valid file descriptor from shm_open,
     // size matching the segment size from fstat, PROT_READ|PROT_WRITE only,
     // MAP_SHARED for read/write access, and offset 0.
@@ -314,6 +321,7 @@ pub fn shm_map(fd: i32, size: usize) -> anyhow::Result<*mut u8> {
 pub fn shm_unlink(name: &str) -> anyhow::Result<()> {
     let c_name = std::ffi::CString::new(name)
         .with_context(|| format!("invalid SHM name: {}", name))?;
+    debug_assert!(name.len() < libc::PATH_MAX as usize, "shm_unlink: name too long");
     // SAFETY: shm_unlink is called with a valid NUL-terminated CString pointer.
     // The CString lives for the duration of this call.
     let rc = unsafe { libc::shm_unlink(c_name.as_ptr()) };
@@ -331,6 +339,7 @@ pub fn danger_map_to_shm(map: &DangerMap, shm_name: &str) -> anyhow::Result<()> 
     let bytes = map.to_bytes();
     let fd = shm_create(shm_name, bytes.len())?;
     let ptr = shm_map(fd, bytes.len())?;
+    debug_assert!(!ptr.is_null(), "danger_map_to_shm: mmap returned null");
     // SAFETY: copy_nonoverlapping copies exactly bytes.len() bytes from a valid
     // Vec<u8> to the mmap'd writable region of the same size. After the copy,
     // munmap and close clean up the mapping and file descriptor.
@@ -346,6 +355,7 @@ pub fn danger_map_to_shm(map: &DangerMap, shm_name: &str) -> anyhow::Result<()> 
 pub fn danger_map_from_shm(shm_name: &str) -> anyhow::Result<DangerMap> {
     let c_name = std::ffi::CString::new(shm_name)
         .with_context(|| format!("invalid SHM name: {}", shm_name))?;
+    debug_assert!(shm_name.len() < libc::PATH_MAX as usize, "danger_map_from_shm: name too long");
     // SAFETY: shm_open is called with a valid NUL-terminated CString, O_RDONLY
     // for read-only access, and mode 0. The CString is valid for this call.
     let fd = unsafe { libc::shm_open(c_name.as_ptr(), libc::O_RDONLY, 0) };
@@ -359,10 +369,12 @@ pub fn danger_map_from_shm(shm_name: &str) -> anyhow::Result<DangerMap> {
     // SAFETY: std::mem::zeroed() is safe for libc::stat which is a POD struct;
     // all-zero bit pattern is a valid initialized value.
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    debug_assert!(fd >= 0, "fstat: invalid fd {}", fd);
     // SAFETY: fstat is called with a valid fd from shm_open and a mutable
     // reference to a zeroed stat struct that will be filled by the kernel.
     if unsafe { libc::fstat(fd, &mut stat) } < 0 {
         let err = std::io::Error::last_os_error();
+        debug_assert!(fd >= 0, "close (fstat failure): invalid fd {}", fd);
         // SAFETY: close on a valid fd to clean up after fstat failure.
         unsafe {
             libc::close(fd);
@@ -370,6 +382,8 @@ pub fn danger_map_from_shm(shm_name: &str) -> anyhow::Result<DangerMap> {
         anyhow::bail!("fstat({}) failed: {}", shm_name, err);
     }
     let size = stat.st_size as usize;
+    debug_assert!(fd >= 0, "mmap: invalid fd {}", fd);
+    debug_assert!(size > 0, "mmap: zero size");
     // SAFETY: mmap is called with a valid fd from shm_open, size from fstat
     // which matches the segment size, PROT_READ only, MAP_SHARED for read-only
     // access, and offset 0. The returned pointer is immediately converted to a
@@ -386,21 +400,25 @@ pub fn danger_map_from_shm(shm_name: &str) -> anyhow::Result<DangerMap> {
     };
     if ptr == libc::MAP_FAILED {
         let err = std::io::Error::last_os_error();
+        debug_assert!(fd >= 0, "close (mmap failure): invalid fd {}", fd);
         // SAFETY: close on a valid fd to clean up after mmap failure.
         unsafe {
             libc::close(fd);
         }
         anyhow::bail!("mmap({}) failed: {}", shm_name, err);
     }
+    debug_assert!(!ptr.is_null(), "from_raw_parts: null pointer");
     // SAFETY: from_raw_parts constructs an &[u8] over the mmap'd memory region
     // with the exact same size as returned by fstat. The memory is valid for the
     // lifetime of this function (munmap at end).
     let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, size) };
     let map = DangerMap::from_bytes(slice)?;
+    debug_assert!(!ptr.is_null(), "munmap: null pointer");
+    debug_assert!(fd >= 0, "close: invalid fd {}", fd);
     // SAFETY: munmap unmaps the shared memory region, and close releases the fd.
     // Both pointer and fd are valid from the mmap/shm_open calls above.
     unsafe {
-        libc::munmap(ptr as *mut libc::c_void, size);
+        libc::munmap(ptr, size);
         libc::close(fd);
     }
     shm_unlink(shm_name)?;

@@ -232,7 +232,7 @@ impl CodePropertyGraph {
             .filter(|idx| {
                 let node = &self.graph[*idx];
                 let name_match = node.name.contains(name);
-                let kind_match = kind.as_ref().map_or(true, |k| node.kind == *k);
+                let kind_match = kind.as_ref().is_none_or(|k| node.kind == *k);
                 name_match && kind_match
             })
             .collect()
@@ -378,12 +378,9 @@ impl CodePropertyGraph {
                 let edge_kind = &edge.weight().kind;
                 let becomes_sanitized = sanitized || matches!(edge_kind, EdgeKind::Sanitized);
 
-                let follows = match edge_kind {
-                    EdgeKind::DataFlow | EdgeKind::TaintFlow => true,
-                    EdgeKind::References | EdgeKind::Assigns => true,
-                    EdgeKind::Sanitized => true,
-                    _ => false,
-                };
+                let follows = matches!(edge_kind,
+                    EdgeKind::DataFlow | EdgeKind::TaintFlow | EdgeKind::References | EdgeKind::Assigns | EdgeKind::Sanitized
+                );
 
                 if follows {
                     let key = (target, becomes_sanitized);
@@ -405,7 +402,7 @@ impl CodePropertyGraph {
         let mut by_language = HashMap::new();
         let mut untracked = 0;
 
-        for (_, info) in &self.files {
+        for info in self.files.values() {
             let entry = by_language
                 .entry(info.language.clone())
                 .or_insert(LanguageStats {
@@ -416,7 +413,7 @@ impl CodePropertyGraph {
             entry.lines += info.lines;
         }
 
-        for (_, info) in &self.functions {
+        for info in self.functions.values() {
             for call in &info.calls {
                 if !self.function_index.contains_key(call) {
                     untracked += 1;

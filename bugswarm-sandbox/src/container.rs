@@ -3,8 +3,8 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use bollard::container::{
-    Config as ContainerConfig, CreateContainerOptions, LogOutput, LogsOptions,
-    StartContainerOptions,
+    Config as ContainerConfig, CreateContainerOptions, ListContainersOptions,
+    LogOutput, LogsOptions, RemoveContainerOptions, StartContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
 use bollard::image::CreateImageOptions;
@@ -84,7 +84,44 @@ impl ContainerManager {
                 }
             }
         }
-        Err(last_err.expect("max_retries > 0 guarantees at least one failure was stored"))
+        Err(match last_err {
+            Some(e) => e,
+            None => crate::error::SandboxError::Other("max_retries > 0 but no errors recorded".to_string()),
+        })
+    }
+
+    /// Drain all running bugswarm-sandbox containers on shutdown.
+    /// Kills and removes any containers whose names start with `bugswarm-sandbox-`.
+    pub async fn drain_all_containers(&self) {
+        let filter_name = "bugswarm-sandbox-";
+        let mut filters = std::collections::HashMap::new();
+        filters.insert("name", vec![filter_name]);
+        let options = ListContainersOptions {
+            all: true,
+            filters,
+            ..Default::default()
+        };
+        match self.docker.list_containers(Some(options)).await {
+            Ok(containers) => {
+                for container in &containers {
+                    if let Some(ref id) = container.id {
+                        let name = &id[..12.min(id.len())];
+                        if let Err(e) = self.docker.kill_container(id, None::<bollard::container::KillContainerOptions<&str>>).await {
+                            debug!("Failed to kill container {} on drain: {}", name, e);
+                        }
+                        if let Err(e) = self.docker.remove_container(
+                            id,
+                            Some(RemoveContainerOptions { force: true, v: true, link: false }),
+                        ).await {
+                            debug!("Failed to remove container {} on drain: {}", name, e);
+                        } else {
+                            info!("Cleaned up container {} on shutdown", name);
+                        }
+                    }
+                }
+            }
+            Err(e) => warn!("Failed to list containers for drain: {}", e),
+        }
     }
 
     /// Ensure the sandbox image is pulled.
@@ -296,11 +333,21 @@ impl ContainerManager {
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
 
-        // Write PoC to temp file on host for bind-mount (avoids shell injection via heredoc)
+        // Write PoC to temp file on host for bind-mount (avoids shell injection via heredoc).
+        // execution_id is a UUID hex string from Uuid::new_v4() — contains only [0-9a-f-].
+        // Safe for filesystem paths. No path traversal risk.
         let poc_host_dir = std::path::PathBuf::from("/tmp/bugswarm");
-        let poc_host_path = poc_host_dir.join(format!("poc-{}.py", execution_id));
         std::fs::create_dir_all(&poc_host_dir)
             .map_err(|e| SandboxError::ContainerExecution(format!("Failed to create PoC temp dir: {}", e)))?;
+
+        // Sanitize execution_id to contain only alphanumeric, dash, underscore (defense in depth)
+        let safe_id: String = execution_id
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        let poc_file_name = format!("poc-{}.py", safe_id);
+        let poc_host_path = poc_host_dir.join(&poc_file_name);
+
         std::fs::write(&poc_host_path, poc_content)
             .map_err(|e| SandboxError::ContainerExecution(format!("Failed to write PoC file: {}", e)))?;
         let _guard = PocFileGuard(poc_host_path.clone());
@@ -421,7 +468,7 @@ impl ContainerManager {
             Ok(ContainerOutput {
                 stdout, stderr, exit_code, duration_secs,
                 status: if oom_killed { ExecutionStatus::OomKilled }
-                        else if exit_code.map_or(true, |c| c == 0) { ExecutionStatus::Passed }
+                        else if exit_code.is_none_or(|c| c == 0) { ExecutionStatus::Passed }
                         else { ExecutionStatus::Failed },
                 memory_profile: MemoryProfile {
                     peak_mb: 0,
@@ -430,7 +477,7 @@ impl ContainerManager {
                     oom_killed,
                 },
                 timeout_reason: None, pre_kill_diagnostics: None,
-                error: if exit_code.map_or(false, |c| c != 0) { Some(format!("Exit code {}", exit_code.unwrap_or(-1))) } else { None },
+                error: if exit_code.is_some_and(|c| c != 0) { Some(format!("Exit code {}", exit_code.unwrap_or(-1))) } else { None },
             })
         }).await;
 
@@ -484,17 +531,15 @@ impl ContainerManager {
             ..Default::default()
         }).await.ok()?;
 
-        if let Ok(output) = self.docker.start_exec(&exec_result.id, None).await {
-            if let StartExecResults::Attached { mut output, .. } = output {
-                let mut status_text = String::new();
-                while let Some(Ok(msg)) = output.next().await {
-                    status_text.push_str(&String::from_utf8_lossy(&msg.into_bytes()));
-                }
-                diagnostics.push_str("=== Process State ===\n");
-                diagnostics.push_str(&status_text);
-                if status_text.contains("State:\tS") || status_text.contains("State:\tD") {
-                    diagnostics.push_str("\n[Process in sleep state — possible deadlock]\n");
-                }
+        if let Ok(StartExecResults::Attached { mut output, .. }) = self.docker.start_exec(&exec_result.id, None).await {
+            let mut status_text = String::new();
+            while let Some(Ok(msg)) = output.next().await {
+                status_text.push_str(&String::from_utf8_lossy(&msg.into_bytes()));
+            }
+            diagnostics.push_str("=== Process State ===\n");
+            diagnostics.push_str(&status_text);
+            if status_text.contains("State:\tS") || status_text.contains("State:\tD") {
+                diagnostics.push_str("\n[Process in sleep state — possible deadlock]\n");
             }
         }
 
@@ -608,13 +653,13 @@ impl ContainerManager {
     }
 
     fn classify_exception(stderr: &str, exit_code: Option<i64>) -> (Option<String>, Option<String>, ExceptionHandling) {
-        let is_error = exit_code.map_or(true, |c| c != 0);
+        let is_error = exit_code != Some(0);
         if !is_error && stderr.is_empty() {
             return (None, None, ExceptionHandling::Unknown);
         }
 
         if let Ok(re) = regex::Regex::new(r"(\w+(?:Error|Exception|Warning)):\s*(.+)") {
-            for cap in re.captures_iter(stderr) {
+            if let Some(cap) = re.captures(stderr) {
                 let exc = cap.get(1).map(|m| m.as_str().to_string());
                 let msg = cap.get(2).map(|m| m.as_str().to_string());
                 let handling = if stderr.contains("Traceback (most recent call last)") {
@@ -824,7 +869,7 @@ impl ContainerManager {
                             if let Some(ref exc) = receipt.exception_type {
                                 *exception_counts.entry(exc.clone()).or_insert(0) += 1;
                             }
-                            if let Some(ref frame) = receipt.stack_frames.first() {
+                            if let Some(frame) = receipt.stack_frames.first() {
                                 let loc = format!("{}:{}", frame.file, frame.line.unwrap_or(0));
                                 *location_counts.entry(loc).or_insert(0) += 1;
                             }
@@ -877,19 +922,19 @@ impl ContainerManager {
 
         // Top exceptions
         let mut top_exceptions: Vec<(String, u32)> = exception_counts.into_iter().collect();
-        top_exceptions.sort_by(|a, b| b.1.cmp(&a.1));
+        top_exceptions.sort_by_key(|b| std::cmp::Reverse(b.1));
         top_exceptions.truncate(3);
 
         // Top crash locations
         let mut top_locations: Vec<(String, u32)> = location_counts.into_iter().collect();
-        top_locations.sort_by(|a, b| b.1.cmp(&a.1));
+        top_locations.sort_by_key(|b| std::cmp::Reverse(b.1));
         top_locations.truncate(3);
 
         // Time-to-failure stats
         failure_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let ttf_min = failure_times.first().copied();
         let ttf_max = failure_times.last().copied();
-        let ttf_median = if failure_times.len() % 2 == 0 && !failure_times.is_empty() {
+        let ttf_median = if failure_times.len().is_multiple_of(2) && !failure_times.is_empty() {
             let mid = failure_times.len() / 2;
             Some((failure_times[mid - 1] + failure_times[mid]) / 2.0)
         } else if !failure_times.is_empty() {
@@ -929,27 +974,39 @@ impl ContainerManager {
         &self, poc_content: &str, env_vars: &HashMap<String, String>,
         intervention: crate::config::CausalIntervention,
     ) -> SandboxResult<crate::config::CausalInterventionResult> {
-        let intervention_poc = format!(
-            "import os, json\n\
-             target = {target:?}\n\
-             line_num = {line_num}\n\
-             orig_line = {orig:?}\n\
-             repl_line = {repl:?}\n\
-             if os.path.exists(target):\n\
-                 with open(target, 'r') as f:\n\
-                     lines = f.readlines()\n\
-                 if 1 <= line_num <= len(lines) and lines[line_num - 1].rstrip('\\n') == orig_line:\n\
-                     lines[line_num - 1] = repl_line + '\\n'\n\
-                     with open(target, 'w') as f:\n\
-                         f.writelines(lines)\n\
-             {poc}",
-            target = intervention.file_path,
-            line_num = intervention.line_number,
-            orig = intervention.original_line,
-            repl = intervention.replacement_line,
-            poc = poc_content,
+        // Serialize intervention params as JSON to avoid string interpolation of
+        // user-controlled data into the generated script (H32 fix).
+        // The JSON is embedded in a Python triple-quoted string — no shell escapes needed.
+        let config_json = serde_json::to_string(&serde_json::json!({
+            "file_path": intervention.file_path,
+            "line_number": intervention.line_number,
+            "original_line": intervention.original_line,
+            "replacement_line": intervention.replacement_line,
+        })).unwrap_or_else(|_| "{}".to_string());
+
+        let header = "import os, json\ncfg = json.loads('''";
+        let footer = "''')\ntarget = cfg['file_path']\n\
+            line_num = cfg['line_number']\n\
+            orig_line = cfg['original_line']\n\
+            repl_line = cfg['replacement_line']\n\
+            if os.path.exists(target):\n\
+                with open(target, 'r') as f:\n\
+                    lines = f.readlines()\n\
+                if 1 <= line_num <= len(lines) and \
+                   lines[line_num - 1].rstrip('\\n') == orig_line:\n\
+                    lines[line_num - 1] = repl_line + '\\n'\n\
+                    with open(target, 'w') as f:\n\
+                        f.writelines(lines)\n";
+
+        let mut script = String::with_capacity(
+            header.len() + config_json.len() + footer.len() + poc_content.len()
         );
-        let receipt = self.execute(&intervention_poc, env_vars, false).await?;
+        script.push_str(header);
+        script.push_str(&config_json);
+        script.push_str(footer);
+        script.push_str(poc_content);
+
+        let receipt = self.execute(&script, env_vars, false).await?;
         Ok(crate::config::CausalInterventionResult {
             crash_resolved: receipt.exit_code.unwrap_or(1) == 0,
             causality_confirmed: receipt.exit_code.unwrap_or(1) == 0,
@@ -1155,6 +1212,7 @@ fn parse_asan_report(content: &str) -> Option<AsanInfo> {
 /// Replaces hex addresses like `0x7f...` with `0x????????` for stable hashing.
 #[allow(dead_code)]
 fn normalize_addresses(trace: &str) -> String {
+    #[allow(clippy::unwrap_used)]
     let re = regex::Regex::new(r"0x[0-9a-fA-F]{4,}").unwrap();
     re.replace_all(trace, "0x????????").to_string()
 }

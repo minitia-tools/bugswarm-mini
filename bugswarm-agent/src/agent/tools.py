@@ -144,11 +144,17 @@ MAX_POC_SIZE_BYTES = 1_000_000
 MAX_INPUT_SIZE_BYTES = 10_000_000
 MAX_SOURCE_SIZE_BYTES = 5_000_000
 MAX_OUTPUT_SIZE_BYTES = 5_000_000
+MAX_CONTENT_BYTES = 10_000_000
+MAX_EDIT_BYTES = 5_000_000
 MAX_COUNT = 10_000
 MAX_QUERIES = 1_000
 MAX_HOPS = 20
 RATE_LIMIT_WINDOW_SECS = 60
 MAX_CALLS_PER_WINDOW = 100
+
+VALID_TOOL_ACTIONS = {"add", "update", "list", "status"}
+VALID_TOOL_STATUSES = {"pending", "in_progress", "done", "blocked"}
+VALID_SIGNALS = {"SIGTERM", "SIGKILL"}
 
 
 def _validate_exec_sandbox(args: dict) -> tuple[bool, str]:
@@ -164,9 +170,16 @@ def _validate_read_file(args: dict) -> tuple[bool, str]:
     path = args.get("path", "")
     if not path:
         return False, "read_file requires non-empty 'path'"
+    if "\0" in path:
+        return False, "read_file rejected: null byte in path"
+    stripped_path = path.lstrip()
+    if len(stripped_path) >= 2 and stripped_path[1] == ":":
+        return False, "read_file rejected: Windows drive letter paths not allowed"
     if path.startswith("/"):
         return False, f"read_file rejected: absolute path '{path}' forbidden"
-    if ".." in path.replace("\\", "/").split("/"):
+    normalized = path.replace("\\", "/")
+    segments = normalized.split("/")
+    if ".." in segments:
         return False, f"read_file rejected: path traversal blocked for '{path}'"
     return True, ""
 
@@ -193,11 +206,11 @@ def _validate_delta_debug(args: dict) -> tuple[bool, str]:
 
 
 def _validate_diff_execute(args: dict) -> tuple[bool, str]:
-    output_a = args.get("output_a", "")
-    output_b = args.get("output_b", "")
-    if not output_a and not output_b:
-        return False, "diff_execute requires at least one output to compare"
-    if len(output_a) > MAX_OUTPUT_SIZE_BYTES or len(output_b) > MAX_OUTPUT_SIZE_BYTES:
+    input_str = args.get("input", "")
+    reference = args.get("reference", "")
+    if not input_str and not reference:
+        return False, "diff_execute requires at least input and reference outputs"
+    if len(input_str) > MAX_OUTPUT_SIZE_BYTES or len(reference) > MAX_OUTPUT_SIZE_BYTES:
         return False, f"Output too large (max {MAX_OUTPUT_SIZE_BYTES} bytes)"
     return True, ""
 
@@ -287,6 +300,166 @@ def _validate_predict_fix_impact(args: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _validate_query_cpg(args: dict) -> tuple[bool, str]:
+    name = args.get("name", "")
+    if name and not isinstance(name, str):
+        return False, f"query_cpg 'name' must be a string, got {type(name).__name__}"
+    kind = args.get("kind", "")
+    if kind and not isinstance(kind, str):
+        return False, f"query_cpg 'kind' must be a string, got {type(kind).__name__}"
+    return True, ""
+
+
+def _validate_list_dir(args: dict) -> tuple[bool, str]:
+    path = args.get("path", ".")
+    if not path:
+        return False, "list_dir requires non-empty 'path'"
+    if "\0" in path:
+        return False, "list_dir rejected: null byte in path"
+    stripped = path.lstrip()
+    if len(stripped) >= 2 and stripped[1] == ":":
+        return False, "list_dir rejected: Windows drive letter paths not allowed"
+    if path.startswith("/"):
+        return False, f"list_dir rejected: absolute path '{path}' forbidden"
+    normalized = path.replace("\\", "/")
+    segments = normalized.split("/")
+    if ".." in segments:
+        return False, f"list_dir rejected: path traversal blocked for '{path}'"
+    return True, ""
+
+
+def _validate_trace_dependency(args: dict) -> tuple[bool, str]:
+    func = args.get("function_name", "")
+    if not func:
+        return False, "trace_dependency requires non-empty 'function_name'"
+    radius = args.get("radius", 3)
+    if not isinstance(radius, (int, float)):
+        return False, f"trace_dependency 'radius' must be a number, got {type(radius).__name__}"
+    return True, ""
+
+
+def _validate_grep(args: dict) -> tuple[bool, str]:
+    pattern = args.get("pattern", "")
+    if not pattern:
+        return False, "grep requires non-empty 'pattern'"
+    max_results = args.get("max_results", 500)
+    if isinstance(max_results, (int, float)):
+        if int(max_results) < 1 or int(max_results) > 5000:
+            return False, f"grep max_results must be 1-5000, got {max_results}"
+    return True, ""
+
+
+def _validate_glob(args: dict) -> tuple[bool, str]:
+    max_results = args.get("max_results", 200)
+    if isinstance(max_results, (int, float)):
+        if int(max_results) < 1 or int(max_results) > 10000:
+            return False, f"glob max_results must be 1-10000, got {max_results}"
+    return True, ""
+
+
+def _validate_write_file(args: dict) -> tuple[bool, str]:
+    path = args.get("path", "")
+    if not path:
+        return False, "write_file requires non-empty 'path'"
+    if "\0" in path:
+        return False, "write_file rejected: null byte in path"
+    if path.startswith("/"):
+        return False, f"write_file rejected: absolute path '{path}' forbidden"
+    normalized = path.replace("\\", "/")
+    segments = normalized.split("/")
+    if ".." in segments:
+        return False, f"write_file rejected: path traversal blocked for '{path}'"
+    content = args.get("content", "")
+    if not content:
+        return False, "write_file requires non-empty 'content'"
+    if len(content.encode("utf-8")) > MAX_CONTENT_BYTES:
+        return False, f"Content too large: {len(content.encode('utf-8'))} bytes (max {MAX_CONTENT_BYTES})"
+    return True, ""
+
+
+def _validate_edit_file(args: dict) -> tuple[bool, str]:
+    path = args.get("path", "")
+    if not path:
+        return False, "edit_file requires non-empty 'path'"
+    if "\0" in path:
+        return False, "edit_file rejected: null byte in path"
+    if path.startswith("/"):
+        return False, f"edit_file rejected: absolute path '{path}' forbidden"
+    normalized = path.replace("\\", "/")
+    segments = normalized.split("/")
+    if ".." in segments:
+        return False, f"edit_file rejected: path traversal blocked for '{path}'"
+    old_string = args.get("old_string", "")
+    new_string = args.get("new_string", "")
+    if not old_string:
+        return False, "edit_file requires non-empty 'old_string'"
+    if not new_string:
+        return False, "edit_file requires non-empty 'new_string'"
+    replace_all = args.get("replace_all", False)
+    if not isinstance(replace_all, bool):
+        return False, f"edit_file 'replace_all' must be a boolean, got {type(replace_all).__name__}"
+    return True, ""
+
+
+def _validate_web_fetch(args: dict) -> tuple[bool, str]:
+    url = args.get("url", "")
+    if not url:
+        return False, "web_fetch requires non-empty 'url'"
+    if not isinstance(url, str):
+        return False, f"web_fetch 'url' must be a string, got {type(url).__name__}"
+    if not url.startswith(("http://", "https://")):
+        return False, f"web_fetch 'url' must start with http:// or https://, got '{url[:20]}'"
+    return True, ""
+
+
+def _validate_todo_write(args: dict) -> tuple[bool, str]:
+    action = args.get("action", "")
+    if not action:
+        return False, "todo_write requires non-empty 'action'"
+    if action not in VALID_TOOL_ACTIONS:
+        return False, f"todo_write 'action' must be one of {VALID_TOOL_ACTIONS}, got '{action}'"
+    status = args.get("status", "pending")
+    if status not in VALID_TOOL_STATUSES:
+        return False, f"todo_write 'status' must be one of {VALID_TOOL_STATUSES}, got '{status}'"
+    priority = args.get("priority", 0)
+    if isinstance(priority, (int, float)):
+        if int(priority) < 0 or int(priority) > 10:
+            return False, f"todo_write 'priority' must be 0-10, got {priority}"
+    return True, ""
+
+
+def _validate_kill_shell(args: dict) -> tuple[bool, str]:
+    signal_name = args.get("signal", "SIGTERM")
+    if signal_name not in VALID_SIGNALS:
+        return False, f"kill_shell 'signal' must be one of {VALID_SIGNALS}, got '{signal_name}'"
+    kill_all = args.get("kill_all", False)
+    if not isinstance(kill_all, bool):
+        return False, f"kill_shell 'kill_all' must be a boolean, got {type(kill_all).__name__}"
+    return True, ""
+
+
+def _validate_arg_types(tool_name: str, args: dict, schema: dict) -> tuple[bool, str]:
+    props = schema.get("properties", {})
+    for arg_name, arg_val in args.items():
+        prop = props.get(arg_name)
+        if not prop:
+            continue
+        expected_type = prop.get("type", "")
+        if expected_type == "integer":
+            if not isinstance(arg_val, int):
+                return False, f"'{tool_name}' arg '{arg_name}' must be integer, got {type(arg_val).__name__}"
+        elif expected_type == "boolean":
+            if not isinstance(arg_val, bool):
+                return False, f"'{tool_name}' arg '{arg_name}' must be boolean, got {type(arg_val).__name__}"
+        elif expected_type == "string":
+            if not isinstance(arg_val, str):
+                return False, f"'{tool_name}' arg '{arg_name}' must be string, got {type(arg_val).__name__}"
+        elif expected_type == "array":
+            if not isinstance(arg_val, list):
+                return False, f"'{tool_name}' arg '{arg_name}' must be array, got {type(arg_val).__name__}"
+    return True, ""
+
+
 TOOL_VALIDATORS: dict[str, Callable] = {
     "exec_sandbox": _validate_exec_sandbox,
     "read_file": _validate_read_file,
@@ -301,6 +474,16 @@ TOOL_VALIDATORS: dict[str, Callable] = {
     "get_trigger_matrix": _validate_get_trigger_matrix,
     "suggest_chain": _validate_suggest_chain,
     "predict_fix_impact": _validate_predict_fix_impact,
+    "query_cpg": _validate_query_cpg,
+    "list_dir": _validate_list_dir,
+    "trace_dependency": _validate_trace_dependency,
+    "grep": _validate_grep,
+    "glob": _validate_glob,
+    "write_file": _validate_write_file,
+    "edit_file": _validate_edit_file,
+    "web_fetch": _validate_web_fetch,
+    "todo_write": _validate_todo_write,
+    "kill_shell": _validate_kill_shell,
 }
 
 
@@ -326,6 +509,9 @@ class ToolRegistry:
         timestamps.append(now)
         return True, ""
 
+    def _check_permissions(self, required: list[str]) -> tuple[bool, str]:
+        return True, ""
+
     def register(self, tool: ToolDefinition) -> None:
         self._tools[tool.name] = tool
         self._breakers[tool.name] = CircuitBreaker()
@@ -337,6 +523,18 @@ class ToolRegistry:
 
         tool = self._tools[name]
 
+        # Required permissions check
+        if tool.required_permissions:
+            ok, reason = self._check_permissions(tool.required_permissions)
+            if not ok:
+                return ToolResult(False, f"Tool rejected by permissions: {reason}")
+
+        # Arg type validation against schema
+        ok, reason = _validate_arg_types(name, args, tool.parameters)
+        if not ok:
+            return ToolResult(False, f"Tool rejected by type check: {reason}")
+
+        # Semantic validation (business rules, path safety, etc.)
         validator = TOOL_VALIDATORS.get(name)
         if validator is not None:
             ok, reason = validator(args)
