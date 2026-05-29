@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
 import time
 from collections import defaultdict
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import structlog
 
 from .types import (
-    ChatRequest, ChatResponse, ChatMessage, MessageRole,
-    GatewayConfig, ProviderConfig, ProviderType,
-    TokenUsage, CostInfo, request_fingerprint,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    CostInfo,
+    GatewayConfig,
+    ProviderConfig,
+    ProviderType,
+    TokenUsage,
 )
 
 logger = structlog.get_logger(__name__)
@@ -154,25 +158,31 @@ class LLMClient:
         match provider:
             case ProviderType.OPENAI:
                 from .providers.openai import OpenAIAdapter
+
                 return OpenAIAdapter(pconfig)
             case ProviderType.DEEPSEEK:
                 # DeepSeek uses OpenAI-compatible API — reuse OpenAI adapter
                 from .providers.openai import OpenAIAdapter
+
                 return OpenAIAdapter(pconfig)
             case ProviderType.ANTHROPIC:
                 from .providers.anthropic import AnthropicAdapter
+
                 return AnthropicAdapter(pconfig)
             case ProviderType.GOOGLE:
                 from .providers.google import GoogleAdapter
+
                 return GoogleAdapter(pconfig)
             case ProviderType.OLLAMA:
                 from .providers.ollama import OllamaAdapter
+
                 return OllamaAdapter(pconfig)
             case _:
                 raise ValueError(f"Unknown provider: {provider}")
 
     def _setup_signal_handlers(self) -> None:
         """Setup SIGUSR1 for config reload (hotswap trigger)."""
+
         def _reload(signum, frame):
             logger.warning("SIGUSR1 received — reloading config")
             try:
@@ -181,6 +191,7 @@ class LLMClient:
                     self.registry.hotswap(new_config.default_provider)
             except Exception as e:
                 logger.error("Config reload failed", error=str(e))
+
         try:
             signal.signal(signal.SIGUSR1, _reload)
         except (ValueError, OSError):
@@ -215,7 +226,7 @@ class LLMClient:
                 self.registry.record_usage(current_provider, response.usage, response.cost)
                 return response
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Provider timeout", provider=current_provider.value, attempt=total_attempts)
                 self.registry.record_error(current_provider)
                 if total_attempts >= max_retries:
@@ -230,13 +241,17 @@ class LLMClient:
 
             except Exception as e:
                 error_str = str(e).lower()
-                is_retryable = any(
-                    str(code) in error_str
-                    for code in self.config.retryable_statuses
-                ) or "rate limit" in error_str or "timeout" in error_str or "connection" in error_str
+                is_retryable = (
+                    any(str(code) in error_str for code in self.config.retryable_statuses)
+                    or "rate limit" in error_str
+                    or "timeout" in error_str
+                    or "connection" in error_str
+                )
 
                 if is_retryable:
-                    logger.warning("Retryable error", provider=current_provider.value, error=str(e)[:200], attempt=total_attempts)
+                    logger.warning(
+                        "Retryable error", provider=current_provider.value, error=str(e)[:200], attempt=total_attempts
+                    )
                     self.registry.record_error(current_provider)
                     if total_attempts >= max_retries:
                         fb = self._try_fallback(current_provider)
@@ -278,6 +293,7 @@ class LLMClient:
     def _compute_delay(self, attempt: int) -> float:
         """Exponential backoff with jitter."""
         import random
+
         delay = min(
             self.config.retry_base_delay_secs * (2 ** (attempt - 1)),
             self.config.retry_max_delay_secs,
@@ -295,11 +311,15 @@ class LLMClient:
             "token_budget": self.config.token_budget,
             "tokens_used": self.registry.total_tokens.total_tokens,
             "tokens_remaining": self.config.token_budget - self.registry.total_tokens.total_tokens,
-            "token_pct": (self.registry.total_tokens.total_tokens / self.config.token_budget * 100) if self.config.token_budget else 0,
+            "token_pct": (self.registry.total_tokens.total_tokens / self.config.token_budget * 100)
+            if self.config.token_budget
+            else 0,
             "cost_budget": self.config.cost_budget_usd,
             "cost_used": self.registry.total_cost,
             "cost_remaining": self.config.cost_budget_usd - self.registry.total_cost,
-            "cost_pct": (self.registry.total_cost / self.config.cost_budget_usd * 100) if self.config.cost_budget_usd else 0,
+            "cost_pct": (self.registry.total_cost / self.config.cost_budget_usd * 100)
+            if self.config.cost_budget_usd
+            else 0,
         }
 
     def is_budget_exhausted(self) -> bool:

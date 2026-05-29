@@ -15,15 +15,15 @@ import json
 import os
 import random
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import structlog
 
-from .features import FunctionFeatures, FeatureExtractor
+from .features import FeatureExtractor, FunctionFeatures
 
 logger = structlog.get_logger(__name__)
 
@@ -32,6 +32,7 @@ _XGB_AVAILABLE = False
 _xgb_import_error: str | None = None
 try:
     import xgboost as xgb
+
     _XGB_AVAILABLE = True
 except ImportError as e:
     _xgb_import_error = str(e)
@@ -39,8 +40,9 @@ except ImportError as e:
 _SKLEARN_AVAILABLE = False
 _sklearn_import_error: str | None = None
 try:
-    from sklearn.model_selection import train_test_split
     from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import train_test_split
+
     _SKLEARN_AVAILABLE = True
 except ImportError as e:
     _sklearn_import_error = str(e)
@@ -88,10 +90,7 @@ class RepoPrediction:
         if not entries:
             return ""
 
-        return (
-            "\nPRIORITY INVESTIGATION TARGETS (predicted bug probability):\n"
-            + "\n".join(entries[:top_n])
-        )
+        return "\nPRIORITY INVESTIGATION TARGETS (predicted bug probability):\n" + "\n".join(entries[:top_n])
 
     @staticmethod
     def _describe_features(ff: FunctionFeatures) -> str:
@@ -132,9 +131,14 @@ class BugProbabilityModel:
 
     # ── Training ──────────────────────────────────────────────────────────
 
-    def train(self, confirmed_bugs: list[dict], all_functions: list[dict],
-              repo_root: Path | None = None, hotspot_tracker: Any = None,
-              incremental: bool = False) -> dict:
+    def train(
+        self,
+        confirmed_bugs: list[dict],
+        all_functions: list[dict],
+        repo_root: Path | None = None,
+        hotspot_tracker: Any = None,
+        incremental: bool = False,
+    ) -> dict:
         """Train model from confirmed bugs list and all functions from CPG.
 
         Uses stratified negative sampling (C6.2.1) and overfitting prevention (C6.2.3).
@@ -163,8 +167,7 @@ class BugProbabilityModel:
             loc = bug.get("location", "")
             file_path = loc.split(":")[0] if ":" in loc else loc
             func_name = loc.split(":")[-1] if ":" in loc else "unknown"
-            feat = self._extract_features_for_bug(bug, file_path, func_name,
-                                                  repo_root, hotspot_tracker)
+            feat = self._extract_features_for_bug(bug, file_path, func_name, repo_root, hotspot_tracker)
             X.append(feat.to_array())
             y.append(1)
 
@@ -182,13 +185,16 @@ class BugProbabilityModel:
                     loc = bug.get("location", "")
                     file_path = loc.split(":")[0] if ":" in loc else loc
                     func_name = loc.split(":")[-1] if ":" in loc else "unknown"
-                    match = next((f for f in all_functions
-                                  if f.get("file") == file_path and f.get("name") == func_name), None)
+                    match = next(
+                        (f for f in all_functions if f.get("file") == file_path and f.get("name") == func_name), None
+                    )
                     if match:
                         cc = match.get("cyclomatic_complexity", 0)
                         # Find which quantile stratum
                         for i, s in enumerate(strata):
-                            if any(f.get("name") == match.get("name") and f.get("file") == match.get("file") for f in s):
+                            if any(
+                                f.get("name") == match.get("name") and f.get("file") == match.get("file") for f in s
+                            ):
                                 bug_strata[i] = bug_strata.get(i, 0) + 1
                                 break
 
@@ -239,12 +245,19 @@ class BugProbabilityModel:
         # 5. Train/test split
         try:
             X_train, X_val, y_train, y_val = train_test_split(
-                X_arr, y_arr, test_size=0.2, stratify=y_arr, random_state=42,
+                X_arr,
+                y_arr,
+                test_size=0.2,
+                stratify=y_arr,
+                random_state=42,
             )
         except ValueError:
             # Not enough samples for stratify
             X_train, X_val, y_train, y_val = train_test_split(
-                X_arr, y_arr, test_size=0.2, random_state=42,
+                X_arr,
+                y_arr,
+                test_size=0.2,
+                random_state=42,
             )
 
         # 6. Build/update model
@@ -260,14 +273,14 @@ class BugProbabilityModel:
             n_estimators=100,
             max_depth=5,
             learning_rate=0.1,
-            objective='binary:logistic',
-            eval_metric='logloss',
+            objective="binary:logistic",
+            eval_metric="logloss",
             early_stopping_rounds=10,
-            reg_lambda=1.0,       # L2 regularization (C6.2.3)
-            reg_alpha=0.5,        # L1 regularization (C6.2.3)
-            subsample=0.8,        # Row sampling (C6.2.3)
-            colsample_bytree=0.8, # Feature sampling (C6.2.3)
-            min_child_weight=5,   # Min samples per leaf (C6.2.3)
+            reg_lambda=1.0,  # L2 regularization (C6.2.3)
+            reg_alpha=0.5,  # L1 regularization (C6.2.3)
+            subsample=0.8,  # Row sampling (C6.2.3)
+            colsample_bytree=0.8,  # Feature sampling (C6.2.3)
+            min_child_weight=5,  # Min samples per leaf (C6.2.3)
             random_state=42,
             verbosity=0,
         )
@@ -285,15 +298,18 @@ class BugProbabilityModel:
         y_pred = self.model.predict_proba(X_val)[:, 1]
         self.auc_score = float(roc_auc_score(y_val, y_pred))
         self.sample_count = len(y_arr)
-        self.training_date = datetime.now(timezone.utc).isoformat()
+        self.training_date = datetime.now(UTC).isoformat()
 
         # 8. Save
         self.save()
 
-        logger.info("model_trained", samples=self.sample_count,
-                     positive=sum(1 for v in y if v == 1),
-                     negative=sum(1 for v in y if v == 0),
-                     auc=round(self.auc_score, 4))
+        logger.info(
+            "model_trained",
+            samples=self.sample_count,
+            positive=sum(1 for v in y if v == 1),
+            negative=sum(1 for v in y if v == 0),
+            auc=round(self.auc_score, 4),
+        )
 
         return {
             "status": "trained",
@@ -336,8 +352,7 @@ class BugProbabilityModel:
         t0 = time.perf_counter()
         if not self._ml_available or self.model is None or not functions:
             predictions = [
-                PredictionResult(f.function_name, f.file_path, 0.0, f, i + 1)
-                for i, f in enumerate(functions)
+                PredictionResult(f.function_name, f.file_path, 0.0, f, i + 1) for i, f in enumerate(functions)
             ]
         else:
             # Batch prediction
@@ -352,8 +367,7 @@ class BugProbabilityModel:
                 probas = np.zeros(len(functions))
 
             predictions = [
-                PredictionResult(f.function_name, f.file_path, float(p), f, 0)
-                for f, p in zip(functions, probas)
+                PredictionResult(f.function_name, f.file_path, float(p), f, 0) for f, p in zip(functions, probas)
             ]
 
         predictions.sort(key=lambda p: p.probability, reverse=True)
@@ -363,8 +377,9 @@ class BugProbabilityModel:
         elapsed = (time.perf_counter() - t0) * 1000
         top = predictions[0].probability if predictions else 0.0
 
-        logger.info("prediction_complete", functions=len(functions),
-                     top_score=round(top, 4), elapsed_ms=round(elapsed, 1))
+        logger.info(
+            "prediction_complete", functions=len(functions), top_score=round(top, 4), elapsed_ms=round(elapsed, 1)
+        )
 
         return RepoPrediction(
             repo_path="",
@@ -378,13 +393,10 @@ class BugProbabilityModel:
 
     def get_feature_importance(self) -> dict[str, float]:
         """Return feature importance scores. Sum ≈ 1.0."""
-        if self.model is None or not hasattr(self.model, 'feature_importances_'):
+        if self.model is None or not hasattr(self.model, "feature_importances_"):
             return {}
         importance = self.model.feature_importances_
-        return {
-            name: round(float(imp), 4)
-            for name, imp in zip(self.feature_names, importance)
-        }
+        return {name: round(float(imp), 4) for name, imp in zip(self.feature_names, importance)}
 
     # ── Persistence ───────────────────────────────────────────────────────
 
@@ -437,8 +449,12 @@ class BugProbabilityModel:
                 self.training_date = meta.get("training_date")
                 self.sample_count = meta.get("sample_count", 0)
                 self.auc_score = meta.get("auc_score", 0.0)
-            logger.info("model_loaded", training_date=self.training_date,
-                         auc=round(self.auc_score, 4), samples=self.sample_count)
+            logger.info(
+                "model_loaded",
+                training_date=self.training_date,
+                auc=round(self.auc_score, 4),
+                samples=self.sample_count,
+            )
         except Exception as e:
             logger.error("model_corrupted", error=str(e)[:200])
             self.model = None
@@ -451,9 +467,9 @@ class BugProbabilityModel:
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
-    def _extract_features_for_bug(self, bug: dict, file_path: str,
-                                   func_name: str, repo_root: Path | None,
-                                   hotspot_tracker: Any) -> FunctionFeatures:
+    def _extract_features_for_bug(
+        self, bug: dict, file_path: str, func_name: str, repo_root: Path | None, hotspot_tracker: Any
+    ) -> FunctionFeatures:
         """Build FunctionFeatures from a bug dict + CPG data."""
         # Try to get CPG features from bug metadata first
         feat = FunctionFeatures(
@@ -473,8 +489,7 @@ class BugProbabilityModel:
         return feat
 
     @staticmethod
-    def _stratify_by_complexity_quantiles(functions: list[dict],
-                                           n_strata: int = 5) -> list[list[dict]]:
+    def _stratify_by_complexity_quantiles(functions: list[dict], n_strata: int = 5) -> list[list[dict]]:
         """Group functions into n_strata by cyclomatic complexity quantiles.
 
         Uses percentile-based stratification for proportional representation.

@@ -73,15 +73,18 @@ class ContextCompressor:
         self.fidelity_history.append(fidelity["bertscore"])
 
         if fidelity["bertscore"] < self.min_fidelity and tier < 2:
-            logger.warning("compression_low_fidelity",
-                tier=tier, bertscore=fidelity["bertscore"],
-                action="escalating_tier")
+            logger.warning(
+                "compression_low_fidelity", tier=tier, bertscore=fidelity["bertscore"], action="escalating_tier"
+            )
             return self.compress(messages, tier + 1)
 
-        logger.info("compression_complete",
-            tier=tier, bertscore=fidelity["bertscore"],
+        logger.info(
+            "compression_complete",
+            tier=tier,
+            bertscore=fidelity["bertscore"],
             ratio=fidelity["compression_ratio"],
-            total_compressions=self.compression_count)
+            total_compressions=self.compression_count,
+        )
 
         return summary, fidelity["bertscore"]
 
@@ -96,13 +99,13 @@ class ContextCompressor:
             content = msg.get("content", "")
 
             if "finding" in content.lower() or "bug" in content.lower():
-                for line in content.split('\n'):
+                for line in content.split("\n"):
                     line = line.strip()
                     if any(kw in line.lower() for kw in ["bug", "vulnerability", "injection", "overflow"]):
                         if len(line) > 10:
                             claims.append(line[:150])
 
-            for match in re.finditer(r'(\w+\.py):(\d+)', content):
+            for match in re.finditer(r"(\w+\.py):(\d+)", content):
                 locations.add(f"{match.group(1)}:{match.group(2)}")
 
             if "sandbox" in content.lower() and ("pass" in content.lower() or "fail" in content.lower()):
@@ -147,7 +150,7 @@ class ContextCompressor:
         for i, seg in enumerate(segments):
             claim_texts = [m.get("content", "")[:120] for m in seg if len(m.get("content", "")) > 50]
             if claim_texts:
-                parts.append(f"\nSegment {i+1}: {len(seg)} messages, {len(claim_texts)} claims")
+                parts.append(f"\nSegment {i + 1}: {len(seg)} messages, {len(claim_texts)} claims")
                 parts.append(f"  Key point: {claim_texts[0]}")
 
         parts.append("\n[End abstractive summary]")

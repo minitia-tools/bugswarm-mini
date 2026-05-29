@@ -47,10 +47,10 @@ class RelevanceScorer:
         if re.search(r'File ".*", line \d+', tool_output):
             self.stats["kept"] += 1
             return 0.95, "keep: python traceback"
-        if re.search(r'(?:error|Error|ERROR|exception|Exception)', tool_output):
+        if re.search(r"(?:error|Error|ERROR|exception|Exception)", tool_output):
             self.stats["kept"] += 1
             return 0.90, "keep: error message"
-        if re.search(r'(?:PASS|FAIL|exit_code|oom_killed|status)', tool_output):
+        if re.search(r"(?:PASS|FAIL|exit_code|oom_killed|status)", tool_output):
             self.stats["kept"] += 1
             return 0.85, "keep: sandbox result"
 

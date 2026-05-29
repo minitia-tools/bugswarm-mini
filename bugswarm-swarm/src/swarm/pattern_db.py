@@ -10,9 +10,7 @@ import hashlib
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import structlog
 import yaml
@@ -51,7 +49,7 @@ class HotspotEntry:
     def decay(self, now: float) -> None:
         days = (now - self.last_scan_at) / 86400.0
         if days > 0:
-            self.score *= self.recency_decay ** days
+            self.score *= self.recency_decay**days
         self.last_scan_at = now
 
     def add_bug(self, severity: int, now: float) -> None:
@@ -95,9 +93,7 @@ class BugPatternDB:
     def __init__(self, persist_path: str = "~/.bugswarm/chroma"):
         self.store = PatternStore(persist_path)
         self.embedder = CodeEmbedder()
-        self._training_counter_path = Path(
-            os.path.expanduser("~/.bugswarm/chroma/training_counter")
-        )
+        self._training_counter_path = Path(os.path.expanduser("~/.bugswarm/chroma/training_counter"))
         self._confirmed_cache: list[dict] = []
         self._train_counter_cache: int | None = None
 
@@ -142,12 +138,17 @@ class BugPatternDB:
         if self._confirmed_cache:
             return self._confirmed_cache
         results = self.store.query([0.0] * 384, top_k=1000)
-        return [{"cwe": r.get("cwe", ""), "severity": r.get("severity", 5),
-                 "language": r.get("language", ""), "snippet": r.get("snippet", "")}
-                for r in results]
+        return [
+            {
+                "cwe": r.get("cwe", ""),
+                "severity": r.get("severity", 5),
+                "language": r.get("language", ""),
+                "snippet": r.get("snippet", ""),
+            }
+            for r in results
+        ]
 
-    def store_finding(self, finding: dict, code_snippet: str = "",
-                      language: str = "python") -> str:
+    def store_finding(self, finding: dict, code_snippet: str = "", language: str = "python") -> str:
         pid = hashlib.sha256(code_snippet.encode()).hexdigest()[:16]
 
         # Check duplicate
@@ -168,17 +169,21 @@ class BugPatternDB:
         }
 
         self.store.store(pid, embedding, metadata, code_snippet[:1000])
-        self._confirmed_cache.append({"id": pid, "cwe": metadata["cwe"],
-                                       "location": metadata.get("location", ""),
-                                       "severity_estimate": metadata.get("severity", 5),
-                                       "language": metadata.get("language", "python")})
+        self._confirmed_cache.append(
+            {
+                "id": pid,
+                "cwe": metadata["cwe"],
+                "location": metadata.get("location", ""),
+                "severity_estimate": metadata.get("severity", 5),
+                "language": metadata.get("language", "python"),
+            }
+        )
         current = self._load_counter()
         self._save_counter(current + 1)
         logger.info("pattern_stored", id=pid, cwe=metadata["cwe"], severity=metadata["severity"])
         return pid
 
-    def query_similar(self, code: str, top_k: int = 10,
-                      language: str | None = None) -> list[dict]:
+    def query_similar(self, code: str, top_k: int = 10, language: str | None = None) -> list[dict]:
         embedding = self.embedder.encode(code[:2000])
         return self.store.query(embedding, top_k, language)
 
@@ -236,8 +241,12 @@ class HotspotTracker:
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            fp: {"score": e.score, "bug_count": e.bug_count,
-                 "last_bug_at": e.last_bug_at, "last_scan_at": e.last_scan_at}
+            fp: {
+                "score": e.score,
+                "bug_count": e.bug_count,
+                "last_bug_at": e.last_bug_at,
+                "last_scan_at": e.last_scan_at,
+            }
             for fp, e in self.entries.items()
         }
         # Atomic write
@@ -275,21 +284,21 @@ class CveCorpus:
         self.embedder = CodeEmbedder()
         self.patterns: list[dict] = []
 
-    def ingest(self, cve_id: str, description: str, code_pattern: str,
-               language: str = "python") -> None:
+    def ingest(self, cve_id: str, description: str, code_pattern: str, language: str = "python") -> None:
         embedding = self.embedder.encode(f"{description} | {code_pattern[:500]}")
-        self.patterns.append({
-            "cve_id": cve_id,
-            "description": description,
-            "code_pattern": code_pattern,
-            "language": language,
-            "embedding": embedding,
-            "ingested_at": time.time(),
-        })
+        self.patterns.append(
+            {
+                "cve_id": cve_id,
+                "description": description,
+                "code_pattern": code_pattern,
+                "language": language,
+                "embedding": embedding,
+                "ingested_at": time.time(),
+            }
+        )
         logger.info("cve_ingested", cve=cve_id)
 
-    def match(self, code: str, language: str | None = None,
-              threshold: float = 0.3) -> list[dict]:
+    def match(self, code: str, language: str | None = None, threshold: float = 0.3) -> list[dict]:
         embedding = self.embedder.encode(code[:2000])
         matches = []
         for p in self.patterns:
@@ -297,11 +306,13 @@ class CveCorpus:
                 continue
             sim = self.embedder._cosine(embedding, p["embedding"])
             if sim > (1.0 - threshold):
-                matches.append({
-                    "cve_id": p["cve_id"],
-                    "similarity": round(sim, 4),
-                    "description": p["description"][:200],
-                })
+                matches.append(
+                    {
+                        "cve_id": p["cve_id"],
+                        "similarity": round(sim, 4),
+                        "description": p["description"][:200],
+                    }
+                )
         matches.sort(key=lambda m: m["similarity"], reverse=True)
         return matches[:5]
 
@@ -341,20 +352,24 @@ class AgentHistory:
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            aid: {"persona": r.persona, "model": r.model,
-                  "runs": r.runs, "bugs_found": r.bugs_found,
-                  "false_positives": r.false_positives,
-                  "tokens_consumed": r.tokens_consumed,
-                  "avg_tokens_per_verified": round(r.avg_tokens_per_verified, 2)}
+            aid: {
+                "persona": r.persona,
+                "model": r.model,
+                "runs": r.runs,
+                "bugs_found": r.bugs_found,
+                "false_positives": r.false_positives,
+                "tokens_consumed": r.tokens_consumed,
+                "avg_tokens_per_verified": round(r.avg_tokens_per_verified, 2),
+            }
             for aid, r in self.records.items()
         }
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(yaml.dump(data))
         tmp.rename(self.path)
 
-    def record_run(self, agent_id: str, persona: str, model: str,
-                   bugs_found: int, false_positives: int,
-                   tokens: int, verified: int) -> None:
+    def record_run(
+        self, agent_id: str, persona: str, model: str, bugs_found: int, false_positives: int, tokens: int, verified: int
+    ) -> None:
         rec = self.records.get(agent_id, AgentPerformance(agent_id=agent_id))
         rec.persona = persona
         rec.model = model
@@ -375,7 +390,4 @@ class AgentHistory:
         for r in self.records.values():
             if r.persona and r.avg_tokens_per_verified > 0:
                 by_persona.setdefault(r.persona, []).append(r.avg_tokens_per_verified)
-        return {
-            p: sum(vals) / len(vals)
-            for p, vals in by_persona.items()
-        }
+        return {p: sum(vals) / len(vals) for p, vals in by_persona.items()}

@@ -1,12 +1,14 @@
 """Minitia CLI — Multi-Engine Orchestrator."""
 
-import asyncio, json, sys
+import asyncio
+import json
 
-from minitia.core import MinitiaOrchestrator, EngineManifest
+from minitia.core import MinitiaOrchestrator
 
 
 async def run_cli():
     import argparse
+
     p = argparse.ArgumentParser(description="Minitia — Multi-Engine Agentic Tool Orchestrator")
     sub = p.add_subparsers(dest="command")
 
@@ -81,11 +83,21 @@ async def run_cli():
 
 
 async def run_phase12_gate(orch: MinitiaOrchestrator):
-    G = "\033[0;32m"; R = "\033[0;31m"; N = "\033[0m"
-    passed = 0; failed = 0
+    G = "\033[0;32m"
+    R = "\033[0;31m"
+    N = "\033[0m"
+    passed = 0
+    failed = 0
 
-    def p(name): nonlocal passed; print(f"  {G}PASS{N} {name}"); passed += 1
-    def f(name, reason): nonlocal failed; print(f"  {R}FAIL{N} {name} — {reason}"); failed += 1
+    def p(name):
+        nonlocal passed
+        print(f"  {G}PASS{N} {name}")
+        passed += 1
+
+    def f(name, reason):
+        nonlocal failed
+        print(f"  {R}FAIL{N} {name} — {reason}")
+        failed += 1
 
     print("=== Phase 12 Gate: Multi-Engine Orchestration ===\n")
 
@@ -140,6 +152,7 @@ async def run_phase12_gate(orch: MinitiaOrchestrator):
     # 8: Checksum verification
     print("[8] Checksum verification")
     import hashlib
+
     test_bin = orch.runner.engines_dir / "bugswarm"
     if test_bin.exists():
         content = test_bin.read_bytes() if test_bin.is_file() else b"stub"
@@ -159,6 +172,7 @@ async def run_phase12_gate(orch: MinitiaOrchestrator):
     cache_file = orch.registry.cache_dir / "registry.yaml"
     assert cache_file.exists()
     import yaml
+
     with open(cache_file) as f:
         data = yaml.safe_load(f)
     assert "engines" in data

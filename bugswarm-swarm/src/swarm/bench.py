@@ -6,11 +6,11 @@ judge queries, inter-judge synthesis debate.
 
 from __future__ import annotations
 
-import json, math, random, time
+import json
+import random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 import structlog
 
@@ -20,6 +20,7 @@ logger = structlog.get_logger(__name__)
 # ═══════════════════════════════════════════════════════════════
 # Types
 # ═══════════════════════════════════════════════════════════════
+
 
 class JudgeSpecialty(str, Enum):
     SECURITY = "security"
@@ -38,6 +39,7 @@ class VerdictStatus(str, Enum):
 @dataclass
 class Verdict:
     """Structured verdict from a judge."""
+
     judge_id: str
     specialty: JudgeSpecialty
     bug_verified: bool
@@ -72,8 +74,9 @@ class Verdict:
 @dataclass
 class JudgeCalibration:
     """Bias parameters for a judge model."""
+
     judge_id: str
-    severity_bias: float = 0.0     # Mean deviation from ground truth
+    severity_bias: float = 0.0  # Mean deviation from ground truth
     false_positive_rate: float = 0.0
     false_negative_rate: float = 0.0
     calibration_samples: int = 0
@@ -91,6 +94,7 @@ class JudgeCalibration:
 @dataclass
 class Case:
     """A bug case to be adjudicated."""
+
     case_id: str
     claim: str
     location: str
@@ -119,7 +123,7 @@ class Case:
         if self.evidence:
             parts.append(f"\nEVIDENCE ({len(self.evidence)} items):")
             for i, e in enumerate(self.evidence[:5]):
-                parts.append(f"  [{i+1}] {json.dumps(e)[:300]}")
+                parts.append(f"  [{i + 1}] {json.dumps(e)[:300]}")
         return "\n".join(parts)
 
 
@@ -132,22 +136,18 @@ JUDGE_PROMPTS: dict[JudgeSpecialty, str] = {
 Focus on: exploitability, attack surface, data exposure, privilege escalation.
 A 'bug' must be triggerable by realistic user input and cause a security breach (data leak, auth bypass, RCE, injection).
 Downgrade severity if the vulnerable code path is not reachable from external input.""",
-
     JudgeSpecialty.LOGIC: """You are the LOGIC JUDGE. Evaluate findings for logical correctness.
 Focus on: whether the claimed mechanism logically produces the observed behavior.
 A 'bug' must have a clear causal chain from input to incorrect output.
 Flag findings where the mechanism doesn't match the evidence.""",
-
     JudgeSpecialty.CONCURRENCY: """You are the CONCURRENCY JUDGE. Evaluate findings for concurrency issues.
 Focus on: race conditions, deadlocks, data races, atomicity violations.
 For flaky bugs: check statistical significance (failure rate >5%, confidence interval >0).
 Single-run results for race conditions are insufficient evidence.""",
-
     JudgeSpecialty.ARCHITECTURE: """You are the ARCHITECTURE JUDGE. Evaluate findings in system context.
 Focus on: whether the bug is in dead code, behind a WAF, in a deprecated path, or requires unrealistic preconditions.
 Contextualize blast radius: is this a single-user bug or a system-wide vulnerability?
 Evaluate fix complexity: does fixing this require cascading refactors?""",
-
     JudgeSpecialty.DATA_INTEGRITY: """You are the DATA INTEGRITY JUDGE. Evaluate findings for data corruption risk.
 Focus on: data loss, corruption, inconsistency, privacy violations.
 Check whether the evidence shows actual data impact or just theoretical risk.
@@ -158,6 +158,7 @@ Verify that the PoC demonstrates data modification, not just a crash.""",
 # ═══════════════════════════════════════════════════════════════
 # The Bench
 # ═══════════════════════════════════════════════════════════════
+
 
 class Bench:
     """5-judge arbitration panel."""
@@ -172,9 +173,7 @@ class Bench:
             "J4": {"specialty": JudgeSpecialty.ARCHITECTURE, "model": "claude-3.5-sonnet"},
             "J5": {"specialty": JudgeSpecialty.DATA_INTEGRITY, "model": "claude-3.5-sonnet"},
         }
-        self.calibrations: dict[str, JudgeCalibration] = {
-            jid: JudgeCalibration(judge_id=jid) for jid in self.judges
-        }
+        self.calibrations: dict[str, JudgeCalibration] = {jid: JudgeCalibration(judge_id=jid) for jid in self.judges}
         self.cases: dict[str, Case] = {}
         self.query_budgets: dict[str, int] = defaultdict(lambda: 3)
         self.total_judge_queries: int = 0
@@ -185,7 +184,9 @@ class Bench:
         for jid in self.judges:
             cal = self.calibrations[jid]
             severity_diffs = []
-            fp = 0; fn = 0; total = 0
+            fp = 0
+            fn = 0
+            total = 0
 
             for entry in golden_dataset:
                 # Simulated: in production, each judge evaluates and we compare
@@ -205,9 +206,13 @@ class Bench:
             cal.calibration_samples = total
             cal.stable = total >= 50
 
-            logger.info("judge_calibrated",
-                judge=jid, bias=cal.severity_bias,
-                fpr=cal.false_positive_rate, fnr=cal.false_negative_rate)
+            logger.info(
+                "judge_calibrated",
+                judge=jid,
+                bias=cal.severity_bias,
+                fpr=cal.false_positive_rate,
+                fnr=cal.false_negative_rate,
+            )
 
     def submit_case(self, case: Case) -> None:
         self.cases[case.case_id] = case
@@ -229,8 +234,12 @@ class Bench:
         return verdicts
 
     def _simulate_verdict(
-        self, jid: str, specialty: JudgeSpecialty,
-        brief: str, case: Case, cal: JudgeCalibration,
+        self,
+        jid: str,
+        specialty: JudgeSpecialty,
+        brief: str,
+        case: Case,
+        cal: JudgeCalibration,
     ) -> Verdict:
         """Simulate a judge's verdict. In production, this calls the LLM."""
         has_evidence = len(case.evidence) > 0
@@ -269,8 +278,10 @@ class Bench:
         trace = f"sandbox://{case.case_id}" if has_sandbox else f"evidence://{case.case_id}"
 
         return Verdict(
-            judge_id=jid, specialty=specialty,
-            bug_verified=confirmed, severity=severity,
+            judge_id=jid,
+            specialty=specialty,
+            bug_verified=confirmed,
+            severity=severity,
             evidence_quality=round(evidence_quality, 3),
             causal_chain_valid=has_evidence,
             false_positive_risk=round(fp_risk, 3),
@@ -291,14 +302,8 @@ class Bench:
         cal = self.calibrations
 
         # 1. Weighted vote
-        weighted_confirmed = sum(
-            v.bug_verified * cal[v.judge_id].voting_weight(True)
-            for v in verdicts
-        )
-        weighted_dismissed = sum(
-            (not v.bug_verified) * cal[v.judge_id].voting_weight(False)
-            for v in verdicts
-        )
+        weighted_confirmed = sum(v.bug_verified * cal[v.judge_id].voting_weight(True) for v in verdicts)
+        weighted_dismissed = sum((not v.bug_verified) * cal[v.judge_id].voting_weight(False) for v in verdicts)
 
         # 2. If split, try evidence-only re-vote
         if confirmed == dismissed or abs(weighted_confirmed - weighted_dismissed) < 0.5:
@@ -311,10 +316,10 @@ class Bench:
             # Severity: weighted average
             total_weight = sum(cal[v.judge_id].voting_weight(True) for v in verdicts if v.bug_verified)
             if total_weight > 0:
-                weighted_sev = sum(
-                    v.severity * cal[v.judge_id].voting_weight(True)
-                    for v in verdicts if v.bug_verified
-                ) / total_weight
+                weighted_sev = (
+                    sum(v.severity * cal[v.judge_id].voting_weight(True) for v in verdicts if v.bug_verified)
+                    / total_weight
+                )
             else:
                 weighted_sev = sum(v.severity for v in verdicts) / len(verdicts)
             case.final_severity = max(1, min(10, round(weighted_sev)))
@@ -355,8 +360,12 @@ class Bench:
                     # Check calibration — revoke authority if inaccurate
                     cal = self.calibrations[v.judge_id]
                     if cal.false_positive_rate > 0.20 or cal.false_negative_rate > 0.20:
-                        logger.warning("tiebreaker_authority_revoked",
-                            judge=v.judge_id, fpr=cal.false_positive_rate, fnr=cal.false_negative_rate)
+                        logger.warning(
+                            "tiebreaker_authority_revoked",
+                            judge=v.judge_id,
+                            fpr=cal.false_positive_rate,
+                            fnr=cal.false_negative_rate,
+                        )
                         continue
 
                     # Specialist breaks tie
@@ -376,9 +385,12 @@ class Bench:
         case.final_severity = highest_sev
         case.tiebroken = True
 
-        logger.warning("tiebreaker_conservative",
-            case=case.case_id, severity=highest_sev,
-            reason="When in doubt, escalate severity")
+        logger.warning(
+            "tiebreaker_conservative",
+            case=case.case_id,
+            severity=highest_sev,
+            reason="When in doubt, escalate severity",
+        )
 
         return {
             "status": case.final_verdict.value,
@@ -399,17 +411,19 @@ class Bench:
         self.query_budgets[case.case_id] -= 1
         self.total_judge_queries += 1
 
-        logger.info("judge_query",
-            judge=judge_id, case=case.case_id,
+        logger.info(
+            "judge_query",
+            judge=judge_id,
+            case=case.case_id,
             query=query[:100],
-            remaining_budget=self.query_budgets[case.case_id])
+            remaining_budget=self.query_budgets[case.case_id],
+        )
 
         return True, f"Query accepted. {self.query_budgets[case.case_id]} remaining for this case."
 
     def synthesis_debate(self, case: Case, judge_a: str, judge_b: str) -> dict:
         """Inter-Judge Synthesis Debate for unresolvable disagreement."""
-        logger.warning("synthesis_debate_started",
-            case=case.case_id, judge_a=judge_a, judge_b=judge_b)
+        logger.warning("synthesis_debate_started", case=case.case_id, judge_a=judge_a, judge_b=judge_b)
 
         # Simulated 2-round debate (in production, calls LLMs)
         va = next((v for v in case.verdicts if v.judge_id == judge_a), None)
@@ -460,7 +474,7 @@ class Bench:
         results = {"total": len(dataset), "correct": 0, "wrong": 0, "by_judge": {}}
         for entry in dataset:
             case = Case(
-                case_id=f"cal_{entry.get('id','?')}",
+                case_id=f"cal_{entry.get('id', '?')}",
                 claim=entry.get("claim", ""),
                 location=entry.get("location", ""),
                 mechanism=entry.get("mechanism", ""),

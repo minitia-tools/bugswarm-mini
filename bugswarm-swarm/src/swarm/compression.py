@@ -6,9 +6,10 @@ Prevents context bloat when 12+ agents accumulate debate history.
 
 from __future__ import annotations
 
-import hashlib, math, re
+import hashlib
+import math
+import re
 from collections import OrderedDict
-from typing import Any
 
 import structlog
 
@@ -18,6 +19,7 @@ logger = structlog.get_logger(__name__)
 # ═══════════════════════════════════════════════════════════════
 # Simple Embedding + Similarity (no external deps needed)
 # ═══════════════════════════════════════════════════════════════
+
 
 def simple_embed(text: str, dim: int = 64) -> list[float]:
     h = hashlib.sha256(text.encode()).digest()
@@ -39,6 +41,7 @@ def cosine_sim(a: list[float], b: list[float]) -> float:
 # ═══════════════════════════════════════════════════════════════
 # ROUGE-L Fidelity Check
 # ═══════════════════════════════════════════════════════════════
+
 
 def rouge_l(reference: str, candidate: str) -> float:
     """ROUGE-L: longest common subsequence based recall."""
@@ -106,6 +109,7 @@ def compute_fidelity(original: str, summary: str) -> dict[str, float]:
 # Context Compression Engine
 # ═══════════════════════════════════════════════════════════════
 
+
 class ContextCompressor:
     """Manages context window size and triggers compression when needed."""
 
@@ -161,15 +165,18 @@ class ContextCompressor:
         self.fidelity_history.append(fidelity["bertscore"])
 
         if fidelity["bertscore"] < self.min_fidelity and tier < 2:
-            logger.warning("compression_low_fidelity",
-                tier=tier, bertscore=fidelity["bertscore"],
-                action="escalating_tier")
+            logger.warning(
+                "compression_low_fidelity", tier=tier, bertscore=fidelity["bertscore"], action="escalating_tier"
+            )
             return self.compress(messages, tier + 1)
 
-        logger.info("compression_complete",
-            tier=tier, bertscore=fidelity["bertscore"],
+        logger.info(
+            "compression_complete",
+            tier=tier,
+            bertscore=fidelity["bertscore"],
             ratio=fidelity["compression_ratio"],
-            total_compressions=self.compression_count)
+            total_compressions=self.compression_count,
+        )
 
         return summary, fidelity["bertscore"]
 
@@ -188,7 +195,7 @@ class ContextCompressor:
 
             if "finding" in content.lower() or "bug" in content.lower():
                 # Extract claim
-                lines = content.split('\n')
+                lines = content.split("\n")
                 for line in lines:
                     line = line.strip()
                     if any(kw in line.lower() for kw in ["bug", "vulnerability", "injection", "overflow"]):
@@ -196,7 +203,7 @@ class ContextCompressor:
                             claims.append(line[:150])
 
             # Extract code locations
-            for match in re.finditer(r'(\w+\.py):(\d+)', content):
+            for match in re.finditer(r"(\w+\.py):(\d+)", content):
                 locations.add(f"{match.group(1)}:{match.group(2)}")
 
             # Extract sandbox results
@@ -242,7 +249,7 @@ class ContextCompressor:
                 if len(c) > 50:
                     claim_texts.append(c[:120])
             if claim_texts:
-                parts.append(f"\nSegment {i+1}: {len(seg)} messages, {len(claim_texts)} claims")
+                parts.append(f"\nSegment {i + 1}: {len(seg)} messages, {len(claim_texts)} claims")
                 parts.append(f"  Key point: {claim_texts[0]}")
 
         parts.append("\n[End abstractive summary]")
@@ -254,7 +261,7 @@ class ContextCompressor:
         parts = [f"[{len(messages) - keep_recent} older messages truncated]"]
         for msg in messages[-keep_recent:]:
             content = msg.get("content", "")[:200]
-            parts.append(f"[{msg.get('role','?')}] {content}")
+            parts.append(f"[{msg.get('role', '?')}] {content}")
         parts.append("[End lossless context]")
         return "\n".join(parts)
 
@@ -262,6 +269,7 @@ class ContextCompressor:
 # ═══════════════════════════════════════════════════════════════
 # Enhanced Loop Detector
 # ═══════════════════════════════════════════════════════════════
+
 
 class LoopDetector:
     """Detects semantic loops, cross-agent loops, and triadic echo chambers."""
@@ -279,7 +287,7 @@ class LoopDetector:
             self.agent_history[agent_id] = []
         self.agent_history[agent_id].append(content)
         if len(self.agent_history[agent_id]) > self.window_size * 3:
-            self.agent_history[agent_id] = self.agent_history[agent_id][-self.window_size * 2:]
+            self.agent_history[agent_id] = self.agent_history[agent_id][-self.window_size * 2 :]
 
     def detect_semantic_loop(self, agent_id: str) -> tuple[bool, str]:
         """Check if agent's recent messages form a semantic loop."""
@@ -287,7 +295,7 @@ class LoopDetector:
         if len(history) < self.window_size:
             return False, ""
 
-        recent = history[-self.window_size:]
+        recent = history[-self.window_size :]
         embeddings = [simple_embed(m) for m in recent]
         similarities = []
         for i in range(len(embeddings)):
@@ -312,8 +320,7 @@ class LoopDetector:
             sim = cosine_sim(simple_embed(ha[-i]), simple_embed(hb[-i]))
             if sim < self.threshold:
                 return False
-        self.pair_interactions[(agent_a, agent_b)] = \
-            self.pair_interactions.get((agent_a, agent_b), 0) + 1
+        self.pair_interactions[(agent_a, agent_b)] = self.pair_interactions.get((agent_a, agent_b), 0) + 1
         return True
 
     def detect_echo_chamber(self, agents: list[str]) -> list[set[str]]:
@@ -329,7 +336,7 @@ class LoopDetector:
             h1 = self.agent_history.get(a1, [])
             if not h1:
                 continue
-            for a2 in agents[i + 1:]:
+            for a2 in agents[i + 1 :]:
                 h2 = self.agent_history.get(a2, [])
                 if not h2:
                     continue
@@ -396,6 +403,7 @@ class LoopDetector:
 # Rate Limiter for recall_raw_context
 # ═══════════════════════════════════════════════════════════════
 
+
 class RecallRateLimiter:
     """Prevents agents from griefing by overusing recall_raw_context."""
 
@@ -427,6 +435,7 @@ class RecallRateLimiter:
 # Tool Output Relevance Scorer (Heuristic, Zero LLM Cost)
 # ═══════════════════════════════════════════════════════════════
 
+
 class RelevanceScorer:
     """Determines whether tool output should be kept in context or offloaded to disk."""
 
@@ -455,9 +464,9 @@ class RelevanceScorer:
         # 3. Structural signals
         if re.search(r'File ".*", line \d+', tool_output):
             return 0.95, "keep: python traceback"
-        if re.search(r'(?:error|Error|ERROR|exception|Exception)', tool_output):
+        if re.search(r"(?:error|Error|ERROR|exception|Exception)", tool_output):
             return 0.90, "keep: error message"
-        if re.search(r'✓|✓|✅|❌|PASS|FAIL|exit_code', tool_output):
+        if re.search(r"✓|✓|✅|❌|PASS|FAIL|exit_code", tool_output):
             return 0.85, "keep: sandbox result"
 
         # 4. Keyword overlap with hypothesis
@@ -483,6 +492,7 @@ class RelevanceScorer:
 # Vector DB Query Cache
 # ═══════════════════════════════════════════════════════════════
 
+
 class QueryCache:
     """Per-swarm cache for Vector DB queries with embedding-based dedup."""
 
@@ -492,13 +502,12 @@ class QueryCache:
         self.hits = 0
         self.misses = 0
         import time
+
         self._time = time.time
 
     def get(self, embedding: list[float]) -> str | None:
         """Get cached result for an embedding vector."""
-        key = hashlib.sha256(
-            ','.join(f'{x:.6f}' for x in embedding).encode()
-        ).hexdigest()
+        key = hashlib.sha256(",".join(f"{x:.6f}" for x in embedding).encode()).hexdigest()
 
         if key in self.cache:
             result, ts = self.cache[key]
@@ -514,9 +523,7 @@ class QueryCache:
         return None
 
     def set(self, embedding: list[float], result: str) -> None:
-        key = hashlib.sha256(
-            ','.join(f'{x:.6f}' for x in embedding).encode()
-        ).hexdigest()
+        key = hashlib.sha256(",".join(f"{x:.6f}" for x in embedding).encode()).hexdigest()
         self.cache[key] = (result, self._time())
         if len(self.cache) > 1000:
             self.cache.popitem(last=False)  # Evict oldest

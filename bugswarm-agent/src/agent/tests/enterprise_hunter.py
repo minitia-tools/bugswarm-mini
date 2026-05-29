@@ -16,37 +16,54 @@ passed = 0
 failed = 0
 results = {}
 
-def p(name): global passed; print(f"  {G}PASS{N} {name}"); passed += 1; results[name] = "PASS"
-def f(name, reason): global failed; print(f"  {R}FAIL{N} {name} — {reason}"); failed += 1; results[name] = f"FAIL: {reason}"
+
+def p(name):
+    global passed
+    print(f"  {G}PASS{N} {name}")
+    passed += 1
+    results[name] = "PASS"
+
+
+def f(name, reason):
+    global failed
+    print(f"  {R}FAIL{N} {name} — {reason}")
+    failed += 1
+    results[name] = f"FAIL: {reason}"
+
 
 def run_cpg(*args):
     return subprocess.run([CPG_BIN] + list(args), capture_output=True, text=True, timeout=30)
 
+
 def run_sandbox(poc_code: str) -> dict:
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tf:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tf:
         tf.write(poc_code)
         poc_path = tf.name
     try:
-        proc = subprocess.run([SANDBOX_BIN, "execute", "--poc", poc_path],
-            capture_output=True, text=True, timeout=130)
+        proc = subprocess.run([SANDBOX_BIN, "execute", "--poc", poc_path], capture_output=True, text=True, timeout=130)
         # Filter structured log lines — keep only the JSON receipt
-        for line in proc.stdout.split('\n'):
+        for line in proc.stdout.split("\n"):
             line = line.strip()
-            if line.startswith('{') and '"execution_id"' in line:
+            if line.startswith("{") and '"execution_id"' in line:
                 try:
                     return json.loads(line)
                 except json.JSONDecodeError:
                     continue
         # Fallback: try parsing whole output
         try:
-            return json.loads(proc.stdout) if proc.stdout.strip() else {"exit_code": proc.returncode, "status": "executed"}
+            return (
+                json.loads(proc.stdout) if proc.stdout.strip() else {"exit_code": proc.returncode, "status": "executed"}
+            )
         except json.JSONDecodeError:
             return {"exit_code": proc.returncode, "status": "executed", "output_preview": proc.stdout[:200]}
     except subprocess.TimeoutExpired:
         return {"error": "timeout"}
     finally:
-        try: os.unlink(poc_path)
-        except: pass
+        try:
+            os.unlink(poc_path)
+        except:
+            pass
+
 
 print("=== Phase 4 Gate: Enterprise Bug Hunter ===")
 print(f"Repo: {BUG_DIR}")
@@ -56,14 +73,14 @@ print()
 print("── CPG Analysis ──")
 cpg_result = run_cpg("stats", "--repo", str(BUG_DIR))
 cpg_data = json.loads(cpg_result.stdout) if cpg_result.stdout else {}
-print(f"  Files: {cpg_data.get('total_files',0)}, Functions: {cpg_data.get('total_functions',0)}")
-print(f"  Sources: {cpg_data.get('sources',0)}, Sinks: {cpg_data.get('sinks',0)}")
-print(f"  Taint paths: {cpg_data.get('taint_paths',0)}")
+print(f"  Files: {cpg_data.get('total_files', 0)}, Functions: {cpg_data.get('total_functions', 0)}")
+print(f"  Sources: {cpg_data.get('sources', 0)}, Sinks: {cpg_data.get('sinks', 0)}")
+print(f"  Taint paths: {cpg_data.get('taint_paths', 0)}")
 
 if cpg_data.get("total_functions", 0) >= 10:
     p("CPG indexes enterprise bug code")
 else:
-    f("CPG indexing", f"Only {cpg_data.get('total_functions',0)} functions")
+    f("CPG indexing", f"Only {cpg_data.get('total_functions', 0)} functions")
 
 # ── Step 2: Taint Analysis ──
 print("\n── Taint Path Analysis ──")
@@ -81,9 +98,15 @@ else:
 print("\n── BUG 1: SQL Injection via ORM bypass ──")
 try:
     # Trace from request entry to DatabaseConnection.execute
-    call_result = run_cpg("call-path", "--repo", str(BUG_DIR),
-        "--from", "/tmp/enterprise-bugs/bugs.py:bug1_sql_injection_entry",
-        "--to", "/tmp/enterprise-bugs/bugs.py:DatabaseConnection.execute")
+    call_result = run_cpg(
+        "call-path",
+        "--repo",
+        str(BUG_DIR),
+        "--from",
+        "/tmp/enterprise-bugs/bugs.py:bug1_sql_injection_entry",
+        "--to",
+        "/tmp/enterprise-bugs/bugs.py:DatabaseConnection.execute",
+    )
     if call_result.returncode == 0:
         p("CPG traces call path from entry to SQL execute")
     else:
@@ -345,11 +368,14 @@ total = passed + failed
 print(f"\n═══ Phase 4 Gate (Enterprise): {G}{passed} passed{N}, {R}{failed} failed{N}, {total} total ═══")
 
 receipt = {
-    "phase": 4, "name": "Single Agent IEP Loop",
+    "phase": 4,
+    "name": "Single Agent IEP Loop",
     "gate": "Enterprise Bug Hunter",
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "status": "PASSED" if failed == 0 else "PARTIAL",
-    "total_tests": total, "passed": passed, "failed": failed,
+    "total_tests": total,
+    "passed": passed,
+    "failed": failed,
     "results": results,
     "cpg_stats": cpg_data,
     "verdict": "PHASE 4 COMPLETE" if failed == 0 else "PHASE 4 NEEDS INVESTIGATION",

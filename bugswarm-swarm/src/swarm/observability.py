@@ -6,11 +6,13 @@ CI/CD integration command, SARIF export.
 
 from __future__ import annotations
 
-import json, os, time, threading
-from collections import defaultdict
+import json
+import os
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
 
 import aiohttp
 import structlog
@@ -21,6 +23,7 @@ logger = structlog.get_logger(__name__)
 # ═══════════════════════════════════════════════════════════════
 # Prometheus Metrics Registry
 # ═══════════════════════════════════════════════════════════════
+
 
 class MetricType(str, Enum):
     COUNTER = "counter"
@@ -64,8 +67,9 @@ class MetricsRegistry:
     def gauge(self, name: str, help: str, labels: dict[str, str] | None = None) -> Metric:
         return self._register(name, MetricType.GAUGE, help, labels or {})
 
-    def histogram(self, name: str, help: str, buckets: list[float] | None = None,
-                  labels: dict[str, str] | None = None) -> Metric:
+    def histogram(
+        self, name: str, help: str, buckets: list[float] | None = None, labels: dict[str, str] | None = None
+    ) -> Metric:
         m = self._register(name, MetricType.HISTOGRAM, help, labels or {})
         if buckets:
             self._histogram_buckets[name] = buckets
@@ -92,8 +96,7 @@ class MetricsRegistry:
 
     def render_json(self) -> list[dict]:
         return [
-            {"name": m.name, "type": m.kind.value, "help": m.help,
-             "labels": m.labels, "value": m.value}
+            {"name": m.name, "type": m.kind.value, "help": m.help, "labels": m.labels, "value": m.value}
             for m in self._metrics.values()
         ]
 
@@ -101,6 +104,7 @@ class MetricsRegistry:
 # ═══════════════════════════════════════════════════════════════
 # Alerting Engine
 # ═══════════════════════════════════════════════════════════════
+
 
 class AlertSeverity(str, Enum):
     WARN = "warn"
@@ -161,10 +165,14 @@ class AlertEngine:
         for rule in self.rules:
             if rule.evaluate():
                 triggered.append(rule)
-                self._fired_history.append({
-                    "rule": rule.name, "severity": rule.severity.value,
-                    "channel": rule.channel, "timestamp": time.time(),
-                })
+                self._fired_history.append(
+                    {
+                        "rule": rule.name,
+                        "severity": rule.severity.value,
+                        "channel": rule.channel,
+                        "timestamp": time.time(),
+                    }
+                )
                 if self._slack_notifier:
                     await self._send_slack_alert(rule)
         return triggered
@@ -172,7 +180,6 @@ class AlertEngine:
     async def _send_slack_alert(self, rule: AlertRule) -> None:
         if not self._slack_notifier:
             return
-        import asyncio
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.post(
@@ -187,8 +194,7 @@ class AlertEngine:
 
     def active_alerts(self) -> list[dict]:
         return [
-            {"name": r.name, "severity": r.severity.value, "description": r.description}
-            for r in self.rules if r.firing
+            {"name": r.name, "severity": r.severity.value, "description": r.description} for r in self.rules if r.firing
         ]
 
     def alert_history(self, limit: int = 50) -> list[dict]:
@@ -198,6 +204,7 @@ class AlertEngine:
 # ═══════════════════════════════════════════════════════════════
 # Structured Logger
 # ═══════════════════════════════════════════════════════════════
+
 
 class StructuredLogger:
     """Configures structured JSON logging for all components."""
@@ -225,17 +232,29 @@ class StructuredLogger:
         for handler in self._handlers:
             handler(entry)
 
-    def trace(self, msg: str, **ctx): self.log("TRACE", msg, **ctx)
-    def debug(self, msg: str, **ctx): self.log("DEBUG", msg, **ctx)
-    def info(self, msg: str, **ctx): self.log("INFO", msg, **ctx)
-    def warn(self, msg: str, **ctx): self.log("WARN", msg, **ctx)
-    def error(self, msg: str, **ctx): self.log("ERROR", msg, **ctx)
-    def critical(self, msg: str, **ctx): self.log("CRITICAL", msg, **ctx)
+    def trace(self, msg: str, **ctx):
+        self.log("TRACE", msg, **ctx)
+
+    def debug(self, msg: str, **ctx):
+        self.log("DEBUG", msg, **ctx)
+
+    def info(self, msg: str, **ctx):
+        self.log("INFO", msg, **ctx)
+
+    def warn(self, msg: str, **ctx):
+        self.log("WARN", msg, **ctx)
+
+    def error(self, msg: str, **ctx):
+        self.log("ERROR", msg, **ctx)
+
+    def critical(self, msg: str, **ctx):
+        self.log("CRITICAL", msg, **ctx)
 
 
 # ═══════════════════════════════════════════════════════════════
 # SARIF Export
 # ═══════════════════════════════════════════════════════════════
+
 
 def export_sarif(findings: list[dict], repo_uri: str = "file:///src") -> dict:
     """Export findings as SARIF (Static Analysis Results Interchange Format).
@@ -249,48 +268,56 @@ def export_sarif(findings: list[dict], repo_uri: str = "file:///src") -> dict:
         file_path = parts[0]
         line = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
 
-        results.append({
-            "ruleId": f"bugswarm/{f.get('claim', 'unknown')[:50].replace(' ', '-')}",
-            "ruleIndex": i,
-            "level": "error" if f.get("severity_estimate", 0) >= 7 else "warning",
-            "message": {
-                "text": f.get("claim", "Bug detected")[:200],
-            },
-            "locations": [{
-                "physicalLocation": {
-                    "artifactLocation": {"uri": file_path, "uriBaseId": "%SRCROOT%"},
-                    "region": {"startLine": line, "startColumn": 1},
+        results.append(
+            {
+                "ruleId": f"bugswarm/{f.get('claim', 'unknown')[:50].replace(' ', '-')}",
+                "ruleIndex": i,
+                "level": "error" if f.get("severity_estimate", 0) >= 7 else "warning",
+                "message": {
+                    "text": f.get("claim", "Bug detected")[:200],
                 },
-            }],
-            "properties": {
-                "severity": f.get("severity_estimate", 0),
-                "verified": f.get("verified", False),
-                "mechanism": f.get("mechanism", "")[:200],
-            },
-        })
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": file_path, "uriBaseId": "%SRCROOT%"},
+                            "region": {"startLine": line, "startColumn": 1},
+                        },
+                    }
+                ],
+                "properties": {
+                    "severity": f.get("severity_estimate", 0),
+                    "verified": f.get("verified", False),
+                    "mechanism": f.get("mechanism", "")[:200],
+                },
+            }
+        )
 
     return {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
-        "runs": [{
-            "tool": {
-                "driver": {
-                    "name": "Bug Swarm",
-                    "version": "2.1.0",
-                    "informationUri": "https://bugswarm.ai",
-                    "rules": [
-                        {"id": f"bugswarm/{f.get('claim','')[:50].replace(' ','-')}",
-                         "shortDescription": {"text": f.get("claim", "")[:100]},
-                         "helpUri": "https://bugswarm.ai/rules"}
-                        for f in findings
-                    ],
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "Bug Swarm",
+                        "version": "2.1.0",
+                        "informationUri": "https://bugswarm.ai",
+                        "rules": [
+                            {
+                                "id": f"bugswarm/{f.get('claim', '')[:50].replace(' ', '-')}",
+                                "shortDescription": {"text": f.get("claim", "")[:100]},
+                                "helpUri": "https://bugswarm.ai/rules",
+                            }
+                            for f in findings
+                        ],
+                    },
                 },
-            },
-            "results": results,
-            "originalUriBaseIds": {
-                "SRCROOT": {"uri": repo_uri},
-            },
-        }],
+                "results": results,
+                "originalUriBaseIds": {
+                    "SRCROOT": {"uri": repo_uri},
+                },
+            }
+        ],
     }
 
 
@@ -298,40 +325,44 @@ def export_sarif(findings: list[dict], repo_uri: str = "file:///src") -> dict:
 # Metrics HTTP Server
 # ═══════════════════════════════════════════════════════════════
 
+
 def start_metrics_server(port: int = 9090, registry=None):
     """Start a minimal HTTP server exposing Prometheus metrics."""
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    import os
+    from http.server import BaseHTTPRequestHandler, HTTPServer
 
     if registry is None:
         from swarm.observability import _global_registry
+
         registry = _global_registry
 
     class MetricsHandler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == '/metrics':
+            if self.path == "/metrics":
                 self.send_response(200)
-                self.send_header('Content-Type', 'text/plain')
+                self.send_header("Content-Type", "text/plain")
                 self.end_headers()
                 self.wfile.write(registry.render_prometheus().encode())
-            elif self.path == '/health':
+            elif self.path == "/health":
                 self.send_response(200)
                 self.end_headers()
             else:
                 self.send_response(404)
                 self.end_headers()
 
-    server = HTTPServer(('0.0.0.0', port), MetricsHandler)
+    server = HTTPServer(("0.0.0.0", port), MetricsHandler)
     import threading
+
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server
+
 
 _global_registry = MetricsRegistry()
 
 # ═══════════════════════════════════════════════════════════════
 # CI/CD Command
 # ═══════════════════════════════════════════════════════════════
+
 
 @dataclass
 class CIConfig:
@@ -340,7 +371,7 @@ class CIConfig:
     severity_min: int = 7
     timeout_secs: int = 1800
     format: str = "sarif"  # json, sarif, text
-    fail_on: str = "any"   # any, critical, none
+    fail_on: str = "any"  # any, critical, none
 
 
 def run_ci(config: CIConfig, findings_provider: Callable[[], list[dict]] | None = None) -> tuple[int, str]:
@@ -367,7 +398,7 @@ def run_ci(config: CIConfig, findings_provider: Callable[[], list[dict]] | None 
     else:
         lines = []
         for f in filtered:
-            lines.append(f"[{f.get('severity_estimate','?')}] {f.get('location','?')}: {f.get('claim','?')}")
+            lines.append(f"[{f.get('severity_estimate', '?')}] {f.get('location', '?')}: {f.get('claim', '?')}")
         output = "\n".join(lines)
 
     # Determine exit code
@@ -379,8 +410,7 @@ def run_ci(config: CIConfig, findings_provider: Callable[[], list[dict]] | None 
     else:
         exit_code = 1 if filtered else 0
 
-    logger.info("ci_run_completed",
-        findings=len(filtered), severity_min=config.severity_min, exit_code=exit_code)
+    logger.info("ci_run_completed", findings=len(filtered), severity_min=config.severity_min, exit_code=exit_code)
 
     return exit_code, output
 
@@ -388,6 +418,7 @@ def run_ci(config: CIConfig, findings_provider: Callable[[], list[dict]] | None 
 # ═══════════════════════════════════════════════════════════════
 # Observability Manager
 # ═══════════════════════════════════════════════════════════════
+
 
 class ObservabilityManager:
     """Unified observability: metrics + logging + alerting."""
@@ -417,24 +448,59 @@ class ObservabilityManager:
 
     def _setup_default_alerts(self) -> None:
         a = self.alerts
-        a.add_rule(AlertRule("cost_warning", "Cost > 80% of budget", AlertSeverity.WARN,
-            lambda: self.metrics.get("bugswarm_cost_usd").value > 40.0, "slack"))
-        a.add_rule(AlertRule("cost_critical", "Cost budget exhausted", AlertSeverity.CRITICAL,
-            lambda: self.metrics.get("bugswarm_cost_usd").value > 50.0, "pagerduty"))
-        a.add_rule(AlertRule("sandbox_tainted", "Sandbox returned tainted execution", AlertSeverity.WARN,
-            lambda: False, "slack"))
-        a.add_rule(AlertRule("sandbox_escape", "Sandbox escape attempt detected", AlertSeverity.CRITICAL,
-            lambda: False, "pagerduty"))
-        a.add_rule(AlertRule("host_memory", "Host memory > 80%", AlertSeverity.WARN,
-            lambda: False, "slack"))
-        a.add_rule(AlertRule("judge_degradation", "Judge dismiss rate > 90% for 3 swarms", AlertSeverity.WARN,
-            lambda: False, "slack"))
-        a.add_rule(AlertRule("compression_low_fidelity", "Compression fidelity < 0.7", AlertSeverity.WARN,
-            lambda: False, "slack"))
-        a.add_rule(AlertRule("db_replication_lag", "PostgreSQL replication lag > 5s", AlertSeverity.WARN,
-            lambda: False, "pagerduty"))
-        a.add_rule(AlertRule("orchestrator_heartbeat", "Orchestrator heartbeat missing > 30s", AlertSeverity.CRITICAL,
-            lambda: False, "pagerduty"))
+        a.add_rule(
+            AlertRule(
+                "cost_warning",
+                "Cost > 80% of budget",
+                AlertSeverity.WARN,
+                lambda: self.metrics.get("bugswarm_cost_usd").value > 40.0,
+                "slack",
+            )
+        )
+        a.add_rule(
+            AlertRule(
+                "cost_critical",
+                "Cost budget exhausted",
+                AlertSeverity.CRITICAL,
+                lambda: self.metrics.get("bugswarm_cost_usd").value > 50.0,
+                "pagerduty",
+            )
+        )
+        a.add_rule(
+            AlertRule(
+                "sandbox_tainted", "Sandbox returned tainted execution", AlertSeverity.WARN, lambda: False, "slack"
+            )
+        )
+        a.add_rule(
+            AlertRule(
+                "sandbox_escape", "Sandbox escape attempt detected", AlertSeverity.CRITICAL, lambda: False, "pagerduty"
+            )
+        )
+        a.add_rule(AlertRule("host_memory", "Host memory > 80%", AlertSeverity.WARN, lambda: False, "slack"))
+        a.add_rule(
+            AlertRule(
+                "judge_degradation", "Judge dismiss rate > 90% for 3 swarms", AlertSeverity.WARN, lambda: False, "slack"
+            )
+        )
+        a.add_rule(
+            AlertRule(
+                "compression_low_fidelity", "Compression fidelity < 0.7", AlertSeverity.WARN, lambda: False, "slack"
+            )
+        )
+        a.add_rule(
+            AlertRule(
+                "db_replication_lag", "PostgreSQL replication lag > 5s", AlertSeverity.WARN, lambda: False, "pagerduty"
+            )
+        )
+        a.add_rule(
+            AlertRule(
+                "orchestrator_heartbeat",
+                "Orchestrator heartbeat missing > 30s",
+                AlertSeverity.CRITICAL,
+                lambda: False,
+                "pagerduty",
+            )
+        )
 
     def notify(self, rule: AlertRule) -> None:
         """Simulated notification. In production: Slack, PagerDuty, email."""

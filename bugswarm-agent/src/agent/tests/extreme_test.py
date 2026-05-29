@@ -13,14 +13,24 @@ from agent.core import BugSwarmAgent, AgentConfig
 from gateway.client import LLMClient
 from gateway.types import GatewayConfig, ProviderType
 
-G = "\033[0;32m"; R = "\033[0;31m"; N = "\033[0m"
+G = "\033[0;32m"
+R = "\033[0;31m"
+N = "\033[0m"
 TARGET_BUGS = [
-    "HMAC timing oracle", "Unicode normalization bypass", "Off-by-one buffer overflow",
-    "Float comparison in finance", "SSL verification disabled",
-    "Thread-safety violation", "Type confusion eval()", "Integer truncation overflow",
-    "TOCTOU file permission", "JWT none algorithm", "ReDoS backtracking",
+    "HMAC timing oracle",
+    "Unicode normalization bypass",
+    "Off-by-one buffer overflow",
+    "Float comparison in finance",
+    "SSL verification disabled",
+    "Thread-safety violation",
+    "Type confusion eval()",
+    "Integer truncation overflow",
+    "TOCTOU file permission",
+    "JWT none algorithm",
+    "ReDoS backtracking",
     "Use-after-free finalizer",
 ]
+
 
 async def main():
     api_key = os.getenv("DEEPSEEK_API_KEY", "")
@@ -28,9 +38,9 @@ async def main():
         print("Set DEEPSEEK_API_KEY first")
         return
 
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  Phase 4 AGGRESSIVE TEST — DeepSeek V3 on 12 Extreme Hidden Bugs")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
     print(f"Target: /tmp/extreme-bugs (12 bugs, 430 lines)")
     print(f"Model: deepseek-chat (DeepSeek V3)")
     print(f"Persona: adversarial")
@@ -60,15 +70,15 @@ async def main():
     tokens = gw.registry.total_tokens.total_tokens
     cost = gw.registry.total_cost
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  RESULTS")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  Duration:  {elapsed:.0f}s")
     print(f"  Findings:  {len(findings)}")
     print(f"  Verified:  {verified}")
     print(f"  Tokens:    {tokens}")
     print(f"  Cost:      ${cost:.4f}")
-    print(f"  Per bug:   ${cost/max(len(findings),1):.4f}")
+    print(f"  Per bug:   ${cost / max(len(findings), 1):.4f}")
     print(f"\n  Target bugs: {len(TARGET_BUGS)}")
     print(f"  Found:       {len(findings)}/{len(TARGET_BUGS)}")
 
@@ -77,18 +87,19 @@ async def main():
         claim = f.get("claim", "?")[:100]
         v = "✓ VERIFIED" if f.get("verified") else ""
         sev = f.get("severity_estimate", "?")
-        print(f"\n  [{i+1}] {v} (sev={sev}) {claim}")
+        print(f"\n  [{i + 1}] {v} (sev={sev}) {claim}")
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     if len(findings) >= 3:
         print(f"  {G}✓ PHASE 4 AGGRESSIVE TEST PASSED{N}")
         print(f"  DeepSeek V3 found {len(findings)}/{len(TARGET_BUGS)} extreme bugs")
     else:
         print(f"  {R}✗ Found only {len(findings)} bugs — investigate{N}")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     with open("/tmp/extreme_test_report.json", "w") as f:
         json.dump(result, f, indent=2, default=str)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -6,11 +6,15 @@ Bug Swarm is one engine. Future engines follow the same contract.
 
 from __future__ import annotations
 
-import asyncio, hashlib, json, os, shutil, signal, subprocess, sys, time
+import hashlib
+import json
+import os
+import signal
+import subprocess
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 import structlog
 import yaml
@@ -21,6 +25,7 @@ logger = structlog.get_logger(__name__)
 # ═══════════════════════════════════════════════════════════════
 # Types
 # ═══════════════════════════════════════════════════════════════
+
 
 class EngineStatus(str, Enum):
     INSTALLED = "installed"
@@ -45,6 +50,7 @@ class EngineManifest:
 
     def get_platform_key(self) -> str | None:
         import platform
+
         system = platform.system().lower()
         machine = platform.machine().lower()
         mapping = {
@@ -72,9 +78,12 @@ class EngineState:
 
     def to_dict(self) -> dict:
         return {
-            "name": self.name, "version": self.version,
-            "status": self.status.value, "findings": self.findings,
-            "verified": self.verified, "cost": round(self.cost, 4),
+            "name": self.name,
+            "version": self.version,
+            "status": self.status.value,
+            "findings": self.findings,
+            "verified": self.verified,
+            "cost": round(self.cost, 4),
             "run_id": self.run_id,
         }
 
@@ -82,6 +91,7 @@ class EngineState:
 # ═══════════════════════════════════════════════════════════════
 # Engine Registry
 # ═══════════════════════════════════════════════════════════════
+
 
 class EngineRegistry:
     """Client for the Minitia engine registry."""
@@ -149,6 +159,7 @@ class EngineRegistry:
 # Engine Installer
 # ═══════════════════════════════════════════════════════════════
 
+
 class EngineInstaller:
     """Downloads, verifies, and installs engine binaries."""
 
@@ -171,8 +182,10 @@ class EngineInstaller:
         if installed_path.exists() and not force:
             logger.info("engine_already_installed", engine=manifest.name, version=manifest.version)
             return EngineState(
-                name=manifest.name, version=manifest.version,
-                status=EngineStatus.INSTALLED, binary_path=installed_path,
+                name=manifest.name,
+                version=manifest.version,
+                status=EngineStatus.INSTALLED,
+                binary_path=installed_path,
             )
 
         # Download
@@ -201,8 +214,10 @@ class EngineInstaller:
         logger.info("engine_installed", engine=manifest.name, version=manifest.version)
 
         return EngineState(
-            name=manifest.name, version=manifest.version,
-            status=EngineStatus.INSTALLED, binary_path=symlink_path,
+            name=manifest.name,
+            version=manifest.version,
+            status=EngineStatus.INSTALLED,
+            binary_path=symlink_path,
         )
 
     def uninstall(self, name: str) -> None:
@@ -230,6 +245,7 @@ class EngineInstaller:
 # Engine Runner
 # ═══════════════════════════════════════════════════════════════
 
+
 class EngineRunner:
     """Runs engines as subprocesses with the engine contract."""
 
@@ -245,7 +261,10 @@ class EngineRunner:
         return path.resolve()
 
     async def run(
-        self, engine_name: str, target: str, args: list[str] | None = None,
+        self,
+        engine_name: str,
+        target: str,
+        args: list[str] | None = None,
         json_mode: bool = True,
     ) -> EngineState:
         """Run an engine against a target."""
@@ -259,13 +278,18 @@ class EngineRunner:
         logger.info("engine_starting", engine=engine_name, target=target, cmd=" ".join(cmd))
 
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1,
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
         )
 
         state = EngineState(
-            name=engine_name, status=EngineStatus.RUNNING,
-            binary_path=binary, pid=proc.pid,
+            name=engine_name,
+            status=EngineStatus.RUNNING,
+            binary_path=binary,
+            pid=proc.pid,
             started_at=time.time(),
             run_id=hashlib.sha256(f"{engine_name}:{target}:{time.time()}".encode()).hexdigest()[:12],
         )
@@ -333,6 +357,7 @@ class EngineRunner:
 # Minitia Orchestrator
 # ═══════════════════════════════════════════════════════════════
 
+
 class MinitiaOrchestrator:
     """Top-level orchestrator for all engines."""
 
@@ -345,6 +370,7 @@ class MinitiaOrchestrator:
     def _register_builtin_engines(self) -> None:
         """Register built-in engine manifests."""
         import platform
+
         system = platform.system().lower()
         machine = platform.machine().lower()
         plat_key = {
@@ -383,8 +409,11 @@ class MinitiaOrchestrator:
         if engine_name:
             state = await self.runner.status(engine_name)
             return {engine_name: state.to_dict()} if state else {}
-        return {name: (await self.runner.status(name)).to_dict()
-                for name in self.runner.states if await self.runner.status(name)}
+        return {
+            name: (await self.runner.status(name)).to_dict()
+            for name in self.runner.states
+            if await self.runner.status(name)
+        }
 
     async def stop(self, engine_name: str) -> EngineState | None:
         return await self.runner.stop(engine_name)

@@ -69,9 +69,13 @@ class CLIConfig:
 
         return cls(
             repo=Path(args.repo).resolve(),
-            persona=persona, model=model, provider=provider,
-            rounds=rounds, turns=turns,
-            token_budget=token_budget, cost_budget=cost_budget,
+            persona=persona,
+            model=model,
+            provider=provider,
+            rounds=rounds,
+            turns=turns,
+            token_budget=token_budget,
+            cost_budget=cost_budget,
             time_budget_minutes=time_budget,
             cpg_binary=cpg_binary,
             sandbox_binary=sandbox_binary,
@@ -82,10 +86,9 @@ class CLIConfig:
             dry_run=args.dry_run or False,
             db_path=args.db or os.getenv("BGSWARM_DB", ":memory:"),
             scanner_config=args.scanner_config or "",
-            probability_enabled=not getattr(args, 'no_probability', False),
-            probability_model_path=args.probability_model or os.getenv(
-                "BGSWARM_PROBABILITY_MODEL", "~/.bugswarm/probability_model.json"
-            ),
+            probability_enabled=not getattr(args, "no_probability", False),
+            probability_model_path=args.probability_model
+            or os.getenv("BGSWARM_PROBABILITY_MODEL", "~/.bugswarm/probability_model.json"),
         )
 
     @classmethod
@@ -96,9 +99,9 @@ class CLIConfig:
             epilog="Set DEEPSEEK_API_KEY or OPENAI_API_KEY to use a real LLM.",
         )
         p.add_argument("repo", nargs="?", default=".", help="Path to repository")
-        p.add_argument("--persona", choices=["causal","adversarial","defensive","semantic"])
+        p.add_argument("--persona", choices=["causal", "adversarial", "defensive", "semantic"])
         p.add_argument("--model", help="LLM model (default: deepseek-v4-flash)")
-        p.add_argument("--provider", choices=["openai","anthropic","deepseek","google","ollama"])
+        p.add_argument("--provider", choices=["openai", "anthropic", "deepseek", "google", "ollama"])
         p.add_argument("--rounds", type=int, help="Max IEP rounds (default: 5)")
         p.add_argument("--turns", type=int, help="Max turns per round (default: 10)")
         p.add_argument("--token-budget", type=int, help="Token budget limit")
@@ -107,14 +110,16 @@ class CLIConfig:
         p.add_argument("--cpg-binary", help="Path to CPG binary")
         p.add_argument("--sandbox-binary", help="Path to sandbox binary")
         p.add_argument("--output", "-o", help="Output file for JSON/SARIF report")
-        p.add_argument("--format", choices=["json","sarif","text"], default="json")
+        p.add_argument("--format", choices=["json", "sarif", "text"], default="json")
         p.add_argument("--json", action="store_true", help="Stream JSON lines to stdout")
         p.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
         p.add_argument("--dry-run", action="store_true", help="Validate without running")
         p.add_argument("--db", help="SQLite database path for persistence")
         p.add_argument("--scanner-config", help="Path to scanner YAML config")
         p.add_argument("--probability-model", help="Path to ML probability model file")
-        p.add_argument("--probability", action="store_true", default=True, help="Enable ML probability prediction (default: on)")
+        p.add_argument(
+            "--probability", action="store_true", default=True, help="Enable ML probability prediction (default: on)"
+        )
         p.add_argument("--no-probability", action="store_true", help="Disable ML probability prediction")
         p.add_argument("--config", "-c", help="Path to unified BugSwarm config YAML")
         p.add_argument("--test", action="store_true", help=argparse.SUPPRESS)

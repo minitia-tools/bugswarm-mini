@@ -5,16 +5,15 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import structlog
 
 from .config import load_model_cache, save_model_cache
 from .protocol import (
+    ChatRequest,
     ModelCapabilities,
     ModelInfo,
     ModelPricing,
-    ChatRequest,
     ProtocolAdapter,
 )
 
@@ -125,6 +124,7 @@ class ModelRegistry:
     async def _try_fetch_remote(self) -> bool:
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=2.0) as client:
                 resp = await client.get(REMOTE_REGISTRY_URL)
                 resp.raise_for_status()
@@ -196,15 +196,13 @@ class ModelRegistry:
                 probed[mid] = info
         return probed
 
-    async def _probe_capabilities(
-        self, adapter: ProtocolAdapter, model_id: str
-    ) -> ModelCapabilities:
+    async def _probe_capabilities(self, adapter: ProtocolAdapter, model_id: str) -> ModelCapabilities:
         caps = ModelCapabilities()
 
         try:
             req = ChatRequest(
                 model=model_id,
-                messages=[{"role": "user", "content": "Return {\"ok\": true}"}],
+                messages=[{"role": "user", "content": 'Return {"ok": true}'}],
                 max_tokens=20,
                 json_mode=True,
             )
@@ -218,20 +216,20 @@ class ModelRegistry:
             req = ChatRequest(
                 model=model_id,
                 messages=[{"role": "user", "content": "What is 2+2?"}],
-                tools=[{
-                    "type": "function",
-                    "function": {
-                        "name": "calculate",
-                        "description": "Calculate a math expression",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "expr": {"type": "string"}
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "calculate",
+                            "description": "Calculate a math expression",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"expr": {"type": "string"}},
+                                "required": ["expr"],
                             },
-                            "required": ["expr"],
                         },
-                    },
-                }],
+                    }
+                ],
                 max_tokens=20,
             )
             resp = await asyncio.wait_for(adapter.chat(req), timeout=8.0)
@@ -242,9 +240,7 @@ class ModelRegistry:
         caps.max_input_tokens = await self._probe_context_window(adapter, model_id)
         return caps
 
-    async def _probe_context_window(
-        self, adapter: ProtocolAdapter, model_id: str
-    ) -> int:
+    async def _probe_context_window(self, adapter: ProtocolAdapter, model_id: str) -> int:
         try:
             req = ChatRequest(
                 model=model_id,
@@ -278,19 +274,22 @@ class ModelRegistry:
 
             pricing_label = (
                 f"${m.pricing.input_cost_per_mtok:.2f} in / ${m.pricing.output_cost_per_mtok:.2f} out per 1M tok"
-                if m.pricing else "Unknown"
+                if m.pricing
+                else "Unknown"
             )
 
-            result.append(ModelDisplay(
-                id=m.id,
-                provider=m.provider_label,
-                pricing_label=pricing_label,
-                capabilities=m.capabilities,
-                warning=warning,
-                is_new=not m.is_pricing_known,
-                context_window=m.context_window,
-                protocol=m.protocol,
-            ))
+            result.append(
+                ModelDisplay(
+                    id=m.id,
+                    provider=m.provider_label,
+                    pricing_label=pricing_label,
+                    capabilities=m.capabilities,
+                    warning=warning,
+                    is_new=not m.is_pricing_known,
+                    context_window=m.context_window,
+                    protocol=m.protocol,
+                )
+            )
         return result
 
     def _dict_to_model_info(self, model_id: str, data: dict) -> ModelInfo:

@@ -7,8 +7,10 @@ domain profiles. Never truly 'done' — improves with every run.
 
 from __future__ import annotations
 
-import hashlib, json, time, zlib
-from collections import defaultdict
+import hashlib
+import json
+import time
+import zlib
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -23,6 +25,7 @@ logger = structlog.get_logger(__name__)
 # Domain Profiles
 # ═══════════════════════════════════════════════════════════════
 
+
 class DomainProfile(str, Enum):
     WEB_APP = "web_app"
     SMART_CONTRACT = "smart_contract"
@@ -34,11 +37,11 @@ class DomainProfile(str, Enum):
 @dataclass
 class DomainConfig:
     name: DomainProfile
-    pragmatism_level: float      # 0.0 = theoretical only, 1.0 = realistic only
+    pragmatism_level: float  # 0.0 = theoretical only, 1.0 = realistic only
     requires_realistic_trigger: bool
-    side_channel_scope: bool     # Timing, power analysis in-scope
-    safety_patterns: bool        # Flag unsafe patterns even if not bugs
-    max_severity_baseline: int    # Minimum severity to report
+    side_channel_scope: bool  # Timing, power analysis in-scope
+    safety_patterns: bool  # Flag unsafe patterns even if not bugs
+    max_severity_baseline: int  # Minimum severity to report
 
     @classmethod
     def for_profile(cls, profile: DomainProfile) -> DomainConfig:
@@ -66,19 +69,20 @@ class DomainConfig:
 # Production Bug Ingestion + Retrospective Analysis
 # ═══════════════════════════════════════════════════════════════
 
+
 class FailureMode(str, Enum):
-    CPG_MISSED = "cpg_missed"           # Bug in unindexed code region
-    AGENT_OVERRULED = "agent_overruled" # Agent found it but was gaslit
-    JUDGE_DISMISSED = "judge_dismissed" # Judge incorrectly dismissed
-    SANDBOX_FAILED = "sandbox_failed"   # Sandbox couldn't reproduce
+    CPG_MISSED = "cpg_missed"  # Bug in unindexed code region
+    AGENT_OVERRULED = "agent_overruled"  # Agent found it but was gaslit
+    JUDGE_DISMISSED = "judge_dismissed"  # Judge incorrectly dismissed
+    SANDBOX_FAILED = "sandbox_failed"  # Sandbox couldn't reproduce
     NOT_INVESTIGATED = "not_investigated"  # No agent looked at this code
 
 
 @dataclass
 class ProductionIncident:
     incident_id: str
-    bug_location: str       # file:line
-    bug_type: str           # sql_injection, race_condition, etc.
+    bug_location: str  # file:line
+    bug_type: str  # sql_injection, race_condition, etc.
     severity: int
     cve_id: str = ""
     description: str = ""
@@ -113,19 +117,20 @@ class FeedbackEngine:
         self.incidents.append(incident)
         logger.info("incident_ingested", id=incident.incident_id, location=incident.bug_location)
 
-    def analyze(self, incident: ProductionIncident, cpg_data: dict | None = None,
-                agent_logs: list[dict] | None = None,
-                judge_verdicts: list[dict] | None = None,
-                sandbox_logs: list[dict] | None = None) -> ProductionIncident:
+    def analyze(
+        self,
+        incident: ProductionIncident,
+        cpg_data: dict | None = None,
+        agent_logs: list[dict] | None = None,
+        judge_verdicts: list[dict] | None = None,
+        sandbox_logs: list[dict] | None = None,
+    ) -> ProductionIncident:
         """Retrospective analysis: determine why the bug was missed."""
         agent_logs = agent_logs or []
         judge_verdicts = judge_verdicts or []
 
         # 1: Did any agent mention the vulnerable code?
-        mentioned = any(
-            incident.bug_location in log.get("content", "")
-            for log in agent_logs
-        )
+        mentioned = any(incident.bug_location in log.get("content", "") for log in agent_logs)
 
         if not mentioned and cpg_data:
             # Check if the code region was indexed
@@ -134,7 +139,7 @@ class FeedbackEngine:
             indexed = file in str(cpg_data)
             if not indexed:
                 incident.failure_mode = FailureMode.CPG_MISSED
-                incident.corrective_actions.append("Expand CPG indexing radius for {}".format(file))
+                incident.corrective_actions.append(f"Expand CPG indexing radius for {file}")
             else:
                 incident.failure_mode = FailureMode.NOT_INVESTIGATED
                 incident.corrective_actions.append("Increase exploration persona weight")
@@ -149,8 +154,7 @@ class FeedbackEngine:
             if agent_found:
                 # Check if judges dismissed
                 dismissed = any(
-                    v.get("status") == "dismissed" and incident.bug_location in str(v)
-                    for v in judge_verdicts
+                    v.get("status") == "dismissed" and incident.bug_location in str(v) for v in judge_verdicts
                 )
                 if dismissed:
                     incident.failure_mode = FailureMode.JUDGE_DISMISSED
@@ -234,6 +238,7 @@ def test_regression_{incident.incident_id.replace("-", "_")}():
 # WAL Replication with CRC32
 # ═══════════════════════════════════════════════════════════════
 
+
 class WALReplicator:
     """Replicates Write-Ahead Log to secondary storage with CRC32 verification."""
 
@@ -272,13 +277,15 @@ class WALReplicator:
         count = 0
         for block in self.blocks:
             target_block = target / f"block_{block['block_id']:06d}.wal"
-            payload = json.dumps({
-                "block_id": block["block_id"],
-                "crc32": block["crc32"],
-                "size": block["size"],
-                "timestamp": block["timestamp"],
-                "data_hex": block["data"].hex(),
-            })
+            payload = json.dumps(
+                {
+                    "block_id": block["block_id"],
+                    "crc32": block["crc32"],
+                    "size": block["size"],
+                    "timestamp": block["timestamp"],
+                    "data_hex": block["data"].hex(),
+                }
+            )
             target_block.write_text(payload)
             count += 1
         return count
@@ -303,6 +310,7 @@ class WALReplicator:
 # Override Governance Audit Trail
 # ═══════════════════════════════════════════════════════════════
 
+
 class AuditTrail:
     """Immutable, cryptographically chained audit trail for overrides."""
 
@@ -311,8 +319,11 @@ class AuditTrail:
         self._chain_hash: str = "0" * 64  # Genesis block
 
     def record_override(
-        self, operator: str, case_id: str,
-        before_severity: int, after_severity: int,
+        self,
+        operator: str,
+        case_id: str,
+        before_severity: int,
+        after_severity: int,
         justification: str = "",
     ) -> str:
         """Record a human override with cryptographic chaining."""
@@ -327,15 +338,13 @@ class AuditTrail:
         }
         # Chain: hash(current_entry + previous_hash)
         entry_json = json.dumps(entry, sort_keys=True)
-        entry["entry_hash"] = hashlib.sha256(
-            (entry_json + self._chain_hash).encode()
-        ).hexdigest()
+        entry["entry_hash"] = hashlib.sha256((entry_json + self._chain_hash).encode()).hexdigest()
         self._chain_hash = entry["entry_hash"]
         self.entries.append(entry)
 
-        logger.info("override_recorded",
-            operator=operator, case=case_id,
-            severity_change=f"{before_severity}→{after_severity}")
+        logger.info(
+            "override_recorded", operator=operator, case=case_id, severity_change=f"{before_severity}→{after_severity}"
+        )
 
         return entry["entry_hash"]
 
@@ -352,18 +361,22 @@ class AuditTrail:
         return True
 
     def get_override_summary(self) -> list[dict]:
-        return [{
-            "operator": e["operator"],
-            "case": e["case_id"],
-            "change": f"{e['before_severity']}→{e['after_severity']}",
-            "justification": e["justification"][:100],
-            "hash": e["entry_hash"][:16],
-        } for e in self.entries]
+        return [
+            {
+                "operator": e["operator"],
+                "case": e["case_id"],
+                "change": f"{e['before_severity']}→{e['after_severity']}",
+                "justification": e["justification"][:100],
+                "hash": e["entry_hash"][:16],
+            }
+            for e in self.entries
+        ]
 
 
 # ═══════════════════════════════════════════════════════════════
 # Regression Firewall
 # ═══════════════════════════════════════════════════════════════
+
 
 class RegressionFirewall:
     """Catches regressions introduced by patches."""
@@ -394,17 +407,23 @@ class RegressionFirewall:
         if "output_hash" in self.baselines:
             new_hash = hashlib.sha256(patched_code.encode()).hexdigest()
             if new_hash != self.baselines.get("output_hash"):
-                failures.append({"type": "differential", "name": "output_changed",
-                                 "expected": self.baselines["output_hash"][:16],
-                                 "actual": new_hash[:16]})
+                failures.append(
+                    {
+                        "type": "differential",
+                        "name": "output_changed",
+                        "expected": self.baselines["output_hash"][:16],
+                        "actual": new_hash[:16],
+                    }
+                )
 
         # 3: Coverage check — patch should not reduce coverage
         if "coverage_pct" in self.baselines:
             new_lines = len(patched_code.split("\n"))
             old_lines = len(original_code.split("\n"))
             if new_lines < old_lines * 0.9:
-                failures.append({"type": "coverage", "name": "coverage_dropped",
-                                 "old_lines": old_lines, "new_lines": new_lines})
+                failures.append(
+                    {"type": "coverage", "name": "coverage_dropped", "old_lines": old_lines, "new_lines": new_lines}
+                )
 
         # 4: AST diff — detect dangerous structural changes
         dangerous_patterns = [
@@ -414,11 +433,11 @@ class RegressionFirewall:
         ]
         for name, pattern in dangerous_patterns:
             import re
+
             old_matches = len(re.findall(pattern, original_code))
             new_matches = len(re.findall(pattern, patched_code))
             if new_matches < old_matches:
-                failures.append({"type": "ast_diff", "name": name,
-                                 "old_count": old_matches, "new_count": new_matches})
+                failures.append({"type": "ast_diff", "name": name, "old_count": old_matches, "new_count": new_matches})
 
         if failures:
             logger.warning("regression_detected", failures=len(failures))

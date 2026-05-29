@@ -9,5 +9,8 @@ __pycache__/
 node_modules/
 dist/
 
+build/
+*.bak
+
 # Per-crate lock files — keep only workspace root Cargo.lock
 bugswarm-*/Cargo.lock

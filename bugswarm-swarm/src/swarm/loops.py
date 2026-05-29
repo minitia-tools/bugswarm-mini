@@ -6,8 +6,6 @@ echo chamber detection. Pattern-break prompts disrupt detected loops.
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 import structlog
 
 from .fidelity import trigram_similarity
@@ -31,7 +29,7 @@ class LoopDetector:
             self.agent_history[agent_id] = []
         self.agent_history[agent_id].append(content)
         if len(self.agent_history[agent_id]) > self.window_size * 3:
-            self.agent_history[agent_id] = self.agent_history[agent_id][-self.window_size * 2:]
+            self.agent_history[agent_id] = self.agent_history[agent_id][-self.window_size * 2 :]
 
     def detect_semantic_loop(self, agent_id: str) -> tuple[bool, str]:
         """Check if agent's recent messages form a semantic loop.
@@ -42,7 +40,7 @@ class LoopDetector:
         if len(history) < self.window_size:
             return False, ""
 
-        recent = history[-self.window_size:]
+        recent = history[-self.window_size :]
         similarities = []
         for i in range(len(recent)):
             for j in range(i + 1, len(recent)):
@@ -68,8 +66,7 @@ class LoopDetector:
             sim = trigram_similarity(ha[-i], hb[-i])
             if sim < self.threshold:
                 return False
-        self.pair_interactions[(agent_a, agent_b)] = \
-            self.pair_interactions.get((agent_a, agent_b), 0) + 1
+        self.pair_interactions[(agent_a, agent_b)] = self.pair_interactions.get((agent_a, agent_b), 0) + 1
         return True
 
     def detect_echo_chamber(self, agents: list[str]) -> list[set[str]]:
@@ -86,7 +83,7 @@ class LoopDetector:
             h1 = self.agent_history.get(a1, [])
             if not h1:
                 continue
-            for a2 in agents[i + 1:]:
+            for a2 in agents[i + 1 :]:
                 h2 = self.agent_history.get(a2, [])
                 if not h2:
                     continue

@@ -11,7 +11,6 @@ import json
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -25,6 +24,7 @@ DEFAULT_SANDBOX_BINARY = "bugswarm-sandbox"
 @dataclass
 class ExecutionReceipt:
     """Structured sandbox execution result."""
+
     execution_id: str = ""
     exit_code: int | None = None
     status: str = ""
@@ -83,6 +83,7 @@ class ExecutionReceipt:
 @dataclass
 class StatisticalResult:
     """Result of statistical re-execution for flaky bug detection."""
+
     total_runs: int = 0
     failures: int = 0
     passes: int = 0
@@ -120,8 +121,7 @@ class SandboxClient:
     Abstracts subprocess (current) or socket/gRPC (future).
     """
 
-    def __init__(self, binary: str = DEFAULT_SANDBOX_BINARY,
-                 execution_timeout: float = 130.0):
+    def __init__(self, binary: str = DEFAULT_SANDBOX_BINARY, execution_timeout: float = 130.0):
         self.binary = binary
         self.execution_timeout = execution_timeout
         self._healthy: bool | None = None
@@ -139,35 +139,32 @@ class SandboxClient:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self.execution_timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.execution_timeout)
             return stdout.decode(), stderr.decode(), proc.returncode or 0
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             raise
 
     def _extract_receipt(self, stdout: str) -> dict | None:
         """Extract the execution receipt from structured log output."""
-        for line in stdout.split('\n'):
+        for line in stdout.split("\n"):
             line = line.strip()
-            if line.startswith('{') and '"execution_id"' in line:
+            if line.startswith("{") and '"execution_id"' in line:
                 try:
                     return json.loads(line)
                 except json.JSONDecodeError:
                     continue
         try:
-            return json.loads(stdout) if stdout.strip().startswith('{') else None
+            return json.loads(stdout) if stdout.strip().startswith("{") else None
         except json.JSONDecodeError:
             return None
 
     # ─── Single Execution ───
 
-    async def execute(self, poc_code: str, env: dict[str, str] | None = None,
-                      flaky: bool = False) -> ExecutionReceipt:
+    async def execute(self, poc_code: str, env: dict[str, str] | None = None, flaky: bool = False) -> ExecutionReceipt:
         """Execute a single PoC and return the receipt."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
             register_temp_file(poc_path)
@@ -186,11 +183,12 @@ class SandboxClient:
             if receipt_data:
                 return ExecutionReceipt.from_json(receipt_data)
             return ExecutionReceipt(
-                exit_code=rc, status="executed",
+                exit_code=rc,
+                status="executed",
                 stdout_truncated=stdout[:500],
                 stderr_truncated=stderr[:500],
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ExecutionReceipt(status="Timeout")
         except Exception as e:
             logger.error("sandbox_execution_failed", error=str(e)[:200])
@@ -203,17 +201,20 @@ class SandboxClient:
 
     # ─── Statistical Execution ───
 
-    async def execute_statistical(self, poc_code: str,
-                                  count: int = 100) -> StatisticalResult:
+    async def execute_statistical(self, poc_code: str, count: int = 100) -> StatisticalResult:
         """Run statistical re-execution for flaky bug detection."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
             register_temp_file(poc_path)
 
         try:
             stdout, stderr, rc = await self._run(
-                "execute-statistical", "--poc", poc_path, "--count", str(count),
+                "execute-statistical",
+                "--poc",
+                poc_path,
+                "--count",
+                str(count),
             )
             try:
                 return StatisticalResult.from_json(json.loads(stdout))
@@ -230,10 +231,9 @@ class SandboxClient:
 
     # ─── Independent Re-execution ───
 
-    async def independent_reexecute(self, poc_code: str,
-                                    env: dict[str, str] | None = None) -> ExecutionReceipt:
+    async def independent_reexecute(self, poc_code: str, env: dict[str, str] | None = None) -> ExecutionReceipt:
         """Independently re-execute a PoC to verify a previous receipt."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
             register_temp_file(poc_path)
@@ -257,8 +257,7 @@ class SandboxClient:
 
     # ─── Delta Debugging ───
 
-    async def delta_debug(self, input_bytes: bytes, max_iterations: int = 200,
-                          timeout_secs: int = 30) -> dict:
+    async def delta_debug(self, input_bytes: bytes, max_iterations: int = 200, timeout_secs: int = 30) -> dict:
         """Run delta debugging to minimize a crashing input.
 
         Args:
@@ -270,7 +269,8 @@ class SandboxClient:
                           reduction_ratio, iterations, is_1_minimal, elapsed_ms
         """
         import base64
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.bin', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".bin", delete=False) as f:
             f.write(input_bytes)
             input_path = f.name
             register_temp_file(input_path)
@@ -278,13 +278,16 @@ class SandboxClient:
         try:
             stdout, stderr, rc = await self._run(
                 "delta",
-                "--input", input_path,
-                "--max-iterations", str(max_iterations),
-                "--timeout", str(timeout_secs),
+                "--input",
+                input_path,
+                "--max-iterations",
+                str(max_iterations),
+                "--timeout",
+                str(timeout_secs),
             )
             result = json.loads(stdout)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {
                 "minimized": base64.b64encode(input_bytes).decode(),
                 "original_size": len(input_bytes),
@@ -314,25 +317,27 @@ class SandboxClient:
 
     # ─── Differential Analysis ───
 
-    async def diff_execute(self, input_str: str, reference: str,
-                           normalizer: str = "Text") -> dict:
+    async def diff_execute(self, input_str: str, reference: str, normalizer: str = "Text") -> dict:
         """Compare two outputs using differential analysis.
-        
+
         Args:
             input_str: First (baseline) output to compare
             reference: Second (changed) output to compare
             normalizer: Output normalizer (Json, Xml, Dict, Text, Binary)
-            
+
         Returns DiffExecution dict with is_different, diff_magnitude, etc.
         """
         import json as _json
-        payload = _json.dumps({
-            "method": "diff",
-            "input": input_str,
-            "reference": reference,
-            "normalizer": normalizer,
-            "request_id": self._request_id or "",
-        })
+
+        payload = _json.dumps(
+            {
+                "method": "diff",
+                "input": input_str,
+                "reference": reference,
+                "normalizer": normalizer,
+                "request_id": self._request_id or "",
+            }
+        )
         try:
             stdout, stderr, rc = await self._run("--request", payload)
             return _json.loads(stdout)
@@ -341,25 +346,27 @@ class SandboxClient:
 
     # ─── Invariant Mining ───
 
-    async def mine_invariants(self, function_name: str, param_types: list[str],
-                               count: int = 100) -> dict:
+    async def mine_invariants(self, function_name: str, param_types: list[str], count: int = 100) -> dict:
         """Mine invariants from function execution traces.
-        
+
         Args:
             function_name: Target function name
             param_types: List of parameter type hints
             count: Number of inputs to generate
-            
+
         Returns dict with invariants_found, violations, etc.
         """
         import json as _json
-        payload = _json.dumps({
-            "method": "mine_invariants",
-            "function": function_name,
-            "param_types": param_types,
-            "count": count,
-            "request_id": self._request_id or "",
-        })
+
+        payload = _json.dumps(
+            {
+                "method": "mine_invariants",
+                "function": function_name,
+                "param_types": param_types,
+                "count": count,
+                "request_id": self._request_id or "",
+            }
+        )
         stdout, stderr, rc = await self._run("--request", payload)
         try:
             return _json.loads(stdout)
@@ -368,25 +375,29 @@ class SandboxClient:
 
     # ─── Mutation Testing ───
 
-    async def run_mutations(self, source_code: str, file_path: str = "unknown",
-                            operators: list[str] | None = None) -> dict:
+    async def run_mutations(
+        self, source_code: str, file_path: str = "unknown", operators: list[str] | None = None
+    ) -> dict:
         """Run mutation testing against source code.
-        
+
         Args:
             source_code: Source code to mutate
             file_path: File path for identification
             operators: List of mutation operators to apply
-            
+
         Returns MutationSessionResult with mutation_score, survivors, etc.
         """
         import json as _json
-        payload = _json.dumps({
-            "method": "run_mutations",
-            "source": source_code,
-            "file": file_path,
-            "operators": operators or [],
-            "request_id": self._request_id or "",
-        })
+
+        payload = _json.dumps(
+            {
+                "method": "run_mutations",
+                "source": source_code,
+                "file": file_path,
+                "operators": operators or [],
+                "request_id": self._request_id or "",
+            }
+        )
         stdout, stderr, rc = await self._run("--request", payload)
         try:
             return _json.loads(stdout)
@@ -395,8 +406,7 @@ class SandboxClient:
 
     # ─── Symbolic Execution ───
 
-    async def solve_reachability(self, target_location: str,
-                                  path_conditions: list[dict]) -> dict:
+    async def solve_reachability(self, target_location: str, path_conditions: list[dict]) -> dict:
         """Solve for the exact input that reaches a target code location.
 
         Args:
@@ -406,20 +416,22 @@ class SandboxClient:
         Returns dict with solutions, constraints_generated, elapsed_ms, etc.
         """
         import json as _json
-        payload = _json.dumps({
-            "method": "solve_reachability",
-            "target": target_location,
-            "conditions": path_conditions,
-            "request_id": self._request_id or "",
-        })
+
+        payload = _json.dumps(
+            {
+                "method": "solve_reachability",
+                "target": target_location,
+                "conditions": path_conditions,
+                "request_id": self._request_id or "",
+            }
+        )
         stdout, stderr, rc = await self._run("--request", payload)
         try:
             return _json.loads(stdout)
         except Exception:
             return {"solutions": [], "error": stderr[:200]}
 
-    async def explore_paths(self, target_location: str, path_conditions: list[dict],
-                            max_queries: int = 100) -> dict:
+    async def explore_paths(self, target_location: str, path_conditions: list[dict], max_queries: int = 100) -> dict:
         """Systematically explore all code paths using concolic execution.
 
         Args:
@@ -430,13 +442,16 @@ class SandboxClient:
         Returns dict with coverage_pct, branches_covered, solutions, etc.
         """
         import json as _json
-        payload = _json.dumps({
-            "method": "explore_paths",
-            "target": target_location,
-            "conditions": path_conditions,
-            "max_queries": max_queries,
-            "request_id": self._request_id or "",
-        })
+
+        payload = _json.dumps(
+            {
+                "method": "explore_paths",
+                "target": target_location,
+                "conditions": path_conditions,
+                "max_queries": max_queries,
+                "request_id": self._request_id or "",
+            }
+        )
         stdout, stderr, rc = await self._run("--request", payload)
         try:
             return _json.loads(stdout)

@@ -25,22 +25,44 @@ import sys
 import tempfile
 from pathlib import Path
 
-G = "\033[0;32m"; R = "\033[0;31m"; Y = "\033[1;33m"; N = "\033[0m"
-passed = 0; failed = 0; results = {}
+G = "\033[0;32m"
+R = "\033[0;31m"
+Y = "\033[1;33m"
+N = "\033[0m"
+passed = 0
+failed = 0
+results = {}
 
 SANDBOX_BIN = "/root/b/bugswarm-sandbox/target/release/bugswarm-sandbox"
 
+
 def P(name, detail=""):
-    global passed; msg = f"  {G}PASS{N} {name}"; 
-    if detail: msg += f" -- {detail}"; print(msg); passed += 1; results[name] = "PASS"
+    global passed
+    msg = f"  {G}PASS{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+        print(msg)
+        passed += 1
+        results[name] = "PASS"
+
 
 def F(name, detail=""):
-    global failed; msg = f"  {R}FAIL{N} {name}"; 
-    if detail: msg += f" -- {detail}"; print(msg); failed += 1; results[name] = f"FAIL: {detail}"
+    global failed
+    msg = f"  {R}FAIL{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+        print(msg)
+        failed += 1
+        results[name] = f"FAIL: {detail}"
+
 
 def W(name, detail=""):
-    global failed; msg = f"  {Y}SKIP{N} {name}"; 
-    if detail: msg += f" -- {detail}"; print(msg); results[name] = f"SKIP: {detail}"
+    global failed
+    msg = f"  {Y}SKIP{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+        print(msg)
+        results[name] = f"SKIP: {detail}"
 
 
 def check_sandbox_available() -> bool:
@@ -125,6 +147,7 @@ def test_validation_unit(name: str, poc_content: str, should_be_rejected: bool =
 # Unit tests for the Python-side path validation (runs without sandbox)
 def test_read_file_validation_unit():
     from bugswarm_mini.gateway.protocol import ProtocolAdapter
+
     print("\n--- M002: Path Traversal Validation (Unit Tests) ---\n")
 
     test_cases = [
@@ -152,11 +175,12 @@ def test_read_file_validation_unit():
 
     for name, path, should_pass in test_cases:
         from bugswarm_mini.gateway.protocol import ModelCapabilities
+
         path_normalized = path.replace("\\", "/")
         segments = path_normalized.split("/")
         has_null = "\0" in path
         has_traversal = ".." in segments
-        has_absolute = path.startswith("/") or (len(path) > 1 and path[1] == ':')
+        has_absolute = path.startswith("/") or (len(path) > 1 and path[1] == ":")
 
         rejected = has_null or has_traversal or has_absolute
         valid = not rejected
@@ -268,10 +292,19 @@ if __name__ == "__main__":
     print()
     print("=" * 72)
 
-    unknown_host = ["BUGSWARM_EOF injection", "Backtick injection", "Semicolon chaining",
-                    "Pipe injection", "$() subshell", "Newline injection",
-                    "Env var exploit", "Null byte in PoC", "Extreme length PoC",
-                    "Unicode RTL override", "Legitimate PoC"]
+    unknown_host = [
+        "BUGSWARM_EOF injection",
+        "Backtick injection",
+        "Semicolon chaining",
+        "Pipe injection",
+        "$() subshell",
+        "Newline injection",
+        "Env var exploit",
+        "Null byte in PoC",
+        "Extreme length PoC",
+        "Unicode RTL override",
+        "Legitimate PoC",
+    ]
 
     for name in unknown_host:
         if name not in results or results[name].startswith("SKIP"):

@@ -1,15 +1,18 @@
 """Bug Swarm — Multi-Agent Swarm CLI."""
 
-import asyncio, json, sys
+import asyncio
+import json
 from pathlib import Path
 
-from swarm.orchestrator import SwarmOrchestrator, SwarmConfig, AgentStatus
 from gateway.client import LLMClient
 from gateway.types import GatewayConfig, ProviderType
+
+from swarm.orchestrator import AgentStatus, SwarmConfig, SwarmOrchestrator
 
 
 async def run_swarm():
     import argparse
+
     p = argparse.ArgumentParser(description="Bug Swarm — Multi-Agent Swarm")
     p.add_argument("repo", nargs="?", default=".", help="Repository path")
     p.add_argument("--agents", type=int, default=12)
@@ -42,7 +45,7 @@ async def run_swarm():
     result = await orchestrator.run()
 
     if args.output:
-        json.dump(result, open(args.output, 'w'), indent=2, default=str)
+        json.dump(result, open(args.output, "w"), indent=2, default=str)
     else:
         print(json.dumps(result, indent=2, default=str))
 
@@ -50,14 +53,25 @@ async def run_swarm():
 async def run_phase6_gate():
     """Phase 6 Gate: Gaslighting Gauntlet (10 scenarios)."""
     print("=== Phase 6 Gate: Gaslighting Gauntlet ===\n")
-    G = "\033[0;32m"; R = "\033[0;31m"; N = "\033[0m"
-    passed = 0; failed = 0
+    G = "\033[0;32m"
+    R = "\033[0;31m"
+    N = "\033[0m"
+    passed = 0
+    failed = 0
 
-    def p(name): nonlocal passed; print(f"  {G}PASS{N} {name}"); passed += 1
-    def f(name, reason): nonlocal failed; print(f"  {R}FAIL{N} {name} — {reason}"); failed += 1
+    def p(name):
+        nonlocal passed
+        print(f"  {G}PASS{N} {name}")
+        passed += 1
+
+    def f(name, reason):
+        nonlocal failed
+        print(f"  {R}FAIL{N} {name} — {reason}")
+        failed += 1
 
     # Test 1: Persona assignment (stratified sampling)
-    from swarm.orchestrator import assign_personas, Persona
+    from swarm.orchestrator import Persona, assign_personas
+
     personas = assign_personas(12)
     counts = {p: personas.count(p) for p in Persona}
     if all(c == 3 for c in counts.values()):
@@ -67,6 +81,7 @@ async def run_phase6_gate():
 
     # Test 2: Round-1 isolation
     from swarm.orchestrator import SwarmConfig
+
     cfg = SwarmConfig(repo_path=Path("/tmp/test"), num_agents=4, max_rounds=1)
     gw = LLMClient(GatewayConfig())
     orch = SwarmOrchestrator(cfg, gw)
@@ -84,13 +99,11 @@ async def run_phase6_gate():
 
     # Test 3: MMR routing
     from swarm.orchestrator import mmr_critique_routing
-    agents = [
-        orch.agents[f"A{i}"] for i in range(1, 5)
-        if f"A{i}" in orch.agents
-    ]
+
+    agents = [orch.agents[f"A{i}"] for i in range(1, 5) if f"A{i}" in orch.agents]
     for a in agents:
         a.status = AgentStatus.ACTIVE
-    hyps = {a.id: f"Bug in {['auth','db','ui','api'][i]}" for i, a in enumerate(agents)}
+    hyps = {a.id: f"Bug in {['auth', 'db', 'ui', 'api'][i]}" for i, a in enumerate(agents)}
     pairs = mmr_critique_routing(agents, hyps, {})
     if len(pairs) >= 1:
         p(f"MMR routing: {len(pairs)} critique pairs assigned")
@@ -99,6 +112,7 @@ async def run_phase6_gate():
 
     # Test 4: Loop detection
     from swarm.orchestrator import PerformanceMonitor
+
     mon = PerformanceMonitor(cfg)
     mon.record_message("A1", "There is a bug in auth.py")
     mon.record_message("A1", "There is a bug in auth.py")
@@ -163,7 +177,7 @@ async def run_phase6_gate():
     result = await orch2.run()
     findings = result.get("total_findings", 0)
     if result.get("rounds", 0) >= 1:
-        p(f"Full swarm: {result['rounds']} rounds, {findings} findings, {result.get('ejections',0)} ejections")
+        p(f"Full swarm: {result['rounds']} rounds, {findings} findings, {result.get('ejections', 0)} ejections")
     else:
         f("Full swarm", "No rounds completed")
 

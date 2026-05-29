@@ -23,8 +23,17 @@ async def run_phase4_gate():
     failed = 0
     results = {}
 
-    def p(name): nonlocal passed; print(f"  {G}PASS{N} {name}"); passed += 1; results[name] = "PASS"
-    def f(name, reason): nonlocal failed; print(f"  {R}FAIL{N} {name} — {reason}"); failed += 1; results[name] = f"FAIL: {reason}"
+    def p(name):
+        nonlocal passed
+        print(f"  {G}PASS{N} {name}")
+        passed += 1
+        results[name] = "PASS"
+
+    def f(name, reason):
+        nonlocal failed
+        print(f"  {R}FAIL{N} {name} — {reason}")
+        failed += 1
+        results[name] = f"FAIL: {reason}"
 
     print("=== Phase 4 Gate: Bug Hunter's Crucible ===")
 
@@ -102,7 +111,9 @@ async def run_phase4_gate():
     # ── Test 9: Finding parsing ──
     print("[9] Finding JSON parsing")
     agent = BugSwarmAgent.__new__(BugSwarmAgent)
-    finding = agent._parse_finding('some text\n```json\n{"type":"finding","claim":"SQLi","location":"db.py:10","mechanism":"raw query","severity_estimate":8}\n```\nmore text')
+    finding = agent._parse_finding(
+        'some text\n```json\n{"type":"finding","claim":"SQLi","location":"db.py:10","mechanism":"raw query","severity_estimate":8}\n```\nmore text'
+    )
     assert finding is not None
     assert finding["claim"] == "SQLi"
     assert finding["severity_estimate"] == 8
@@ -110,6 +121,7 @@ async def run_phase4_gate():
 
     # ── Test 10: Termination conditions ──
     print("[10] Termination conditions")
+
     # Test _should_stop without needing full agent init
     def mock_should_stop(findings, budget_exhausted=False):
         verified = sum(1 for f in findings if f.get("verified"))
@@ -118,6 +130,7 @@ async def run_phase4_gate():
         if budget_exhausted:
             return True
         return False
+
     assert mock_should_stop([{"verified": True}, {"verified": True}, {"verified": True}])
     assert not mock_should_stop([{"verified": False}])
     assert not mock_should_stop([{"verified": True}])
@@ -126,6 +139,7 @@ async def run_phase4_gate():
     # ── Test 11: System prompt contains directives ──
     print("[11] System prompt integrity")
     from agent.core import SYSTEM_PROMPT
+
     assert "NON-NEGOTIABLE DIRECTIVES" in SYSTEM_PROMPT
     assert "forbidden from agreeing" in SYSTEM_PROMPT
     assert "SKEPTICAL" in SYSTEM_PROMPT
@@ -135,6 +149,7 @@ async def run_phase4_gate():
     # ── Test 12: Persona prompt customization ──
     print("[12] Persona prompt customization")
     from agent.core import AgentConfig as AC
+
     cfg = AC(repo_path=Path("/tmp/test"), persona="adversarial")
     assert cfg.persona == "adversarial"
     p("Persona system supports all 4 modes (causal, adversarial, defensive, semantic)")
@@ -144,11 +159,14 @@ async def run_phase4_gate():
     print(f"\n═══ Phase 4 Gate: {G}{passed} passed{N}, {R}{failed} failed{N}, {total} total ═══")
 
     receipt = {
-        "phase": 4, "name": "Single Agent IEP Loop",
+        "phase": 4,
+        "name": "Single Agent IEP Loop",
         "gate": "Bug Hunter's Crucible",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "status": "PASSED" if failed == 0 else "FAILED",
-        "total_tests": total, "passed": passed, "failed": failed,
+        "total_tests": total,
+        "passed": passed,
+        "failed": failed,
         "results": results,
         "verdict": "PHASE 4 COMPLETE" if failed == 0 else "PHASE 4 NEEDS FIXES",
     }

@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import structlog
-from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError, AuthenticationError
+from openai import APIError, APITimeoutError, AsyncOpenAI, AuthenticationError, RateLimitError
 
 from ..types import (
-    ChatRequest, ChatResponse, ChatMessage, MessageRole,
-    ProviderConfig, ProviderType, TokenUsage,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    ProviderConfig,
+    ProviderType,
+    TokenUsage,
 )
-from .base import BaseProviderAdapter, RetryableError, FatalError
+from .base import BaseProviderAdapter, FatalError, RetryableError
 
 logger = structlog.get_logger(__name__)
 
@@ -80,9 +84,14 @@ class OpenAIAdapter(BaseProviderAdapter):
         cost = self.estimate_cost(usage.input_tokens, usage.output_tokens)
 
         return ChatResponse(
-            content=content, model=response.model, provider=ProviderType.OPENAI,
-            usage=usage, cost=cost, finish_reason=choice.finish_reason or "stop",
-            request_id=response.id, latency_ms=elapsed,
+            content=content,
+            model=response.model,
+            provider=ProviderType.OPENAI,
+            usage=usage,
+            cost=cost,
+            finish_reason=choice.finish_reason or "stop",
+            request_id=response.id,
+            latency_ms=elapsed,
         )
 
     async def chat_stream(self, request: ChatRequest) -> AsyncIterator[str]:
@@ -90,9 +99,12 @@ class OpenAIAdapter(BaseProviderAdapter):
         model = request.model or self.config.default_model
 
         kwargs: dict = {
-            "model": model, "messages": messages,
-            "temperature": request.temperature, "max_tokens": request.max_tokens,
-            "top_p": request.top_p, "stream": True,
+            "model": model,
+            "messages": messages,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "top_p": request.top_p,
+            "stream": True,
         }
         if request.seed is not None:
             kwargs["seed"] = request.seed
@@ -123,6 +135,7 @@ class OpenAIAdapter(BaseProviderAdapter):
         """Use tiktoken for accurate OpenAI token counting."""
         try:
             import tiktoken
+
             enc = tiktoken.encoding_for_model(self.config.default_model)
             total = 0
             for msg in messages:

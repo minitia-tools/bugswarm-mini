@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -100,13 +100,19 @@ class OutputParser:
     """
 
     # Location regex: matches "file.py:123" or "path/to/file.py:456"
-    LOCATION_PATTERN = re.compile(r'(\S+\.(?:py|js|go|java|rb|rs|c|cpp|h|ts|tsx)):(\d+)')
+    LOCATION_PATTERN = re.compile(r"(\S+\.(?:py|js|go|java|rb|rs|c|cpp|h|ts|tsx)):(\d+)")
 
     # Freeform confirmation keywords
     CONFIRMED_KEYWORDS = [
-        "bug confirmed", "confirmed by sandbox", "confirmed!",
-        "vulnerability confirmed", "injection confirmed", "**confirmed",
-        "successfully exploited", "exploit confirmed", "verified by sandbox",
+        "bug confirmed",
+        "confirmed by sandbox",
+        "confirmed!",
+        "vulnerability confirmed",
+        "injection confirmed",
+        "**confirmed",
+        "successfully exploited",
+        "exploit confirmed",
+        "verified by sandbox",
     ]
 
     def parse(self, content: str) -> ParsedOutput:
@@ -130,12 +136,12 @@ class OutputParser:
     def _parse_json_fence(self, content: str) -> ParsedOutput | None:
         """Extract from ```json ... ``` blocks."""
         remaining = content
-        while '```json' in remaining:
+        while "```json" in remaining:
             try:
-                start = remaining.index('```json') + 7
-                end = remaining.index('```', start) if '```' in remaining[start:] else len(remaining)
+                start = remaining.index("```json") + 7
+                end = remaining.index("```", start) if "```" in remaining[start:] else len(remaining)
                 json_str = remaining[start:end].strip()
-                remaining = remaining[end+3:] if end+3 < len(remaining) else ""
+                remaining = remaining[end + 3 :] if end + 3 < len(remaining) else ""
 
                 data = json.loads(json_str)
                 return self._classify_json(data, content, "json_block")
@@ -152,8 +158,9 @@ class OutputParser:
                 depth = 0
                 end = start
                 for i, c in enumerate(remaining[start:]):
-                    if c == '{': depth += 1
-                    elif c == '}':
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
                         depth -= 1
                         if depth == 0:
                             end = start + i + 1
@@ -217,16 +224,24 @@ class OutputParser:
             return ParsedOutput(OutputType.UNKNOWN, raw=content)
 
         # Extract claim from first significant line
-        lines = [l.strip() for l in content.split('\n')
-                 if l.strip() and not l.strip().startswith('```')]
+        lines = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("```")]
 
         claim = ""
-        bug_keywords = ["bug", "vulnerability", "injection", "overflow",
-                       "bypass", "leak", "traversal", "confirmed", "rce"]
+        bug_keywords = [
+            "bug",
+            "vulnerability",
+            "injection",
+            "overflow",
+            "bypass",
+            "leak",
+            "traversal",
+            "confirmed",
+            "rce",
+        ]
         for line in lines:
             lw = line.lower()
             if any(kw in lw for kw in bug_keywords):
-                claim = line.strip('# *-').strip()
+                claim = line.strip("# *-").strip()
                 if len(claim) > 20:
                     break
         if not claim:

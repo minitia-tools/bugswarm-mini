@@ -20,17 +20,21 @@ logger = structlog.get_logger(__name__)
 @dataclass
 class ScanReport:
     pii_count: int = 0
-    pii_types: dict[str, int] = field(default_factory=dict)      # {"email": 3, "aws_key": 1}
+    pii_types: dict[str, int] = field(default_factory=dict)  # {"email": 3, "aws_key": 1}
     escape_matches: list[str] = field(default_factory=list)
-    injection_confidence: float = 0.0                              # 0.0–1.0
+    injection_confidence: float = 0.0  # 0.0–1.0
     high_entropy_tokens: list[str] = field(default_factory=list)
     redacted_content: str = ""
     scan_duration_ms: float = 0.0
 
     @property
     def is_clean(self) -> bool:
-        return (self.pii_count == 0 and len(self.escape_matches) == 0
-                and self.injection_confidence < 0.3 and len(self.high_entropy_tokens) == 0)
+        return (
+            self.pii_count == 0
+            and len(self.escape_matches) == 0
+            and self.injection_confidence < 0.3
+            and len(self.high_entropy_tokens) == 0
+        )
 
 
 class UnifiedScanner:
@@ -41,28 +45,48 @@ class UnifiedScanner:
 
     # Default patterns (overridden by config file if present)
     DEFAULT_PII_PATTERNS: ClassVar[list[tuple[str, str]]] = [
-        (r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'email'),
-        (r'\b(?:\d{4}[ -]?){3}\d{4}\b', 'credit_card'),
-        (r'\b\d{3}-\d{2}-\d{4}\b', 'ssn'),
-        (r'\bAKIA[0-9A-Z]{16}\b', 'aws_key'),
-        (r'\bgh[pousr]_[A-Za-z0-9_]{36,}\b', 'github_token'),
-        (r'-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----', 'private_key'),
-        (r'\beyJ[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_.+/=]*\b', 'jwt'),
-        (r'\b[0-9a-zA-Z/+]{40}\b', 'base64_token'),
+        (r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", "email"),
+        (r"\b(?:\d{4}[ -]?){3}\d{4}\b", "credit_card"),
+        (r"\b\d{3}-\d{2}-\d{4}\b", "ssn"),
+        (r"\bAKIA[0-9A-Z]{16}\b", "aws_key"),
+        (r"\bgh[pousr]_[A-Za-z0-9_]{36,}\b", "github_token"),
+        (r"-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----", "private_key"),
+        (r"\beyJ[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_.+/=]*\b", "jwt"),
+        (r"\b[0-9a-zA-Z/+]{40}\b", "base64_token"),
     ]
 
     DEFAULT_ESCAPE_PATTERNS: ClassVar[list[str]] = [
-        'chroot', 'nsenter', 'unshare', '/proc/1/ns', '/proc/self/ns',
-        'docker.sock', '/var/run/docker.sock', 'pivot_root', 'kexec',
-        'mount -t cgroup', 'insmod', 'modprobe', 'finit_module',
-        'setns', 'personality', 'process_vm_readv',
+        "chroot",
+        "nsenter",
+        "unshare",
+        "/proc/1/ns",
+        "/proc/self/ns",
+        "docker.sock",
+        "/var/run/docker.sock",
+        "pivot_root",
+        "kexec",
+        "mount -t cgroup",
+        "insmod",
+        "modprobe",
+        "finit_module",
+        "setns",
+        "personality",
+        "process_vm_readv",
     ]
 
     DEFAULT_INJECTION_PATTERNS: ClassVar[list[str]] = [
-        'ignore previous instructions', 'you are now DAN',
-        'forget all previous', 'new instructions:', '### Human:',
-        '[INST]', 'SYSTEM:', 'override directives', 'disregard above',
-        'I am your creator', 'developer mode', 'jailbreak',
+        "ignore previous instructions",
+        "you are now DAN",
+        "forget all previous",
+        "new instructions:",
+        "### Human:",
+        "[INST]",
+        "SYSTEM:",
+        "override directives",
+        "disregard above",
+        "I am your creator",
+        "developer mode",
+        "jailbreak",
     ]
 
     def __init__(self, config_path: str | None = None):
@@ -82,14 +106,12 @@ class UnifiedScanner:
                 with open(config_path) as f:
                     cfg = yaml.safe_load(f)
                 if cfg:
-                    pii_raw = [(p["pattern"], p["type"])
-                               for p in cfg.get("pii_patterns", [])] or pii_raw
+                    pii_raw = [(p["pattern"], p["type"]) for p in cfg.get("pii_patterns", [])] or pii_raw
                     escape_raw = cfg.get("escape_patterns", escape_raw)
                     injection_raw = cfg.get("injection_patterns", injection_raw)
                 logger.info("scanner_config_loaded", path=config_path)
             except Exception as e:
-                logger.warning("scanner_config_load_failed", error=str(e),
-                               fallback="using_defaults")
+                logger.warning("scanner_config_load_failed", error=str(e), fallback="using_defaults")
 
         # Compile PII regexes
         for pattern, pii_type in pii_raw:
@@ -112,7 +134,7 @@ class UnifiedScanner:
             count += len(matches)
             for m in reversed(matches):
                 replacement = f"[REDACTED: type={pii_type}]"
-                result = result[:m.start()] + replacement + result[m.end():]
+                result = result[: m.start()] + replacement + result[m.end() :]
         return result, count
 
     def scan_pii(self, content: str) -> tuple[str, dict[str, int], int]:
@@ -127,7 +149,7 @@ class UnifiedScanner:
                 total += len(matches)
                 for m in reversed(matches):
                     replacement = f"[REDACTED: type={pii_type}]"
-                    result = result[:m.start()] + replacement + result[m.end():]
+                    result = result[: m.start()] + replacement + result[m.end() :]
         return result, type_counts, total
 
     # ─── Escape Detection ───
@@ -157,8 +179,7 @@ class UnifiedScanner:
 
     # ─── Entropy Detection ───
 
-    def detect_high_entropy(self, content: str, threshold: float = 4.5,
-                            min_length: int = 20) -> list[str]:
+    def detect_high_entropy(self, content: str, threshold: float = 4.5, min_length: int = 20) -> list[str]:
         """Detect high-entropy tokens (likely API keys/tokens)."""
         tokens = []
         for word in content.split():
@@ -170,6 +191,7 @@ class UnifiedScanner:
     def _shannon_entropy(text: str) -> float:
         """Compute Shannon entropy of a string for randomness detection."""
         import math
+
         if not text:
             return 0.0
         freq = {}
@@ -186,6 +208,7 @@ class UnifiedScanner:
         scan_types: subset of {"pii", "escape", "injection", "entropy"}. None = all.
         """
         import time
+
         t0 = time.perf_counter()
         report = ScanReport()
 
@@ -213,9 +236,19 @@ class UnifiedScanner:
     # ─── Sensitive Path Detection ───
 
     SENSITIVE_PATHS: ClassVar[list[str]] = [
-        '.env', '.pem', '.key', 'credentials', 'id_rsa', 'id_ed25519',
-        'id_ecdsa', '.pfx', '.p12', 'secrets', 'secret', '.token',
-        'service-account',
+        ".env",
+        ".pem",
+        ".key",
+        "credentials",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        ".pfx",
+        ".p12",
+        "secrets",
+        "secret",
+        ".token",
+        "service-account",
     ]
 
     @classmethod
@@ -226,9 +259,19 @@ class UnifiedScanner:
     # ─── Sensitive Variable Detection ───
 
     SENSITIVE_VARS: ClassVar[list[str]] = [
-        'password', 'passwd', 'secret', 'token', 'key',
-        'credential', 'private_key', 'api_key', 'auth_token',
-        'ssn', 'credit_card', 'access_key', 'secret_key',
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "key",
+        "credential",
+        "private_key",
+        "api_key",
+        "auth_token",
+        "ssn",
+        "credit_card",
+        "access_key",
+        "secret_key",
     ]
 
     @classmethod

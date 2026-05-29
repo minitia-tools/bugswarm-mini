@@ -6,16 +6,17 @@ cost estimation, request tracing, response schema validation.
 
 from __future__ import annotations
 
-import asyncio
-import time
 from abc import ABC, abstractmethod
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import structlog
 
 from ..types import (
-    ChatRequest, ChatResponse, ChatMessage,
-    ProviderConfig, CostInfo, TokenUsage,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    CostInfo,
+    ProviderConfig,
 )
 
 logger = structlog.get_logger(__name__)
@@ -23,11 +24,13 @@ logger = structlog.get_logger(__name__)
 
 class RetryableError(Exception):
     """Error that should be retried with backoff."""
+
     pass
 
 
 class FatalError(Exception):
     """Error that should NOT be retried (401, 403, invalid request)."""
+
     pass
 
 
@@ -55,6 +58,7 @@ class BaseProviderAdapter(ABC):
         """Estimate token count. Uses tiktoken if available, falls back to character heuristic."""
         try:
             import tiktoken
+
             enc = tiktoken.get_encoding("cl100k_base")
             return len(enc.encode(content))
         except ImportError:
@@ -84,9 +88,21 @@ class BaseProviderAdapter(ABC):
         if any(code in msg for code in ["401", "403", "404", "invalid api key", "insufficient_quota"]):
             return FatalError
         # Retryable errors
-        if any(code in msg for code in ["429", "500", "502", "503", "504",
-                                         "rate limit", "timeout", "connection",
-                                         "server error", "overloaded"]):
+        if any(
+            code in msg
+            for code in [
+                "429",
+                "500",
+                "502",
+                "503",
+                "504",
+                "rate limit",
+                "timeout",
+                "connection",
+                "server error",
+                "overloaded",
+            ]
+        ):
             return RetryableError
         # Unknown — retry once
         return RetryableError

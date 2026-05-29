@@ -13,8 +13,15 @@ import structlog
 
 from ..client import LLMClient
 from ..types import (
-    ChatMessage, ChatRequest, ChatResponse, CostInfo,
-    GatewayConfig, MessageRole, ProviderConfig, ProviderType, TokenUsage,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    CostInfo,
+    GatewayConfig,
+    MessageRole,
+    ProviderConfig,
+    ProviderType,
+    TokenUsage,
 )
 
 logger = structlog.get_logger(__name__)
@@ -27,7 +34,9 @@ N = "\033[0m"
 
 def make_response(content: str = "OK", provider: ProviderType = ProviderType.OPENAI) -> ChatResponse:
     return ChatResponse(
-        content=content, model="test-model", provider=provider,
+        content=content,
+        model="test-model",
+        provider=provider,
         usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
         cost=CostInfo(input_cost_usd=0.001, output_cost_usd=0.001, total_cost_usd=0.002),
         latency_ms=10.0,
@@ -296,6 +305,7 @@ async def run_phase3_gate(client: LLMClient | None = None) -> None:
         req3 = ChatRequest(messages=[ChatMessage(role=MessageRole.USER, content="world")])
 
         from ..types import request_fingerprint
+
         fp1 = request_fingerprint(req1)
         fp2 = request_fingerprint(req2)
         fp3 = request_fingerprint(req3)

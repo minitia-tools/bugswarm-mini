@@ -151,6 +151,7 @@ class TestCostTracker:
 class TestUsageDB:
     def test_init_creates_table(self):
         import tempfile
+
         db = UsageDB(db_path=Path(tempfile.mktemp(suffix=".db")))
         summary = db.get_summary()
         assert summary["total_runs"] == 0
@@ -158,6 +159,7 @@ class TestUsageDB:
 
     def test_save_run_and_summary(self):
         import tempfile
+
         db_path = Path(tempfile.mktemp(suffix=".db"))
         db = UsageDB(db_path=db_path)
 
@@ -195,6 +197,7 @@ class TestUsageDB:
 
     def test_consolidates_pricing(self):
         import tempfile
+
         db_path = Path(tempfile.mktemp(suffix=".db"))
         db = UsageDB(db_path=db_path)
 
@@ -217,6 +220,7 @@ class TestUsageDB:
 
     def test_multiple_models(self):
         import tempfile
+
         db_path = Path(tempfile.mktemp(suffix=".db"))
         db = UsageDB(db_path=db_path)
 
@@ -241,6 +245,7 @@ class TestUsageDB:
 
     def test_empty_db_returns_empty_recent(self):
         import tempfile
+
         db_path = Path(tempfile.mktemp(suffix=".db"))
         db = UsageDB(db_path=db_path)
         runs = db.get_recent_runs(limit=10)
@@ -248,6 +253,7 @@ class TestUsageDB:
 
     def test_empty_model_breakdown(self):
         import tempfile
+
         db_path = Path(tempfile.mktemp(suffix=".db"))
         db = UsageDB(db_path=db_path)
         assert db.get_model_breakdown() == []

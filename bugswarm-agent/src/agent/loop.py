@@ -6,21 +6,19 @@ to investigate. Context management prevents bloat. Self-reflection learns within
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import structlog
-from gateway.types import ChatMessage, ChatRequest, MessageRole, ProviderType
 from gateway.client import LLMClient
+from gateway.types import ChatMessage, ChatRequest, MessageRole, ProviderType
 
-from agent.parser import OutputParser, OutputType, ParsedOutput, ParsedFinding, ParsedToolCall, ParsedPoC
-from agent.prompts import PersonaEngine, Persona
-from agent.scanner import UnifiedScanner
+from agent.parser import OutputParser, OutputType, ParsedFinding
 from agent.persistence import PersistenceManager
+from agent.prompts import Persona, PersonaEngine
+from agent.scanner import UnifiedScanner
 from agent.tools import ToolRegistry, ToolResult
 
 logger = structlog.get_logger(__name__)
@@ -30,9 +28,11 @@ logger = structlog.get_logger(__name__)
 # Types
 # ═══════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Hypothesis:
     """A candidate bug to investigate, ranked by priority."""
+
     id: str
     claim: str
     location: str
@@ -62,6 +62,7 @@ class IEPConfig:
 @dataclass
 class IEPState:
     """Full agent state at any point in the IEP loop."""
+
     run_id: str
     round: int = 1
     turn: int = 1
@@ -105,19 +106,25 @@ class IEPReport:
 # Hypothesis Ranker
 # ═══════════════════════════════════════════════════════════════
 
+
 class HypothesisRanker:
     """Ranks what to investigate next using multi-factor scoring."""
 
     # Weights for the priority score
-    TAINT_WEIGHT = 0.40       # Taint path exists from source to sink
-    COMPLEXITY_WEIGHT = 0.20   # Code complexity (cyclomatic proxy via nesting)
-    REACHABILITY_WEIGHT = 0.30 # Reachable from external input
-    NOVELTY_WEIGHT = 0.10      # Not already investigated
+    TAINT_WEIGHT = 0.40  # Taint path exists from source to sink
+    COMPLEXITY_WEIGHT = 0.20  # Code complexity (cyclomatic proxy via nesting)
+    REACHABILITY_WEIGHT = 0.30  # Reachable from external input
+    NOVELTY_WEIGHT = 0.10  # Not already investigated
 
     @classmethod
-    def score(cls, hypothesis: Hypothesis, taint_exists: bool = False,
-              code_lines: int = 0, reachable: bool = True,
-              already_investigated: bool = False) -> float:
+    def score(
+        cls,
+        hypothesis: Hypothesis,
+        taint_exists: bool = False,
+        code_lines: int = 0,
+        reachable: bool = True,
+        already_investigated: bool = False,
+    ) -> float:
         score = 0.0
         if taint_exists:
             score += cls.TAINT_WEIGHT
@@ -140,6 +147,7 @@ class HypothesisRanker:
 # ═══════════════════════════════════════════════════════════════
 # Context Manager
 # ═══════════════════════════════════════════════════════════════
+
 
 class ContextManager:
     """Manages agent context window to prevent bloat."""
@@ -188,12 +196,18 @@ class ContextManager:
 # IEP Engine
 # ═══════════════════════════════════════════════════════════════
 
+
 class IEPEngine:
     """Core IEP (Issue → Evidence → Proof) execution loop."""
 
-    def __init__(self, config: IEPConfig, tools: ToolRegistry,
-                 parser: OutputParser, gateway: LLMClient,
-                 persistence: PersistenceManager | None = None):
+    def __init__(
+        self,
+        config: IEPConfig,
+        tools: ToolRegistry,
+        parser: OutputParser,
+        gateway: LLMClient,
+        persistence: PersistenceManager | None = None,
+    ):
         self.config = config
         self.tools = tools
         self.parser = parser
@@ -213,9 +227,7 @@ class IEPEngine:
         self.context.add(ChatMessage(role=MessageRole.USER, content=self._initial_prompt()))
 
         if self.persistence:
-            self.persistence.create_run(self.config.run_id,
-                                        self.config.persona_str,
-                                        self.config.prompt_version)
+            self.persistence.create_run(self.config.run_id, self.config.persona_str, self.config.prompt_version)
 
         for round_num in range(1, self.config.max_rounds + 1):
             self.state.round = round_num
@@ -228,19 +240,26 @@ class IEPEngine:
                     self.state.findings.append(result)
                     if self.persistence:
                         self.persistence.log_finding(
-                            self.config.run_id, result.claim,
-                            result.location, result.mechanism,
-                            result.severity, result.verified,
+                            self.config.run_id,
+                            result.claim,
+                            result.location,
+                            result.mechanism,
+                            result.severity,
+                            result.verified,
                         )
 
                 if self._should_stop():
                     break
 
             if self.persistence:
-                self.persistence.save_checkpoint(self.config.run_id, round_num, {
-                    "findings": len(self.state.findings),
-                    "verified": sum(1 for f in self.state.findings if f.verified),
-                })
+                self.persistence.save_checkpoint(
+                    self.config.run_id,
+                    round_num,
+                    {
+                        "findings": len(self.state.findings),
+                        "verified": sum(1 for f in self.state.findings if f.verified),
+                    },
+                )
 
             if self._should_stop():
                 break
@@ -281,8 +300,12 @@ class IEPEngine:
 
         if self.persistence:
             self.persistence.log_message(
-                self.config.run_id, self.state.round, self.state.turn,
-                "assistant", content, response.usage.total_tokens,
+                self.config.run_id,
+                self.state.round,
+                self.state.turn,
+                "assistant",
+                content,
+                response.usage.total_tokens,
             )
 
         # Parse output
@@ -292,32 +315,29 @@ class IEPEngine:
             return self._process_finding(parsed.finding, content)
 
         elif parsed.output_type == OutputType.TOOL_CALL and parsed.tool_call:
-            result = await self.tools.execute(parsed.tool_call.tool_name,
-                                              parsed.tool_call.args)
+            result = await self.tools.execute(parsed.tool_call.tool_name, parsed.tool_call.args)
             self.state.last_tool_results.append(result)
-            self.context.add(ChatMessage(role=MessageRole.USER,
-                                         content=result.to_message()))
+            self.context.add(ChatMessage(role=MessageRole.USER, content=result.to_message()))
             if self.persistence:
                 self.persistence.log_message(
-                    self.config.run_id, self.state.round, self.state.turn,
-                    "tool_result", result.to_message(),
+                    self.config.run_id,
+                    self.state.round,
+                    self.state.turn,
+                    "tool_result",
+                    result.to_message(),
                 )
 
         elif parsed.output_type == OutputType.POC and parsed.poc:
-            result = await self.tools.execute("exec_sandbox",
-                                              {"poc_code": parsed.poc.code})
+            result = await self.tools.execute("exec_sandbox", {"poc_code": parsed.poc.code})
             self.state.last_tool_results.append(result)
-            self.context.add(ChatMessage(role=MessageRole.USER,
-                                         content=result.to_message()))
+            self.context.add(ChatMessage(role=MessageRole.USER, content=result.to_message()))
 
         # Context compression check
         if self.context.should_compress():
             summary = self.context.compress_summary()
             if summary:
-                self.context.add(ChatMessage(role=MessageRole.SYSTEM,
-                                             content=summary))
-                logger.info("context_compressed", run_id=self.config.run_id,
-                           usage_pct=self.context.usage_pct)
+                self.context.add(ChatMessage(role=MessageRole.SYSTEM, content=summary))
+                logger.info("context_compressed", run_id=self.config.run_id, usage_pct=self.context.usage_pct)
 
         return None
 

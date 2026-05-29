@@ -1,31 +1,51 @@
 """Phase 9: Scale to 50 Agents — Stress tests and optimization verification."""
 
-import asyncio, hashlib, math, random, time
-from collections import defaultdict
+import asyncio
+import hashlib
+import time
 
-G = "\033[0;32m"; R = "\033[0;31m"; N = "\033[0m"
+G = "\033[0;32m"
+R = "\033[0;31m"
+N = "\033[0m"
 
-from swarm.orchestrator import (
-    SwarmOrchestrator, SwarmConfig, AgentSlot, AgentStatus, Persona,
-    assign_personas, simple_embed, cosine_similarity, mmr_critique_routing,
-)
-from swarm.compression import QueryCache, LoopDetector, ContextCompressor, RelevanceScorer
-from swarm.finance import FinancialController, BudgetConfig
-from gateway.types import GatewayConfig
 from gateway.client import LLMClient
+from gateway.types import GatewayConfig
+
+from swarm.compression import LoopDetector, QueryCache
+from swarm.finance import BudgetConfig, FinancialController
+from swarm.orchestrator import (
+    AgentSlot,
+    AgentStatus,
+    Persona,
+    SwarmConfig,
+    SwarmOrchestrator,
+    assign_personas,
+    mmr_critique_routing,
+)
 
 
 async def run_phase9_gate():
-    passed = 0; failed = 0; results = {}
+    passed = 0
+    failed = 0
+    results = {}
 
-    def p(name): nonlocal passed; print(f"  {G}PASS{N} {name}"); passed += 1; results[name] = "PASS"
-    def f(name, reason): nonlocal failed; print(f"  {R}FAIL{N} {name} — {reason}"); failed += 1; results[name] = f"FAIL: {reason}"
+    def p(name):
+        nonlocal passed
+        print(f"  {G}PASS{N} {name}")
+        passed += 1
+        results[name] = "PASS"
+
+    def f(name, reason):
+        nonlocal failed
+        print(f"  {R}FAIL{N} {name} — {reason}")
+        failed += 1
+        results[name] = f"FAIL: {reason}"
 
     print("=== Phase 9 Gate: 50-Agent Endurance Run ===\n")
 
     # ── Metric 1: Evidence Graph 500 concurrent writes ──
     print("[1] Evidence Graph: 50 agents × 10 claims = 500 writes")
-    cfg = SwarmConfig(repo_path=__import__('pathlib').Path("/tmp"), num_agents=50, batch_size=50)
+    cfg = SwarmConfig(repo_path=__import__("pathlib").Path("/tmp"), num_agents=50, batch_size=50)
     gw = LLMClient(GatewayConfig())
     orch = SwarmOrchestrator(cfg, gw)
     orch.initialize_agents()
@@ -109,6 +129,7 @@ async def run_phase9_gate():
     if sample_agent:
         # Estimate: AgentSlot with findings list
         import sys
+
         size = sys.getsizeof(sample_agent) + sum(sys.getsizeof(f) for f in sample_agent.findings)
         size_kb = size / 1024
         if size_kb < 50:
@@ -118,7 +139,9 @@ async def run_phase9_gate():
 
     # ── Metric 6: Financial controller at scale ──
     print("[6] Finance: anomaly detection at 50 agents")
-    fc = FinancialController(BudgetConfig(token_budget=1_000_000, max_agent_token_share=0.10, anomaly_zscore_threshold=2.0))
+    fc = FinancialController(
+        BudgetConfig(token_budget=1_000_000, max_agent_token_share=0.10, anomaly_zscore_threshold=2.0)
+    )
     # 49 agents use 1000 tokens each, 1 agent uses 50000
     for i in range(1, 50):
         fc.record_usage(f"A{i}", "b1", 1, 1000, 0, 5)
@@ -169,7 +192,7 @@ async def run_phase9_gate():
 
     # ── Metric 10: Full swarm stability ──
     print("[10] Full swarm: 50 agents, 2 rounds, stability check")
-    cfg2 = SwarmConfig(repo_path=__import__('pathlib').Path("/tmp"), num_agents=50, max_rounds=2, batch_size=25)
+    cfg2 = SwarmConfig(repo_path=__import__("pathlib").Path("/tmp"), num_agents=50, max_rounds=2, batch_size=25)
     orch2 = SwarmOrchestrator(cfg2, gw)
     orch2.initialize_agents()
     for aid in orch2.agents:

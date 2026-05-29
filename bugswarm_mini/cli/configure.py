@@ -1,24 +1,19 @@
 from __future__ import annotations
 
-import asyncio
-import sys
-
-import rich
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
-from rich.text import Text
-from rich import box
 
-from ..gateway.protocol import PROVIDER_PROTOCOLS, create_adapter, ProtocolAdapter
-from ..gateway.registry import ModelRegistry
 from ..gateway.config import (
     BugSwarmConfig,
-    save_config,
-    load_config,
     detect_api_key_provider,
+    load_config,
+    save_config,
 )
+from ..gateway.protocol import PROVIDER_PROTOCOLS, create_adapter
+from ..gateway.registry import ModelRegistry
 
 console = Console()
 
@@ -95,11 +90,13 @@ def _render_model_table(models: list, max_rows: int = 15) -> Table:
 
 def _print_header():
     console.print()
-    console.print(Panel.fit(
-        "[bold cyan]BugSwarm Configuration[/]\n\n"
-        "[dim]Connect your model provider. Change later with [bold]bugswarm configure --edit[/][/]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            "[bold cyan]BugSwarm Configuration[/]\n\n"
+            "[dim]Connect your model provider. Change later with [bold]bugswarm configure --edit[/][/]",
+            border_style="cyan",
+        )
+    )
     console.print()
 
 
@@ -197,8 +194,7 @@ async def cmd_configure(args: list[str] | None = None) -> int:
         detected = detect_api_key_provider(api_key)
         if detected and detected != provider:
             console.print(
-                f"[yellow]Note: Your API key looks like it belongs to {detected}, "
-                f"not {provider}. Continue anyway?[/]"
+                f"[yellow]Note: Your API key looks like it belongs to {detected}, not {provider}. Continue anyway?[/]"
             )
             if not Confirm.ask("Continue?"):
                 api_key = Prompt.ask("Paste the correct API key", password=True)
@@ -221,10 +217,7 @@ async def cmd_configure(args: list[str] | None = None) -> int:
     known_count = sum(1 for m in models if m.is_pricing_known)
     new_count = len(models) - known_count
 
-    console.print(
-        f"[dim]Discovered {len(models)} models "
-        f"({known_count} with pricing, {new_count} new/probed)[/]"
-    )
+    console.print(f"[dim]Discovered {len(models)} models ({known_count} with pricing, {new_count} new/probed)[/]")
 
     ranked = registry.rank_for_display(models)
     model_id = _select_model_interactive(ranked)
@@ -242,16 +235,18 @@ async def cmd_configure(args: list[str] | None = None) -> int:
     save_config(bugswarm_config)
 
     console.print()
-    console.print(Panel.fit(
-        "[bold green]Configuration saved![/]\n\n"
-        f"  [bold]Provider:[/]  {provider}\n"
-        f"  [bold]Model:[/]     {model_id}\n"
-        f"  [bold]Budget:[/]    {bugswarm_config.budget_tokens:,} tokens (default)\n\n"
-        "[dim]To start hunting bugs:[/]  [bold]bugswarm run /path/to/repo[/]\n"
-        "[dim]To view usage stats:[/]    [bold]bugswarm usage[/]\n"
-        "[dim]To change later:[/]        [bold]bugswarm configure --edit[/]",
-        border_style="green",
-    ))
+    console.print(
+        Panel.fit(
+            "[bold green]Configuration saved![/]\n\n"
+            f"  [bold]Provider:[/]  {provider}\n"
+            f"  [bold]Model:[/]     {model_id}\n"
+            f"  [bold]Budget:[/]    {bugswarm_config.budget_tokens:,} tokens (default)\n\n"
+            "[dim]To start hunting bugs:[/]  [bold]bugswarm run /path/to/repo[/]\n"
+            "[dim]To view usage stats:[/]    [bold]bugswarm usage[/]\n"
+            "[dim]To change later:[/]        [bold]bugswarm configure --edit[/]",
+            border_style="green",
+        )
+    )
 
     return 0
 
@@ -262,13 +257,15 @@ async def cmd_show_config(args: list[str] | None = None) -> int:
         console.print("[yellow]Not configured. Run [bold]bugswarm configure[/] first.[/]")
         return 1
 
-    console.print(Panel.fit(
-        "[bold]Current Configuration[/]\n\n"
-        f"  [bold]Provider:[/]  {config.provider}\n"
-        f"  [bold]Model:[/]     {config.model}\n"
-        f"  [bold]API Key:[/]   {config.api_key_display}\n"
-        f"  [bold]Budget:[/]    {config.budget_tokens:,} tokens\n"
-        f"  [bold]Base URL:[/]  {config.base_url or '(default)'}",
-        border_style="green",
-    ))
+    console.print(
+        Panel.fit(
+            "[bold]Current Configuration[/]\n\n"
+            f"  [bold]Provider:[/]  {config.provider}\n"
+            f"  [bold]Model:[/]     {config.model}\n"
+            f"  [bold]API Key:[/]   {config.api_key_display}\n"
+            f"  [bold]Budget:[/]    {config.budget_tokens:,} tokens\n"
+            f"  [bold]Base URL:[/]  {config.base_url or '(default)'}",
+            border_style="green",
+        )
+    )
     return 0

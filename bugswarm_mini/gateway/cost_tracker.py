@@ -3,12 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
-from .protocol import ModelInfo, ChatResponse
-
+from .protocol import ChatResponse, ModelInfo
 
 USAGE_DB_PATH = Path.home() / ".config" / "bugswarm" / "usage.db"
 
@@ -30,14 +28,9 @@ class RunCostSnapshot:
     @property
     def warning(self) -> str | None:
         if self.stale_days > 30:
-            return (
-                f"Price estimate may be inaccurate — model prices "
-                f"last refreshed {self.stale_days} days ago"
-            )
+            return f"Price estimate may be inaccurate — model prices last refreshed {self.stale_days} days ago"
         if self.stale_days > 7:
-            return (
-                f"Price estimate last refreshed {self.stale_days} days ago"
-            )
+            return f"Price estimate last refreshed {self.stale_days} days ago"
         return None
 
     @property
@@ -178,38 +171,39 @@ class UsageDB:
         verified_findings: int = 0,
     ) -> None:
         import datetime
+
         with self._get_conn() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR REPLACE INTO runs
                 (id, repo, model, provider, started_at, duration_secs,
                  tokens_consumed, input_tokens, output_tokens, budget_tokens,
                  price_snapshot_json, estimated_cost_dollars,
                  findings_count, verified_findings, stale_warning)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                run_id,
-                repo,
-                model,
-                provider,
-                datetime.datetime.now(datetime.UTC).isoformat(),
-                duration_secs,
-                tokens_consumed,
-                input_tokens,
-                output_tokens,
-                budget_tokens,
-                json.dumps(asdict(price_snapshot) if price_snapshot else {}),
-                estimated_cost,
-                findings_count,
-                verified_findings,
-                price_snapshot.warning if price_snapshot else None,
-            ))
+            """,
+                (
+                    run_id,
+                    repo,
+                    model,
+                    provider,
+                    datetime.datetime.now(datetime.UTC).isoformat(),
+                    duration_secs,
+                    tokens_consumed,
+                    input_tokens,
+                    output_tokens,
+                    budget_tokens,
+                    json.dumps(asdict(price_snapshot) if price_snapshot else {}),
+                    estimated_cost,
+                    findings_count,
+                    verified_findings,
+                    price_snapshot.warning if price_snapshot else None,
+                ),
+            )
 
     def get_recent_runs(self, limit: int = 20) -> list[dict]:
         with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?",
-                (limit,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
 
     def get_summary(self) -> dict:
@@ -219,12 +213,8 @@ class UsageDB:
             cost = conn.execute(
                 "SELECT COALESCE(SUM(estimated_cost_dollars), 0) FROM runs WHERE estimated_cost_dollars IS NOT NULL"
             ).fetchone()[0]
-            models = conn.execute(
-                "SELECT COUNT(DISTINCT model) FROM runs"
-            ).fetchone()[0]
-            verified = conn.execute(
-                "SELECT COALESCE(SUM(verified_findings), 0) FROM runs"
-            ).fetchone()[0]
+            models = conn.execute("SELECT COUNT(DISTINCT model) FROM runs").fetchone()[0]
+            verified = conn.execute("SELECT COALESCE(SUM(verified_findings), 0) FROM runs").fetchone()[0]
             return {
                 "total_runs": total,
                 "total_tokens": tokens,

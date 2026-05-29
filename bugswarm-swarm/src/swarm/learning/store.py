@@ -6,7 +6,6 @@ Falls back to in-memory cosine similarity when ChromaDB is unavailable.
 
 from __future__ import annotations
 
-import hashlib
 import time
 from typing import Any
 
@@ -29,8 +28,10 @@ class PatternStore:
 
     def _init_store(self):
         try:
-            import chromadb
             import os
+
+            import chromadb
+
             path = os.path.expanduser(self.persist_path)
             os.makedirs(path, exist_ok=True)
 
@@ -45,8 +46,7 @@ class PatternStore:
             logger.warning("chromadb_unavailable", error=str(e)[:200], fallback="in_memory")
             self._available = False
 
-    def store(self, pattern_id: str, embedding: list[float],
-              metadata: dict[str, Any], document: str) -> None:
+    def store(self, pattern_id: str, embedding: list[float], metadata: dict[str, Any], document: str) -> None:
         if self._available and self._collection:
             try:
                 self._collection.add(
@@ -59,13 +59,17 @@ class PatternStore:
             except Exception as e:
                 logger.warning("chromadb_store_failed", error=str(e)[:200])
 
-        self._fallback_patterns.append({
-            "id": pattern_id, "metadata": metadata, "document": document,
-            "embedding": embedding, "stored_at": time.time(),
-        })
+        self._fallback_patterns.append(
+            {
+                "id": pattern_id,
+                "metadata": metadata,
+                "document": document,
+                "embedding": embedding,
+                "stored_at": time.time(),
+            }
+        )
 
-    def query(self, embedding: list[float], top_k: int = 10,
-              language_filter: str | None = None) -> list[dict]:
+    def query(self, embedding: list[float], top_k: int = 10, language_filter: str | None = None) -> list[dict]:
         if self._available and self._collection:
             try:
                 where = {"language": language_filter} if language_filter else None
@@ -81,9 +85,9 @@ class PatternStore:
 
         return self._fallback_query(embedding, top_k, language_filter)
 
-    def _fallback_query(self, embedding: list[float], top_k: int,
-                        language_filter: str | None) -> list[dict]:
+    def _fallback_query(self, embedding: list[float], top_k: int, language_filter: str | None) -> list[dict]:
         from .embed import CodeEmbedder
+
         emb = CodeEmbedder()
 
         scored = []
@@ -113,13 +117,15 @@ class PatternStore:
         documents = results.get("documents", [[]])[0]
 
         for i in range(len(ids)):
-            formatted.append({
-                "similarity": round(1.0 - distances[i], 4) if i < len(distances) else 0.0,
-                "cwe": metadatas[i].get("cwe", "") if i < len(metadatas) else "",
-                "severity": metadatas[i].get("severity", 5) if i < len(metadatas) else 5,
-                "language": metadatas[i].get("language", "") if i < len(metadatas) else "",
-                "snippet": documents[i][:200] if i < len(documents) else "",
-            })
+            formatted.append(
+                {
+                    "similarity": round(1.0 - distances[i], 4) if i < len(distances) else 0.0,
+                    "cwe": metadatas[i].get("cwe", "") if i < len(metadatas) else "",
+                    "severity": metadatas[i].get("severity", 5) if i < len(metadatas) else 5,
+                    "language": metadatas[i].get("language", "") if i < len(metadatas) else "",
+                    "snippet": documents[i][:200] if i < len(documents) else "",
+                }
+            )
         return formatted
 
     def count(self) -> int:

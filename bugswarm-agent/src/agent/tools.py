@@ -11,8 +11,9 @@ import hashlib
 import random
 import time
 from collections import OrderedDict, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 
@@ -31,6 +32,7 @@ class ToolResult:
         result = self.data
         if self.metadata:
             import json
+
             result += f"\n[Metadata: {json.dumps(self.metadata)}]"
         return result
 
@@ -50,8 +52,7 @@ class ToolDefinition:
 class RetryPolicy:
     """Exponential backoff with jitter."""
 
-    def __init__(self, max_retries: int = 3, base_delay: float = 1.0,
-                 max_delay: float = 60.0):
+    def __init__(self, max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 60.0):
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.max_delay = max_delay
@@ -100,7 +101,8 @@ class ToolCache:
     def invalidate(self, tool_name: str | None = None) -> None:
         if tool_name:
             self.cache = OrderedDict(
-                (k, v) for k, v in self.cache.items()
+                (k, v)
+                for k, v in self.cache.items()
                 if not k.startswith(hashlib.sha256(tool_name.encode()).hexdigest()[:8])
             )
         else:
@@ -137,7 +139,6 @@ class CircuitBreaker:
                 return True
             return False
         return True  # half_open
-
 
 
 MAX_POC_SIZE_BYTES = 1_000_000
@@ -258,8 +259,16 @@ def _validate_describe_trigger(args: dict) -> tuple[bool, str]:
     if not bug_id:
         return False, "describe_trigger requires non-empty 'bug_id'"
     dim = args.get("dimension", "")
-    valid_dims = {"Input", "Environment", "Timing", "DataState", "Concurrency",
-                  "Configuration", "DependencyVersion", "OsArch"}
+    valid_dims = {
+        "Input",
+        "Environment",
+        "Timing",
+        "DataState",
+        "Concurrency",
+        "Configuration",
+        "DependencyVersion",
+        "OsArch",
+    }
     if dim and dim not in valid_dims:
         return False, f"Invalid dimension '{dim}'. Must be one of: {valid_dims}"
     return True, ""
@@ -561,9 +570,7 @@ class ToolRegistry:
         for attempt in range(1, tool.max_retries + 2):
             try:
                 t0 = time.perf_counter()
-                result = await asyncio.wait_for(
-                    tool.handler(args), timeout=tool.timeout_secs
-                )
+                result = await asyncio.wait_for(tool.handler(args), timeout=tool.timeout_secs)
                 elapsed = (time.perf_counter() - t0) * 1000
 
                 self._stats[name]["calls"] += 1
@@ -576,7 +583,7 @@ class ToolRegistry:
 
                 return result
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 last_error = f"Timeout after {tool.timeout_secs}s"
                 logger.warning("tool_timeout", tool=name, attempt=attempt, timeout=tool.timeout_secs)
             except Exception as e:
@@ -596,23 +603,23 @@ class ToolRegistry:
         """Generate OpenAI-compatible function calling schema."""
         schemas = []
         for name, tool in self._tools.items():
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                },
-            })
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+            )
         return schemas
 
     def stats(self) -> dict:
         return {
             name: {
                 **self._stats[name],
-                "avg_latency_ms": round(
-                    self._stats[name]["total_latency"] / max(self._stats[name]["calls"], 1), 1
-                ),
+                "avg_latency_ms": round(self._stats[name]["total_latency"] / max(self._stats[name]["calls"], 1), 1),
                 "breaker_state": self._breakers[name].state,
                 "cache_hit_rate": round(self._cache.hit_rate, 3),
             }

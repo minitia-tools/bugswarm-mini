@@ -6,10 +6,11 @@ In headless mode, outputs structured JSON for external monitoring.
 
 from __future__ import annotations
 
-import json, time
+import json
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
 
 import structlog
 
@@ -20,14 +21,15 @@ logger = structlog.get_logger(__name__)
 # UI State Model
 # ═══════════════════════════════════════════════════════════════
 
+
 class TUIScreen(str, Enum):
-    SWARM_OVERVIEW = "swarm_overview"    # F1
-    AGENT_DETAIL = "agent_detail"        # F2
+    SWARM_OVERVIEW = "swarm_overview"  # F1
+    AGENT_DETAIL = "agent_detail"  # F2
     SANDBOX_MONITOR = "sandbox_monitor"  # F3
-    BENCH_PANEL = "bench_panel"         # F4
-    EVIDENCE_GRAPH = "evidence_graph"    # F5
-    FINANCE = "finance"                 # F6
-    RAW_LOGS = "raw_logs"              # F7
+    BENCH_PANEL = "bench_panel"  # F4
+    EVIDENCE_GRAPH = "evidence_graph"  # F5
+    FINANCE = "finance"  # F6
+    RAW_LOGS = "raw_logs"  # F7
 
 
 class SeverityColor(str, Enum):
@@ -50,8 +52,12 @@ class AgentRow:
 
     def to_row(self) -> dict:
         return {
-            "id": self.id, "persona": self.persona, "status": self.status,
-            "round": self.round, "tokens": self.tokens, "bugs": self.bugs,
+            "id": self.id,
+            "persona": self.persona,
+            "status": self.status,
+            "round": self.round,
+            "tokens": self.tokens,
+            "bugs": self.bugs,
             "health": self.health,
         }
 
@@ -63,13 +69,17 @@ class BudgetBar:
     time_pct: float = 0.0
 
     def token_color(self) -> str:
-        if self.tokens_pct >= 95: return "red"
-        if self.tokens_pct >= 80: return "yellow"
+        if self.tokens_pct >= 95:
+            return "red"
+        if self.tokens_pct >= 80:
+            return "yellow"
         return "green"
 
     def cost_color(self) -> str:
-        if self.cost_pct >= 95: return "red"
-        if self.cost_pct >= 80: return "yellow"
+        if self.cost_pct >= 95:
+            return "red"
+        if self.cost_pct >= 80:
+            return "yellow"
         return "green"
 
 
@@ -116,6 +126,7 @@ class CostBreakdown:
 @dataclass
 class TUIState:
     """Complete state for rendering the TUI."""
+
     screen: TUIScreen = TUIScreen.SWARM_OVERVIEW
     swarm_name: str = ""
     repo: str = ""
@@ -147,8 +158,12 @@ class TUIState:
         return {
             "screen": self.screen.value,
             "swarm": {
-                "name": self.swarm_name, "repo": self.repo, "status": self.status,
-                "elapsed": self.elapsed, "round": self.round, "max_rounds": self.max_rounds,
+                "name": self.swarm_name,
+                "repo": self.repo,
+                "status": self.status,
+                "elapsed": self.elapsed,
+                "round": self.round,
+                "max_rounds": self.max_rounds,
             },
             "agents": [a.to_row() for a in self.agents],
             "budget": {
@@ -170,6 +185,7 @@ class TUIState:
 # ═══════════════════════════════════════════════════════════════
 # TUI Renderer
 # ═══════════════════════════════════════════════════════════════
+
 
 class TUIRenderer:
     """Renders the TUI state to the terminal or to structured output.
@@ -345,6 +361,7 @@ class TUIRenderer:
 # TUI Data Feeder — updates state from orchestrator
 # ═══════════════════════════════════════════════════════════════
 
+
 class TUIFeeder:
     """Updates TUI state from orchestrator, finance controller, and bench data."""
 
@@ -358,14 +375,16 @@ class TUIFeeder:
         s.agents = []
         scores = r.get("agent_scores", {})
         for aid, score in scores.items():
-            s.agents.append(AgentRow(
-                id=aid,
-                persona=score.get("persona", "?"),
-                status=score.get("status", "active"),
-                tokens=score.get("tokens", 0),
-                bugs=score.get("bugs", 0),
-                health="ok",
-            ))
+            s.agents.append(
+                AgentRow(
+                    id=aid,
+                    persona=score.get("persona", "?"),
+                    status=score.get("status", "active"),
+                    tokens=score.get("tokens", 0),
+                    bugs=score.get("bugs", 0),
+                    health="ok",
+                )
+            )
         s.diversity_score = 1.0 - (r.get("diversity_warning", 0) * 0.5)
         s.loop_detections = len(r.get("loops", []))
         s.agent_ejections = len(r.get("ejections", []))
@@ -390,14 +409,16 @@ class TUIFeeder:
     def feed_bench(self, bench_cases: list) -> None:
         self.state.judge_rows = []
         for case in bench_cases[:5]:
-            self.state.judge_rows.append(JudgeVerdictRow(
-                case_id=case.case_id[:8],
-                claim=case.claim[:60],
-                judges_voted=f"{sum(1 for v in case.verdicts if v.bug_verified)}-{sum(1 for v in case.verdicts if not v.bug_verified)}",
-                verdict=case.final_verdict.value,
-                confidence="HIGH" if case.final_verdict.value == "confirmed" else "MEDIUM",
-                queries="0/3",
-            ))
+            self.state.judge_rows.append(
+                JudgeVerdictRow(
+                    case_id=case.case_id[:8],
+                    claim=case.claim[:60],
+                    judges_voted=f"{sum(1 for v in case.verdicts if v.bug_verified)}-{sum(1 for v in case.verdicts if not v.bug_verified)}",
+                    verdict=case.final_verdict.value,
+                    confidence="HIGH" if case.final_verdict.value == "confirmed" else "MEDIUM",
+                    queries="0/3",
+                )
+            )
 
     def add_log(self, level: str, component: str, message: str) -> None:
         ts = time.strftime("%H:%M:%S")

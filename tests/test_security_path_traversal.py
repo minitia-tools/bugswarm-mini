@@ -24,23 +24,46 @@ Attack vectors tested:
 import sys
 from pathlib import Path
 
-G = "\033[0;32m"; R = "\033[0;31m"; Y = "\033[1;33m"; N = "\033[0m"
-passed = 0; failed = 0; skipped = 0
+G = "\033[0;32m"
+R = "\033[0;31m"
+Y = "\033[1;33m"
+N = "\033[0m"
+passed = 0
+failed = 0
+skipped = 0
 
 
 def P(name, detail=""):
-    global passed; msg = f"  {G}PASS{N} {name}"
-    if detail: msg += f" -- {detail}"; print(msg); passed += 1
-    else: print(msg); passed += 1
+    global passed
+    msg = f"  {G}PASS{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+        print(msg)
+        passed += 1
+    else:
+        print(msg)
+        passed += 1
+
 
 def F(name, detail=""):
-    global failed; msg = f"  {R}FAIL{N} {name}"
-    if detail: msg += f" -- {detail}"; print(msg); failed += 1
-    else: print(msg); failed += 1
+    global failed
+    msg = f"  {R}FAIL{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+        print(msg)
+        failed += 1
+    else:
+        print(msg)
+        failed += 1
+
 
 def W(name, detail=""):
-    global skipped; msg = f"  {Y}SKIP{N} {name}"
-    if detail: msg += f" -- {detail}"; print(msg); skipped += 1
+    global skipped
+    msg = f"  {Y}SKIP{N} {name}"
+    if detail:
+        msg += f" -- {detail}"
+        print(msg)
+        skipped += 1
 
 
 # Replicate the EXACT validation logic from all three files
@@ -130,6 +153,7 @@ def test_tools_validate_read_file():
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bugswarm-agent" / "src"))
         from agent.tools import _validate_read_file
+
         validate_fn = _validate_read_file
     except ImportError as e:
         W("Import tools.py", str(e))
@@ -210,18 +234,15 @@ def test_symlink_escape_detection():
         if not segment_ok:
             P("Symlink escape blocked by segment check")
         elif not prefix_ok:
-            P("Symlink escape blocked by resolve+prefix check",
-              f"path={test_path} resolved={full_path}")
+            P("Symlink escape blocked by resolve+prefix check", f"path={test_path} resolved={full_path}")
         else:
             # Only if both pass -- but symlink leaks outside
             final_path = full_path.resolve()
             final_ok = str(final_path).startswith(str(repo_resolved) + "/")
             if not final_ok:
-                P("Symlink escape blocked by double-resolve check",
-                  f"path={test_path} final={final_path}")
+                P("Symlink escape blocked by double-resolve check", f"path={test_path} final={final_path}")
             else:
-                F("Symlink escape NOT blocked",
-                  f"path={test_path} resolved={full_path} final={final_path}")
+                F("Symlink escape NOT blocked", f"path={test_path} resolved={full_path} final={final_path}")
                 return 0, 1
 
         return 1, 0
@@ -294,8 +315,10 @@ if __name__ == "__main__":
 
     print()
     print("=" * 72)
-    print(f"\n  Results: {G}{total_passed} passed{N} / {R}{total_failed} failed{N} / "
-          f"{skipped} skipped / {total_passed + total_failed + skipped} total")
+    print(
+        f"\n  Results: {G}{total_passed} passed{N} / {R}{total_failed} failed{N} / "
+        f"{skipped} skipped / {total_passed + total_failed + skipped} total"
+    )
     print()
 
     if total_failed > 0:

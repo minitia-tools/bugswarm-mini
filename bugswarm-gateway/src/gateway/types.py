@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -100,6 +99,7 @@ class ChatResponse(BaseModel):
 @dataclass
 class ProviderConfig:
     """Configuration for a single provider."""
+
     provider: ProviderType
     api_key: str = ""
     base_url: str | None = None
@@ -116,6 +116,7 @@ class ProviderConfig:
 @dataclass
 class GatewayConfig:
     """Top-level gateway configuration."""
+
     providers: dict[ProviderType, ProviderConfig] = field(default_factory=dict)
     default_provider: ProviderType = ProviderType.OPENAI
     fallback_providers: list[ProviderType] = field(default_factory=list)
@@ -138,9 +139,10 @@ class GatewayConfig:
         return {p: c for p, c in self.providers.items() if c.api_key.strip()}
 
     @classmethod
-    def from_env(cls, validate: bool = True) -> "GatewayConfig":
+    def from_env(cls, validate: bool = True) -> GatewayConfig:
         """Build config from environment variables."""
         import os
+
         providers = {}
 
         # OpenAI
@@ -189,7 +191,7 @@ class GatewayConfig:
                 api_key=_load_api_key("DEEPSEEK_API_KEY"),
                 base_url="https://api.deepseek.com",
                 default_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-                input_cost_per_mtok=0.14,   # $0.14/1M input tokens
+                input_cost_per_mtok=0.14,  # $0.14/1M input tokens
                 output_cost_per_mtok=0.28,  # $0.28/1M output tokens
             )
 

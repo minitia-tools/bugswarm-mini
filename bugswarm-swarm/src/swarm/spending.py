@@ -25,9 +25,11 @@ class TieredSpending:
 
     def can_spend(self, severity: int, estimated_tokens: int) -> bool:
         tier = self._tier(severity)
-        limits = {SeverityTier.LOW: self.config.low_severity_pct,
-                  SeverityTier.MEDIUM: self.config.medium_severity_pct,
-                  SeverityTier.HIGH: self.config.high_severity_pct}
+        limits = {
+            SeverityTier.LOW: self.config.low_severity_pct,
+            SeverityTier.MEDIUM: self.config.medium_severity_pct,
+            SeverityTier.HIGH: self.config.high_severity_pct,
+        }
         max_tier = int(self.config.token_budget * limits[tier])
         projected = self.state.tier_tokens[tier] + estimated_tokens
         if tier == SeverityTier.HIGH:
@@ -36,8 +38,10 @@ class TieredSpending:
 
     @staticmethod
     def _tier(severity: int) -> SeverityTier:
-        if severity <= 3: return SeverityTier.LOW
-        if severity <= 7: return SeverityTier.MEDIUM
+        if severity <= 3:
+            return SeverityTier.LOW
+        if severity <= 7:
+            return SeverityTier.MEDIUM
         return SeverityTier.HIGH
 
 
@@ -58,14 +62,19 @@ class BudgetOverride:
         if projected > max_allowed:
             return False, f"Override would exceed {self.config.override_max_multiplier}x cap"
 
-        self.state.overrides.append({
-            "timestamp": time.time(), "severity": severity,
-            "finding": finding.get("claim", "")[:100],
-            "estimated_tokens": estimated_tokens,
-            "tokens_used_at_override": self.state.tokens_used, "approved": True,
-        })
-        logger.warning("budget_override_approved", severity=severity,
-                       tokens=estimated_tokens, total=len(self.state.overrides))
+        self.state.overrides.append(
+            {
+                "timestamp": time.time(),
+                "severity": severity,
+                "finding": finding.get("claim", "")[:100],
+                "estimated_tokens": estimated_tokens,
+                "tokens_used_at_override": self.state.tokens_used,
+                "approved": True,
+            }
+        )
+        logger.warning(
+            "budget_override_approved", severity=severity, tokens=estimated_tokens, total=len(self.state.overrides)
+        )
         return True, "Override approved"
 
 
@@ -90,11 +99,15 @@ class AnomalyDetector:
                 variance = sum((t - mean) ** 2 for t in self.state.agent_tokens.values()) / total_agents
                 std = math.sqrt(variance) if variance > 0 else 1.0
                 zscore = (tokens - mean) / std
-                anomalies.append({
-                    "agent_id": agent_id, "token_share": round(share, 3),
-                    "zscore": round(zscore, 2), "tokens": tokens,
-                    "action": "cap_tokens" if zscore > self.config.anomaly_zscore_threshold else "warn",
-                })
+                anomalies.append(
+                    {
+                        "agent_id": agent_id,
+                        "token_share": round(share, 3),
+                        "zscore": round(zscore, 2),
+                        "tokens": tokens,
+                        "action": "cap_tokens" if zscore > self.config.anomaly_zscore_threshold else "warn",
+                    }
+                )
 
         anomalies.sort(key=lambda a: a["token_share"], reverse=True)
         return anomalies

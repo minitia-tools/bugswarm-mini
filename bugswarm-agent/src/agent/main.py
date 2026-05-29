@@ -8,8 +8,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from agent.cli.commands import cmd_run
 from agent.cli.config import CLIConfig
-from agent.cli.commands import cmd_run, cmd_status, cmd_report, cmd_learn
 from agent.cli.signals import GracefulKiller
 from agent.cli.validation import PreFlight
 
@@ -21,6 +21,7 @@ async def main_async() -> int:
     # Handle gate tests (hidden flag)
     if args.test:
         from agent.tests.phase4_gate import run_phase4_gate
+
         receipt = await run_phase4_gate()
         return 0 if receipt.get("status") == "PASSED" else 1
 
@@ -39,7 +40,7 @@ async def main_async() -> int:
 
 async def _dry_run(config: CLIConfig) -> int:
     """Validate everything without running."""
-    print(f"Bug Swarm Agent — Dry Run")
+    print("Bug Swarm Agent — Dry Run")
     print(f"  Repository: {config.repo}")
     print(f"  Persona:    {config.persona.value}")
     print(f"  Model:      {config.model} ({config.provider})")

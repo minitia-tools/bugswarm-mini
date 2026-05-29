@@ -133,6 +133,7 @@ class TestDetectApiKeyProvider:
 class TestModelCache:
     def test_no_cache_returns_empty(self):
         from bugswarm_mini.gateway.config import CONFIG_DIR
+
         cache_path = CONFIG_DIR / "model_cache.json"
         if cache_path.exists():
             cache_path.unlink()
@@ -141,6 +142,7 @@ class TestModelCache:
 
     def test_save_and_load_cache(self):
         from bugswarm_mini.gateway.config import CONFIG_DIR
+
         cache_path = CONFIG_DIR / "model_cache.json"
         if cache_path.exists():
             cache_path.unlink()
@@ -152,6 +154,7 @@ class TestModelCache:
 
     def test_overwrite_cache(self):
         from bugswarm_mini.gateway.config import CONFIG_DIR
+
         cache_path = CONFIG_DIR / "model_cache.json"
         if cache_path.exists():
             cache_path.unlink()

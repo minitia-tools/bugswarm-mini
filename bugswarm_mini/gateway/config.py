@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 from .protocol import PROVIDER_PROTOCOLS
-
 
 CONFIG_DIR = Path.home() / ".config" / "bugswarm"
 CONFIG_FILE = CONFIG_DIR / "config.json"

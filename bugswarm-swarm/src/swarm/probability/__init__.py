@@ -3,7 +3,7 @@
 C6.2 PEAK: Stratified negative sampling, incremental retrain, overfitting prevention.
 """
 
-from .features import FunctionFeatures, FeatureExtractor
+from .features import FeatureExtractor, FunctionFeatures
 from .model import (
     BugProbabilityModel,
     PredictionResult,
@@ -12,8 +12,8 @@ from .model import (
 
 __all__ = [
     "BugProbabilityModel",
+    "FeatureExtractor",
+    "FunctionFeatures",
     "PredictionResult",
     "RepoPrediction",
-    "FunctionFeatures",
-    "FeatureExtractor",
 ]

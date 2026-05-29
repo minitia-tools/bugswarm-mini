@@ -25,21 +25,19 @@ class RecallRateLimiter:
         recent = [t for t in turns if turn - t <= self.cooldown_turns]
         return len(recent) < self.max_per_round
 
-    def record_recall(self, agent_id: str, turn: int,
-                      reason: str = "", context_hash: str = "") -> None:
+    def record_recall(self, agent_id: str, turn: int, reason: str = "", context_hash: str = "") -> None:
         """Record a recall invocation."""
         if agent_id not in self.agent_recalls:
             self.agent_recalls[agent_id] = []
         self.agent_recalls[agent_id].append(turn)
 
         # Penalize trust if overused within cooldown window
-        recent_count = len([t for t in self.agent_recalls[agent_id]
-                           if turn - t <= self.cooldown_turns])
+        recent_count = len([t for t in self.agent_recalls[agent_id] if turn - t <= self.cooldown_turns])
         if recent_count > self.max_per_round:
-            self.agent_trust_penalties[agent_id] = \
-                self.agent_trust_penalties.get(agent_id, 0.0) + 0.1
-            logger.warning("recall_rate_limited", agent=agent_id,
-                          count=recent_count, penalty=self.agent_trust_penalties[agent_id])
+            self.agent_trust_penalties[agent_id] = self.agent_trust_penalties.get(agent_id, 0.0) + 0.1
+            logger.warning(
+                "recall_rate_limited", agent=agent_id, count=recent_count, penalty=self.agent_trust_penalties[agent_id]
+            )
 
     def get_trust_penalty(self, agent_id: str) -> float:
         """Get accumulated trust penalty for an agent."""

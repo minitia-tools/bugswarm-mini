@@ -15,4 +15,5 @@ class DeepSeekAdapter(OpenAIAdapter):
     Context: 1M tokens, max output 384K tokens
     Features: JSON output, tool calls, FIM completion, chat prefix completion
     """
+
     pass

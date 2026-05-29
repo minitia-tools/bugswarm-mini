@@ -1,25 +1,47 @@
 """M003: Tool capability gating — validation middleware tests."""
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from agent.tools import (
-    _validate_exec_sandbox, _validate_read_file, _validate_fuzz_target,
-    _validate_delta_debug, _validate_diff_execute, _validate_mine_invariants,
-    _validate_run_mutations, _validate_solve_reachability, _validate_explore_paths,
-    _validate_describe_trigger, _validate_get_trigger_matrix, _validate_suggest_chain,
-    _validate_predict_fix_impact,
-    _validate_query_cpg, _validate_list_dir, _validate_trace_dependency,
-    _validate_grep, _validate_glob, _validate_write_file, _validate_edit_file,
-    _validate_web_fetch, _validate_todo_write, _validate_kill_shell,
+    MAX_CALLS_PER_WINDOW,
+    MAX_CONTENT_BYTES,
+    MAX_COUNT,
+    MAX_HOPS,
+    MAX_INPUT_SIZE_BYTES,
+    MAX_POC_SIZE_BYTES,
+    MAX_QUERIES,
+    MAX_SOURCE_SIZE_BYTES,
+    RATE_LIMIT_WINDOW_SECS,
+    TOOL_VALIDATORS,
     _validate_arg_types,
-    TOOL_VALIDATORS, MAX_POC_SIZE_BYTES, MAX_INPUT_SIZE_BYTES, MAX_SOURCE_SIZE_BYTES,
-    MAX_COUNT, MAX_QUERIES, MAX_HOPS, MAX_CONTENT_BYTES, MAX_EDIT_BYTES,
-    RATE_LIMIT_WINDOW_SECS, MAX_CALLS_PER_WINDOW,
-    VALID_TOOL_ACTIONS, VALID_TOOL_STATUSES, VALID_SIGNALS,
+    _validate_delta_debug,
+    _validate_describe_trigger,
+    _validate_diff_execute,
+    _validate_edit_file,
+    _validate_exec_sandbox,
+    _validate_explore_paths,
+    _validate_fuzz_target,
+    _validate_get_trigger_matrix,
+    _validate_glob,
+    _validate_grep,
+    _validate_kill_shell,
+    _validate_list_dir,
+    _validate_mine_invariants,
+    _validate_predict_fix_impact,
+    _validate_query_cpg,
+    _validate_read_file,
+    _validate_run_mutations,
+    _validate_solve_reachability,
+    _validate_suggest_chain,
+    _validate_todo_write,
+    _validate_trace_dependency,
+    _validate_web_fetch,
+    _validate_write_file,
 )
 
 
@@ -212,61 +234,102 @@ class TestSuggestChainValidation:
 class TestPredictFixImpactValidation:
     def test_empty_bug_id_rejected(self):
         ok, reason = _validate_predict_fix_impact(
-            {"bug_id": "", "function_name": "f", "original_line": "x", "replacement_line": "y"})
+            {"bug_id": "", "function_name": "f", "original_line": "x", "replacement_line": "y"}
+        )
         assert not ok
 
     def test_empty_function_rejected(self):
         ok, reason = _validate_predict_fix_impact(
-            {"bug_id": "B1", "function_name": "", "original_line": "x", "replacement_line": "y"})
+            {"bug_id": "B1", "function_name": "", "original_line": "x", "replacement_line": "y"}
+        )
         assert not ok
 
     def test_empty_original_rejected(self):
         ok, reason = _validate_predict_fix_impact(
-            {"bug_id": "B1", "function_name": "f", "original_line": "", "replacement_line": "y"})
+            {"bug_id": "B1", "function_name": "f", "original_line": "", "replacement_line": "y"}
+        )
         assert not ok
 
     def test_empty_replacement_rejected(self):
         ok, reason = _validate_predict_fix_impact(
-            {"bug_id": "B1", "function_name": "f", "original_line": "x", "replacement_line": ""})
+            {"bug_id": "B1", "function_name": "f", "original_line": "x", "replacement_line": ""}
+        )
         assert not ok
 
     def test_valid_accepted(self):
         ok, reason = _validate_predict_fix_impact(
-            {"bug_id": "B1", "function_name": "f", "original_line": "x", "replacement_line": "y"})
+            {"bug_id": "B1", "function_name": "f", "original_line": "x", "replacement_line": "y"}
+        )
         assert ok
 
 
 class TestValidatorRegistry:
     def test_all_23_tools_have_validators(self):
         expected = {
-            "exec_sandbox", "read_file", "fuzz_target", "delta_debug",
-            "diff_execute", "mine_invariants", "run_mutations",
-            "solve_reachability", "explore_paths", "describe_trigger",
-            "get_trigger_matrix", "suggest_chain", "predict_fix_impact",
-            "query_cpg", "list_dir", "trace_dependency",
-            "grep", "glob", "write_file", "edit_file",
-            "web_fetch", "todo_write", "kill_shell",
+            "exec_sandbox",
+            "read_file",
+            "fuzz_target",
+            "delta_debug",
+            "diff_execute",
+            "mine_invariants",
+            "run_mutations",
+            "solve_reachability",
+            "explore_paths",
+            "describe_trigger",
+            "get_trigger_matrix",
+            "suggest_chain",
+            "predict_fix_impact",
+            "query_cpg",
+            "list_dir",
+            "trace_dependency",
+            "grep",
+            "glob",
+            "write_file",
+            "edit_file",
+            "web_fetch",
+            "todo_write",
+            "kill_shell",
         }
-        assert set(TOOL_VALIDATORS.keys()) == expected, \
-            f"Missing validators: {expected - set(TOOL_VALIDATORS.keys())}"
+        assert set(TOOL_VALIDATORS.keys()) == expected, f"Missing validators: {expected - set(TOOL_VALIDATORS.keys())}"
 
     def test_every_validator_returns_tuple(self):
         for name, validator in TOOL_VALIDATORS.items():
-            minimal = {"path": "test.py", "poc_code": "x", "target_path": "bin",
-                       "function_name": "f", "bug_id": "B1", "bug_ids": ["B1"],
-                       "source_code": "x", "target_location": "f:1",
-                       "output_a": "x", "output_b": "y",
-                       "original_line": "x", "replacement_line": "y",
-                       "input_base64": "AA", "max_iterations": 200,
-                       "max_queries": 100, "max_hops": 10, "count": 100,
-                       "dimension": "Input", "exec_timeout_ms": 1000,
-                       "name": "f", "kind": "function",
-                       "pattern": "test", "max_results": 100,
-                       "content": "x", "old_string": "a", "new_string": "b",
-                       "replace_all": False, "url": "https://example.com",
-                       "action": "list", "status": "pending", "priority": 5,
-                       "signal": "SIGTERM", "kill_all": False,
-                       "process_id": None}
+            minimal = {
+                "path": "test.py",
+                "poc_code": "x",
+                "target_path": "bin",
+                "function_name": "f",
+                "bug_id": "B1",
+                "bug_ids": ["B1"],
+                "source_code": "x",
+                "target_location": "f:1",
+                "output_a": "x",
+                "output_b": "y",
+                "original_line": "x",
+                "replacement_line": "y",
+                "input_base64": "AA",
+                "max_iterations": 200,
+                "max_queries": 100,
+                "max_hops": 10,
+                "count": 100,
+                "dimension": "Input",
+                "exec_timeout_ms": 1000,
+                "name": "f",
+                "kind": "function",
+                "pattern": "test",
+                "max_results": 100,
+                "content": "x",
+                "old_string": "a",
+                "new_string": "b",
+                "replace_all": False,
+                "url": "https://example.com",
+                "action": "list",
+                "status": "pending",
+                "priority": 5,
+                "signal": "SIGTERM",
+                "kill_all": False,
+                "process_id": None,
+            }
             ok, reason = validator(minimal)
             assert isinstance(ok, bool), f"{name} validator returned non-bool"
             assert isinstance(reason, str), f"{name} validator returned non-str reason"
@@ -478,7 +541,9 @@ class TestKillShellValidation:
 
 class TestArgTypesValidation:
     def test_integer_arg_rejects_string(self):
-        ok, reason = _validate_arg_types("test", {"count": "not_an_int"}, {"properties": {"count": {"type": "integer"}}})
+        ok, reason = _validate_arg_types(
+            "test", {"count": "not_an_int"}, {"properties": {"count": {"type": "integer"}}}
+        )
         assert not ok
 
     def test_boolean_arg_rejects_string(self):
@@ -494,8 +559,11 @@ class TestArgTypesValidation:
         assert not ok
 
     def test_valid_types_accepted(self):
-        ok, reason = _validate_arg_types("test", {"count": 5, "flag": True, "name": "x"},
-                                          {"properties": {"count": {"type": "integer"}, "flag": {"type": "boolean"}, "name": {"type": "string"}}})
+        ok, reason = _validate_arg_types(
+            "test",
+            {"count": 5, "flag": True, "name": "x"},
+            {"properties": {"count": {"type": "integer"}, "flag": {"type": "boolean"}, "name": {"type": "string"}}},
+        )
         assert ok
 
     def test_unknown_arg_ignored(self):

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 import structlog
 
 from ..types import (
-    ChatRequest, ChatResponse, ChatMessage, MessageRole,
-    ProviderConfig, ProviderType, TokenUsage,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    ProviderConfig,
+    ProviderType,
+    TokenUsage,
 )
 from .base import BaseProviderAdapter, RetryableError
 
@@ -32,7 +36,9 @@ class OllamaAdapter(BaseProviderAdapter):
         messages = self._convert_messages(request.messages)
 
         payload: dict = {
-            "model": model, "messages": messages, "stream": False,
+            "model": model,
+            "messages": messages,
+            "stream": False,
             "options": {
                 "temperature": request.temperature,
                 "top_p": request.top_p,
@@ -65,16 +71,21 @@ class OllamaAdapter(BaseProviderAdapter):
         output_tokens = data.get("eval_count", 0)
 
         usage = TokenUsage(
-            input_tokens=input_tokens, output_tokens=output_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
         )
 
         cost = self.estimate_cost(usage.input_tokens, usage.output_tokens)
 
         return ChatResponse(
-            content=content, model=data.get("model", model),
-            provider=ProviderType.OLLAMA, usage=usage, cost=cost,
-            finish_reason=data.get("done_reason", "stop"), latency_ms=elapsed,
+            content=content,
+            model=data.get("model", model),
+            provider=ProviderType.OLLAMA,
+            usage=usage,
+            cost=cost,
+            finish_reason=data.get("done_reason", "stop"),
+            latency_ms=elapsed,
         )
 
     async def chat_stream(self, request: ChatRequest) -> AsyncIterator[str]:
@@ -82,7 +93,9 @@ class OllamaAdapter(BaseProviderAdapter):
         messages = self._convert_messages(request.messages)
 
         payload: dict = {
-            "model": model, "messages": messages, "stream": True,
+            "model": model,
+            "messages": messages,
+            "stream": True,
             "options": {"temperature": request.temperature, "num_predict": request.max_tokens},
         }
 
@@ -92,6 +105,7 @@ class OllamaAdapter(BaseProviderAdapter):
                 if line.strip():
                     try:
                         import json
+
                         chunk = json.loads(line)
                         if chunk.get("message", {}).get("content"):
                             yield chunk["message"]["content"]

@@ -13,20 +13,16 @@ import json
 import os
 import re
 import sqlite3
-import subprocess
 import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
-from typing import Any
 
-from gateway.types import ChatMessage, ChatRequest, MessageRole, ProviderType
 from gateway.client import LLMClient
+from gateway.types import ChatMessage, ChatRequest, MessageRole, ProviderType
 
 from agent.cli.signals import register_temp_file
-
 
 # ═══════════════════════════════════════════════════════════════
 # System Prompts
@@ -99,6 +95,7 @@ TOOL_PERMISSIONS = {
 # Tool Definitions
 # ═══════════════════════════════════════════════════════════════
 
+
 class ToolResult:
     def __init__(self, success: bool, data: str, metadata: dict | None = None):
         self.success = success
@@ -158,24 +155,28 @@ class ToolDispatcher:
                 py_files = list(self.repo_path.rglob("*.py"))
                 js_files = list(self.repo_path.rglob("*.js"))
                 files = [str(f.relative_to(self.repo_path)) for f in py_files + js_files]
-                return ToolResult(True, f"Files in repo:\n" + "\n".join(files[:50]), {"file_count": len(files)})
+                return ToolResult(True, "Files in repo:\n" + "\n".join(files[:50]), {"file_count": len(files)})
             elif name:
                 # Search for specific function — do a full CPG index and grep
                 cmd = [cpg_bin, "taint", "--repo", str(self.repo_path)]
-                proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
                 text = stdout.decode()
                 if name.lower() in text.lower():
-                    lines = [l for l in text.split('\n') if name.lower() in l.lower()]
-                    return ToolResult(True, '\n'.join(lines[:30]), {"query": name})
+                    lines = [l for l in text.split("\n") if name.lower() in l.lower()]
+                    return ToolResult(True, "\n".join(lines[:30]), {"query": name})
                 return ToolResult(True, f"No results for '{name}'. Full CPG:\n{text[:2000]}", {"query": name})
             else:
                 cmd = [cpg_bin, "stats", "--repo", str(self.repo_path)]
-                proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
                 data = json.loads(stdout.decode())
                 return ToolResult(True, json.dumps(data, indent=2), {"source": "cpg"})
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult(False, "CPG query timed out (30s)")
         except (ConnectionError, OSError) as e:
             return ToolResult(False, f"CPG service unavailable: {e}")
@@ -192,16 +193,18 @@ class ToolDispatcher:
             # Use taint command to find related paths
             cmd = [cpg_bin, "taint", "--repo", str(self.repo_path)]
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             text = stdout.decode()
             if func and func in text:
                 # Extract relevant lines mentioning this function
-                lines = [l for l in text.split('\n') if func in l]
-                return ToolResult(True, '\n'.join(lines[:20]), {"function": func, "radius": radius})
+                lines = [l for l in text.split("\n") if func in l]
+                return ToolResult(True, "\n".join(lines[:20]), {"function": func, "radius": radius})
             return ToolResult(True, text[:2000], {"function": func, "radius": radius})
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult(False, "Trace dependency timed out (30s)")
         except (ConnectionError, OSError) as e:
             return ToolResult(False, f"Trace service unavailable: {e}")
@@ -230,7 +233,7 @@ class ToolDispatcher:
                 t = "DIR" if entry.is_dir() else "FILE"
                 entries.append(f"  [{t}] {entry.name}")
             entries.insert(0, f"Contents of {target}:")
-            return ToolResult(True, '\n'.join(entries))
+            return ToolResult(True, "\n".join(entries))
         except PermissionError as e:
             return ToolResult(False, f"Permission denied: {e}")
         except OSError as e:
@@ -253,7 +256,7 @@ class ToolDispatcher:
             return ToolResult(False, "PoC contains sandbox escape patterns — REJECTED")
 
         # Write PoC to temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(poc_code)
             poc_path = f.name
             register_temp_file(poc_path)
@@ -262,7 +265,9 @@ class ToolDispatcher:
             sandbox_bin = "/root/a/bugswarm-sandbox/target/release/bugswarm-sandbox"
             cmd = [sandbox_bin, "execute", "--poc", poc_path]
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=130)
 
@@ -272,14 +277,18 @@ class ToolDispatcher:
 
             try:
                 receipt = json.loads(cleaned_output)
-                return ToolResult(True, json.dumps(receipt, indent=2), {
-                    "exit_code": receipt.get("exit_code"),
-                    "status": receipt.get("status"),
-                    "duration_secs": receipt.get("duration_secs"),
-                })
+                return ToolResult(
+                    True,
+                    json.dumps(receipt, indent=2),
+                    {
+                        "exit_code": receipt.get("exit_code"),
+                        "status": receipt.get("status"),
+                        "duration_secs": receipt.get("duration_secs"),
+                    },
+                )
             except json.JSONDecodeError:
                 return ToolResult(True, cleaned_output[:2000], {"raw": True})
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult(False, "Sandbox execution timed out (130s)")
         except (ConnectionError, OSError) as e:
             return ToolResult(False, f"Sandbox infrastructure error: {e}")
@@ -337,19 +346,25 @@ class ToolDispatcher:
 
             result_lines = []
             for i in range(start - 1, end):
-                result_lines.append(f"{i+1}: {lines[i].rstrip()}")
+                result_lines.append(f"{i + 1}: {lines[i].rstrip()}")
 
-            content = '\n'.join(result_lines)
+            content = "\n".join(result_lines)
             cleaned, pii_count = self.scanner.scan(content)
             if pii_count > 0:
                 content = cleaned
             if self.scanner.detect_injection(content):
                 content = "<SANITIZED_CODE_CONTEXT>\n" + content + "\n</SANITIZED_CODE_CONTEXT>"
 
-            return ToolResult(True, content, {
-                "file": str(full_path), "lines": f"{start}-{end}",
-                "total_lines": len(lines), "pii_redactions": pii_count,
-            })
+            return ToolResult(
+                True,
+                content,
+                {
+                    "file": str(full_path),
+                    "lines": f"{start}-{end}",
+                    "total_lines": len(lines),
+                    "pii_redactions": pii_count,
+                },
+            )
         except FileNotFoundError:
             return ToolResult(False, f"File not found: {path}")
         except PermissionError:
@@ -364,29 +379,43 @@ class ToolDispatcher:
 # PII + Prompt Injection Scanner
 # ═══════════════════════════════════════════════════════════════
 
+
 class PIIScanner:
     """Scans content for PII, secrets, escape attempts, and prompt injection."""
 
     PII_PATTERNS = [
-        (r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', 'email'),
-        (r'\b(?:\d{4}[ -]?){3}\d{4}\b', 'credit_card'),
-        (r'\b\d{3}-\d{2}-\d{4}\b', 'ssn'),
-        (r'\bAKIA[0-9A-Z]{16}\b', 'aws_key'),
-        (r'\bgh[pousr]_[A-Za-z0-9_]{36,}\b', 'github_token'),
-        (r'-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----', 'private_key'),
-        (r'\beyJ[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_.+/=]*\b', 'jwt'),
+        (r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", "email"),
+        (r"\b(?:\d{4}[ -]?){3}\d{4}\b", "credit_card"),
+        (r"\b\d{3}-\d{2}-\d{4}\b", "ssn"),
+        (r"\bAKIA[0-9A-Z]{16}\b", "aws_key"),
+        (r"\bgh[pousr]_[A-Za-z0-9_]{36,}\b", "github_token"),
+        (r"-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----", "private_key"),
+        (r"\beyJ[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_.+/=]*\b", "jwt"),
     ]
 
     ESCAPE_PATTERNS = [
-        'chroot', 'nsenter', 'unshare', '/proc/1/ns', '/proc/self/ns',
-        'docker.sock', 'pivot_root', 'kexec', 'mount -t cgroup',
-        'insmod', 'modprobe', 'finit_module',
+        "chroot",
+        "nsenter",
+        "unshare",
+        "/proc/1/ns",
+        "/proc/self/ns",
+        "docker.sock",
+        "pivot_root",
+        "kexec",
+        "mount -t cgroup",
+        "insmod",
+        "modprobe",
+        "finit_module",
     ]
 
     INJECTION_PATTERNS = [
-        'ignore previous instructions', 'you are now DAN',
-        'forget all previous', 'new instructions:',
-        '### Human:', '[INST]', 'SYSTEM:',
+        "ignore previous instructions",
+        "you are now DAN",
+        "forget all previous",
+        "new instructions:",
+        "### Human:",
+        "[INST]",
+        "SYSTEM:",
     ]
 
     def scan(self, content: str) -> tuple[str, int]:
@@ -397,7 +426,7 @@ class PIIScanner:
             count += len(matches)
             for m in reversed(matches):
                 replacement = f"[REDACTED: type={pii_type}]"
-                result = result[:m.start()] + replacement + result[m.end():]
+                result = result[: m.start()] + replacement + result[m.end() :]
         return result, count
 
     def detect_escape(self, content: str) -> bool:
@@ -412,6 +441,7 @@ class PIIScanner:
 # ═══════════════════════════════════════════════════════════════
 # SQLite WAL State Persistence
 # ═══════════════════════════════════════════════════════════════
+
 
 class AgentStateDB:
     """SQLite WAL for crash-recoverable agent state."""
@@ -501,7 +531,9 @@ class AgentStateDB:
         )
         self.conn.commit()
 
-    def log_finding(self, run_id: str, claim: str, location: str, mechanism: str, severity: int, verified: bool = False) -> None:
+    def log_finding(
+        self, run_id: str, claim: str, location: str, mechanism: str, severity: int, verified: bool = False
+    ) -> None:
         self.conn.execute(
             "INSERT INTO findings (run_id, claim, location, mechanism, severity, verified) VALUES (?,?,?,?,?,?)",
             (run_id, claim, location, mechanism, severity, int(verified)),
@@ -529,6 +561,7 @@ class AgentStateDB:
 # ═══════════════════════════════════════════════════════════════
 # Agent IEP Loop
 # ═══════════════════════════════════════════════════════════════
+
 
 @dataclass
 class AgentConfig:
@@ -558,6 +591,7 @@ class BugSwarmAgent:
     @staticmethod
     def _generate_request_id() -> str:
         import uuid as _uuid
+
         return str(_uuid.uuid4())
 
     async def run(self) -> dict:
@@ -570,7 +604,7 @@ class BugSwarmAgent:
         all_findings = []
 
         for round_num in range(1, self.config.max_rounds + 1):
-            print(f"\n{'='*60}\n Round {round_num}/{self.config.max_rounds}\n{'='*60}")
+            print(f"\n{'=' * 60}\n Round {round_num}/{self.config.max_rounds}\n{'=' * 60}")
 
             for turn in range(1, self.config.max_turns_per_round + 1):
                 finding = await self._execute_turn(round_num, turn)
@@ -582,11 +616,15 @@ class BugSwarmAgent:
                     break
 
             # Checkpoint
-            self.db.checkpoint(self.config.run_id, round_num, {
-                "findings": len(all_findings),
-                "tokens": self.gateway.registry.total_tokens.total_tokens,
-                "cost": self.gateway.registry.total_cost,
-            })
+            self.db.checkpoint(
+                self.config.run_id,
+                round_num,
+                {
+                    "findings": len(all_findings),
+                    "tokens": self.gateway.registry.total_tokens.total_tokens,
+                    "cost": self.gateway.registry.total_cost,
+                },
+            )
 
             if self._should_stop(all_findings):
                 break
@@ -615,8 +653,8 @@ class BugSwarmAgent:
 
         try:
             response = await self.gateway.chat(request, self.config.provider)
-        except asyncio.TimeoutError:
-            print(f"  LLM timeout")
+        except TimeoutError:
+            print("  LLM timeout")
             return None
         except (ConnectionError, OSError) as e:
             print(f"  LLM infrastructure error: {e}")
@@ -632,7 +670,11 @@ class BugSwarmAgent:
         print(f"  Agent: {content[:200]}...")
 
         self.db.log_message(
-            self.config.run_id, round_num, turn, "assistant", content,
+            self.config.run_id,
+            round_num,
+            turn,
+            "assistant",
+            content,
             response.usage.total_tokens,
         )
         self.messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=content))
@@ -642,8 +684,12 @@ class BugSwarmAgent:
         if finding:
             # Auto-verify if sandbox confirmed or freeform confirmation detected
             if "verified" not in finding or not finding.get("verified"):
-                has_sandbox = "sandbox" in content.lower() and ("confirmed" in content.lower() or "pass" in content.lower() or "exit_code" in content.lower())
-                has_confirmed = any(kw in content.lower() for kw in ["confirmed", "verified", "successfully exploited", "exploit works"])
+                has_sandbox = "sandbox" in content.lower() and (
+                    "confirmed" in content.lower() or "pass" in content.lower() or "exit_code" in content.lower()
+                )
+                has_confirmed = any(
+                    kw in content.lower() for kw in ["confirmed", "verified", "successfully exploited", "exploit works"]
+                )
                 if has_sandbox or has_confirmed:
                     finding["verified"] = True
             self.db.log_finding(
@@ -668,11 +714,11 @@ class BugSwarmAgent:
         # Try ALL JSON blocks — a message can have both PoC and finding
         try:
             remaining = content
-            while '```json' in remaining:
-                start = remaining.index('```json') + 7
-                end = remaining.index('```', start) if '```' in remaining[start:] else len(remaining)
+            while "```json" in remaining:
+                start = remaining.index("```json") + 7
+                end = remaining.index("```", start) if "```" in remaining[start:] else len(remaining)
                 json_str = remaining[start:end]
-                remaining = remaining[end+3:] if end+3 < len(remaining) else ""
+                remaining = remaining[end + 3 :] if end + 3 < len(remaining) else ""
                 try:
                     data = json.loads(json_str)
                     if data.get("type") == "finding":
@@ -684,11 +730,16 @@ class BugSwarmAgent:
             remaining = content
             while '{"type"' in remaining:
                 start = remaining.index('{"type"')
-                depth = 0; end = start
+                depth = 0
+                end = start
                 for i, c in enumerate(remaining[start:]):
-                    if c == '{': depth += 1
-                    elif c == '}': depth -= 1
-                    if depth == 0: end = start + i + 1; break
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                    if depth == 0:
+                        end = start + i + 1
+                        break
                 json_str = remaining[start:end]
                 remaining = remaining[end:]
                 try:
@@ -702,29 +753,41 @@ class BugSwarmAgent:
 
         # Freeform confirmation
         lower = content.lower()
-        confirmed_kw = ["bug confirmed", "confirmed by sandbox", "confirmed!", "vulnerability confirmed",
-                        "injection confirmed", "**confirmed", "successfully exploited"]
+        confirmed_kw = [
+            "bug confirmed",
+            "confirmed by sandbox",
+            "confirmed!",
+            "vulnerability confirmed",
+            "injection confirmed",
+            "**confirmed",
+            "successfully exploited",
+        ]
         is_confirmed = any(k in lower for k in confirmed_kw)
         if not is_confirmed:
             return None
 
-        lines = [l.strip() for l in content.split('\n') if l.strip() and not l.strip().startswith('```')]
+        lines = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("```")]
         claim = ""
         for line in lines:
             lw = line.lower()
-            if any(kw in lw for kw in ["bug", "vulnerability", "injection", "overflow", "bypass", "leak", "traversal", "confirmed"]):
-                claim = line.strip('# *-').strip()
+            if any(
+                kw in lw
+                for kw in ["bug", "vulnerability", "injection", "overflow", "bypass", "leak", "traversal", "confirmed"]
+            ):
+                claim = line.strip("# *-").strip()
                 if len(claim) > 20:
                     break
         if not claim:
             claim = lines[0][:200] if lines else content[:200]
 
-        loc_match = __import__('re').search(r'(?:bugs\.py|\.py):(\d+)', content)
+        loc_match = __import__("re").search(r"(?:bugs\.py|\.py):(\d+)", content)
         return {
-            "type": "finding", "claim": claim[:200],
+            "type": "finding",
+            "claim": claim[:200],
             "location": f"bugs.py:{loc_match.group(1)}" if loc_match else "bugs.py",
             "mechanism": "Confirmed via sandbox execution",
-            "severity_estimate": 7, "verified": True,
+            "severity_estimate": 7,
+            "verified": True,
         }
 
     async def _parse_and_execute_tools(self, content: str) -> ToolResult | None:
@@ -741,8 +804,9 @@ class BugSwarmAgent:
             depth = 0
             end = start
             for i, c in enumerate(content[start:]):
-                if c == '{': depth += 1
-                elif c == '}':
+                if c == "{":
+                    depth += 1
+                elif c == "}":
                     depth -= 1
                     if depth == 0:
                         end = start + i + 1
@@ -768,8 +832,9 @@ class BugSwarmAgent:
             depth = 0
             end = start
             for i, c in enumerate(content[start:]):
-                if c == '{': depth += 1
-                elif c == '}':
+                if c == "{":
+                    depth += 1
+                elif c == "}":
                     depth -= 1
                     if depth == 0:
                         end = start + i + 1
@@ -805,7 +870,10 @@ class BugSwarmAgent:
             "semantic": "Check API contracts and type safety. Look for mismatches between what functions promise and what they do.",
         }
         persona_text = persona_additions.get(self.config.persona, "")
-        return SYSTEM_PROMPT + f"\n\nPERSONA: {self.config.persona.upper()}\n{persona_text}\n\nTarget repository: {self.config.repo_path}"
+        return (
+            SYSTEM_PROMPT
+            + f"\n\nPERSONA: {self.config.persona.upper()}\n{persona_text}\n\nTarget repository: {self.config.repo_path}"
+        )
 
     def _build_initial_prompt(self) -> str:
         return f"""Analyze the codebase at `{self.config.repo_path}` for bugs.

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
 
 from ..gateway.cost_tracker import UsageDB
 
@@ -28,10 +28,12 @@ async def cmd_usage(args: list[str] | None = None) -> int:
         f"  [bold]Bugs found:[/]      {summary['total_verified_findings']}",
     ]
 
-    console.print(Panel.fit(
-        "[bold cyan]Usage Summary[/]\n\n" + "\n".join(info_lines),
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            "[bold cyan]Usage Summary[/]\n\n" + "\n".join(info_lines),
+            border_style="cyan",
+        )
+    )
     console.print()
 
     runs = db.get_recent_runs(limit=15)

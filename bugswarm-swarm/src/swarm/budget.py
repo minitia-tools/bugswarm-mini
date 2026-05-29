@@ -6,7 +6,6 @@ per-agent and per-severity-tier. Override history preserved for audit.
 
 from __future__ import annotations
 
-import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -19,15 +18,15 @@ logger = structlog.get_logger(__name__)
 
 class BudgetStatus(str, Enum):
     HEALTHY = "healthy"
-    WARNING = "warning"      # >80%
-    CRITICAL = "critical"    # >95%
+    WARNING = "warning"  # >80%
+    CRITICAL = "critical"  # >95%
     EXHAUSTED = "exhausted"
 
 
 class SeverityTier(str, Enum):
-    LOW = "low"        # 1-3
+    LOW = "low"  # 1-3
     MEDIUM = "medium"  # 4-7
-    HIGH = "high"      # 8-10
+    HIGH = "high"  # 8-10
 
 
 @dataclass
@@ -55,8 +54,8 @@ class BudgetConfig:
     max_agent_token_share: float = 0.30
     novelty_threshold: float = 0.05
     novelty_window: int = 10
-    cost_per_mtok_input: float = 0.14    # $0.14/1M input tokens (DeepSeek V4)
-    cost_per_mtok_output: float = 0.28   # $0.28/1M output tokens
+    cost_per_mtok_input: float = 0.14  # $0.14/1M input tokens (DeepSeek V4)
+    cost_per_mtok_output: float = 0.28  # $0.28/1M output tokens
 
 
 @dataclass
@@ -79,8 +78,10 @@ class BudgetState:
     def to_dict(self) -> dict:
         self.update_elapsed()
         return {
-            "tokens_used": self.tokens_used, "cost_used": round(self.cost_used, 6),
-            "elapsed_secs": round(self.elapsed_secs, 1), "overrides": len(self.overrides),
+            "tokens_used": self.tokens_used,
+            "cost_used": round(self.cost_used, 6),
+            "elapsed_secs": round(self.elapsed_secs, 1),
+            "overrides": len(self.overrides),
         }
 
 
@@ -102,34 +103,46 @@ class BudgetController:
 
     def _check_token(self) -> BudgetStatus:
         pct = self.state.tokens_used / max(self.config.token_budget, 1)
-        if pct >= 1.0: return BudgetStatus.EXHAUSTED
-        if pct >= 0.95: return BudgetStatus.CRITICAL
-        if pct >= 0.80: return BudgetStatus.WARNING
+        if pct >= 1.0:
+            return BudgetStatus.EXHAUSTED
+        if pct >= 0.95:
+            return BudgetStatus.CRITICAL
+        if pct >= 0.80:
+            return BudgetStatus.WARNING
         return BudgetStatus.HEALTHY
 
     def _check_cost(self) -> BudgetStatus:
-        if self.config.cost_budget_usd <= 0: return BudgetStatus.HEALTHY
+        if self.config.cost_budget_usd <= 0:
+            return BudgetStatus.HEALTHY
         pct = self.state.cost_used / self.config.cost_budget_usd
-        if pct >= 1.0: return BudgetStatus.EXHAUSTED
-        if pct >= 0.95: return BudgetStatus.CRITICAL
-        if pct >= 0.80: return BudgetStatus.WARNING
+        if pct >= 1.0:
+            return BudgetStatus.EXHAUSTED
+        if pct >= 0.95:
+            return BudgetStatus.CRITICAL
+        if pct >= 0.80:
+            return BudgetStatus.WARNING
         return BudgetStatus.HEALTHY
 
     def _check_time(self) -> BudgetStatus:
-        if self.config.time_budget_secs <= 0: return BudgetStatus.HEALTHY
-        if self.state.elapsed_secs >= self.config.time_budget_secs: return BudgetStatus.EXHAUSTED
+        if self.config.time_budget_secs <= 0:
+            return BudgetStatus.HEALTHY
+        if self.state.elapsed_secs >= self.config.time_budget_secs:
+            return BudgetStatus.EXHAUSTED
         pct = self.state.elapsed_secs / self.config.time_budget_secs
-        if pct >= 0.95: return BudgetStatus.CRITICAL
-        if pct >= 0.80: return BudgetStatus.WARNING
+        if pct >= 0.95:
+            return BudgetStatus.CRITICAL
+        if pct >= 0.80:
+            return BudgetStatus.WARNING
         return BudgetStatus.HEALTHY
 
     # ─── Recording ───
 
-    def record_usage(self, agent_id: str, batch_id: str, round_num: int,
-                     input_tokens: int, output_tokens: int,
-                     severity: int = 0) -> TokenLedger:
-        cost = ((input_tokens / 1_000_000) * self.config.cost_per_mtok_input +
-                (output_tokens / 1_000_000) * self.config.cost_per_mtok_output)
+    def record_usage(
+        self, agent_id: str, batch_id: str, round_num: int, input_tokens: int, output_tokens: int, severity: int = 0
+    ) -> TokenLedger:
+        cost = (input_tokens / 1_000_000) * self.config.cost_per_mtok_input + (
+            output_tokens / 1_000_000
+        ) * self.config.cost_per_mtok_output
 
         self.state.tokens_used += input_tokens + output_tokens
         self.state.cost_used += cost
@@ -141,28 +154,43 @@ class BudgetController:
         self.state.tier_tokens[tier] += input_tokens + output_tokens
         self.state.tier_cost[tier] += cost
 
-        return TokenLedger(agent_id=agent_id, batch_id=batch_id, round_num=round_num,
-                          input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost)
+        return TokenLedger(
+            agent_id=agent_id,
+            batch_id=batch_id,
+            round_num=round_num,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+        )
 
     def _severity_to_tier(self, severity: int) -> SeverityTier:
-        if severity <= 3: return SeverityTier.LOW
-        if severity <= 7: return SeverityTier.MEDIUM
+        if severity <= 3:
+            return SeverityTier.LOW
+        if severity <= 7:
+            return SeverityTier.MEDIUM
         return SeverityTier.HIGH
 
     # ─── Attribution ───
 
     def get_attribution(self) -> dict:
         return {
-            "by_agent": {aid: {"tokens": self.state.agent_tokens[aid],
-                               "cost": round(self.state.agent_costs[aid], 6),
-                               "turns": self.state.agent_turns[aid]}
-                         for aid in self.state.agent_tokens},
-            "by_tier": {tier.value: {"tokens": self.state.tier_tokens[tier],
-                                     "cost": round(self.state.tier_cost[tier], 6)}
-                        for tier in SeverityTier},
-            "total": {"tokens": self.state.tokens_used,
-                      "cost": round(self.state.cost_used, 6),
-                      "elapsed_secs": round(self.state.elapsed_secs, 1)},
+            "by_agent": {
+                aid: {
+                    "tokens": self.state.agent_tokens[aid],
+                    "cost": round(self.state.agent_costs[aid], 6),
+                    "turns": self.state.agent_turns[aid],
+                }
+                for aid in self.state.agent_tokens
+            },
+            "by_tier": {
+                tier.value: {"tokens": self.state.tier_tokens[tier], "cost": round(self.state.tier_cost[tier], 6)}
+                for tier in SeverityTier
+            },
+            "total": {
+                "tokens": self.state.tokens_used,
+                "cost": round(self.state.cost_used, 6),
+                "elapsed_secs": round(self.state.elapsed_secs, 1),
+            },
         }
 
     def get_budget_bars(self) -> dict:

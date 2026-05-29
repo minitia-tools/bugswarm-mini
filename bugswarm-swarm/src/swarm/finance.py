@@ -6,11 +6,11 @@ tiered spending allocation, information-theoretic stopping, cost attribution.
 
 from __future__ import annotations
 
-import math, time
+import math
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 import structlog
 
@@ -21,22 +21,24 @@ logger = structlog.get_logger(__name__)
 # Types
 # ═══════════════════════════════════════════════════════════════
 
+
 class BudgetStatus(str, Enum):
     HEALTHY = "healthy"
-    WARNING = "warning"    # >80%
+    WARNING = "warning"  # >80%
     CRITICAL = "critical"  # >95%
     EXHAUSTED = "exhausted"
 
 
 class SeverityTier(str, Enum):
-    LOW = "low"        # 1-3
+    LOW = "low"  # 1-3
     MEDIUM = "medium"  # 4-7
-    HIGH = "high"      # 8-10
+    HIGH = "high"  # 8-10
 
 
 @dataclass
 class TokenLedger:
     """Per-agent, per-batch token accounting."""
+
     agent_id: str = ""
     batch_id: str = ""
     round_num: int = 0
@@ -48,14 +50,14 @@ class TokenLedger:
 
 @dataclass
 class BudgetConfig:
-    token_budget: int = 5_000_000       # 5M tokens
-    cost_budget_usd: float = 50.0       # $50
-    time_budget_secs: float = 144_000   # 40 hours
+    token_budget: int = 5_000_000  # 5M tokens
+    cost_budget_usd: float = 50.0  # $50
+    time_budget_secs: float = 144_000  # 40 hours
 
     # Tiered allocation (fraction of total budget)
-    low_severity_pct: float = 0.10     # 1-3: 10%
+    low_severity_pct: float = 0.10  # 1-3: 10%
     medium_severity_pct: float = 0.40  # 4-7: 40%
-    high_severity_pct: float = 0.50    # 8-10: 50% (effectively uncapped rem)
+    high_severity_pct: float = 0.50  # 8-10: 50% (effectively uncapped rem)
 
     # Override
     override_max_multiplier: float = 1.5  # Max 150% of original budget
@@ -64,11 +66,11 @@ class BudgetConfig:
     # Anomaly detection
     anomaly_zscore_threshold: float = 3.0
     anomaly_ema_alpha: float = 0.3
-    max_agent_token_share: float = 0.30   # Max 30% of total tokens per agent
+    max_agent_token_share: float = 0.30  # Max 30% of total tokens per agent
 
     # Information-theoretic stopping
-    novelty_threshold: float = 0.05       # <5% novel findings → stop
-    novelty_window: int = 10              # Check last N sandbox runs
+    novelty_threshold: float = 0.05  # <5% novel findings → stop
+    novelty_window: int = 10  # Check last N sandbox runs
 
     # Cost per million tokens (for cost estimation)
     cost_per_mtok_input: float = 0.14
@@ -114,6 +116,7 @@ class BudgetState:
 # Financial Controller
 # ═══════════════════════════════════════════════════════════════
 
+
 class FinancialController:
     """Enforces budget constraints and manages spending across the swarm."""
 
@@ -139,18 +142,24 @@ class FinancialController:
 
     def _check_token(self) -> BudgetStatus:
         pct = self.state.tokens_used / self.config.token_budget
-        if pct >= 1.0: return BudgetStatus.EXHAUSTED
-        if pct >= 0.95: return BudgetStatus.CRITICAL
-        if pct >= 0.80: return BudgetStatus.WARNING
+        if pct >= 1.0:
+            return BudgetStatus.EXHAUSTED
+        if pct >= 0.95:
+            return BudgetStatus.CRITICAL
+        if pct >= 0.80:
+            return BudgetStatus.WARNING
         return BudgetStatus.HEALTHY
 
     def _check_cost(self) -> BudgetStatus:
         if self.config.cost_budget_usd <= 0:
             return BudgetStatus.HEALTHY
         pct = self.state.cost_used / self.config.cost_budget_usd
-        if pct >= 1.0: return BudgetStatus.EXHAUSTED
-        if pct >= 0.95: return BudgetStatus.CRITICAL
-        if pct >= 0.80: return BudgetStatus.WARNING
+        if pct >= 1.0:
+            return BudgetStatus.EXHAUSTED
+        if pct >= 0.95:
+            return BudgetStatus.CRITICAL
+        if pct >= 0.80:
+            return BudgetStatus.WARNING
         return BudgetStatus.HEALTHY
 
     def _check_time(self) -> BudgetStatus:
@@ -159,8 +168,10 @@ class FinancialController:
         if self.state.elapsed_secs >= self.config.time_budget_secs:
             return BudgetStatus.EXHAUSTED
         pct = self.state.elapsed_secs / self.config.time_budget_secs
-        if pct >= 0.95: return BudgetStatus.CRITICAL
-        if pct >= 0.80: return BudgetStatus.WARNING
+        if pct >= 0.95:
+            return BudgetStatus.CRITICAL
+        if pct >= 0.80:
+            return BudgetStatus.WARNING
         return BudgetStatus.HEALTHY
 
     # ─── Token/Cost Recording ───
@@ -193,16 +204,21 @@ class FinancialController:
         self.state.tier_cost[tier] += cost
 
         return TokenLedger(
-            agent_id=agent_id, batch_id=batch_id, round_num=round_num,
-            input_tokens=input_tokens, output_tokens=output_tokens,
+            agent_id=agent_id,
+            batch_id=batch_id,
+            round_num=round_num,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             cost_usd=cost,
         )
 
     # ─── Tiered Spending ───
 
     def _severity_to_tier(self, severity: int) -> SeverityTier:
-        if severity <= 3: return SeverityTier.LOW
-        if severity <= 7: return SeverityTier.MEDIUM
+        if severity <= 3:
+            return SeverityTier.LOW
+        if severity <= 7:
+            return SeverityTier.MEDIUM
         return SeverityTier.HIGH
 
     def can_spend_on_severity(self, severity: int, estimated_tokens: int) -> bool:
@@ -238,19 +254,23 @@ class FinancialController:
         if projected > max_allowed:
             return False, f"Override would exceed {self.config.override_max_multiplier}x budget cap"
 
-        self.state.overrides.append({
-            "timestamp": time.time(),
-            "severity": severity,
-            "finding": finding.get("claim", "")[:100],
-            "estimated_tokens": estimated_additional_tokens,
-            "tokens_used_at_override": self.state.tokens_used,
-            "approved": True,
-        })
+        self.state.overrides.append(
+            {
+                "timestamp": time.time(),
+                "severity": severity,
+                "finding": finding.get("claim", "")[:100],
+                "estimated_tokens": estimated_additional_tokens,
+                "tokens_used_at_override": self.state.tokens_used,
+                "approved": True,
+            }
+        )
 
-        logger.warning("budget_override_approved",
+        logger.warning(
+            "budget_override_approved",
             severity=severity,
             tokens=estimated_additional_tokens,
-            total_overrides=len(self.state.overrides))
+            total_overrides=len(self.state.overrides),
+        )
 
         return True, "Override approved"
 
@@ -276,13 +296,15 @@ class FinancialController:
                 std = math.sqrt(variance) if variance > 0 else 1.0
                 zscore = (tokens - mean) / std
 
-                anomalies.append({
-                    "agent_id": agent_id,
-                    "token_share": round(share, 3),
-                    "zscore": round(zscore, 2),
-                    "tokens": tokens,
-                    "action": "cap_tokens" if zscore > self.config.anomaly_zscore_threshold else "warn",
-                })
+                anomalies.append(
+                    {
+                        "agent_id": agent_id,
+                        "token_share": round(share, 3),
+                        "zscore": round(zscore, 2),
+                        "tokens": tokens,
+                        "action": "cap_tokens" if zscore > self.config.anomaly_zscore_threshold else "warn",
+                    }
+                )
 
         anomalies.sort(key=lambda a: a["token_share"], reverse=True)
         return anomalies
@@ -301,14 +323,14 @@ class FinancialController:
         """Record whether a finding was novel (new code location, new failure mode)."""
         self._novelty_window.append(is_novel)
         if len(self._novelty_window) > self.config.novelty_window * 3:
-            self._novelty_window = self._novelty_window[-self.config.novelty_window * 2:]
+            self._novelty_window = self._novelty_window[-self.config.novelty_window * 2 :]
 
     def should_stop_early(self) -> tuple[bool, str]:
         """Check if marginal information gain has dropped below threshold."""
         if len(self._novelty_window) < self.config.novelty_window:
             return False, ""
 
-        recent = self._novelty_window[-self.config.novelty_window:]
+        recent = self._novelty_window[-self.config.novelty_window :]
         novel_count = sum(1 for n in recent if n)
         novel_rate = novel_count / len(recent)
 
@@ -349,9 +371,15 @@ class FinancialController:
         """Get budget burn percentages for visualization."""
         self.state.update_elapsed()
         return {
-            "token_pct": min(100.0, (self.state.tokens_used / self.config.token_budget) * 100) if self.config.token_budget else 0,
-            "cost_pct": min(100.0, (self.state.cost_used / self.config.cost_budget_usd) * 100) if self.config.cost_budget_usd else 0,
-            "time_pct": min(100.0, (self.state.elapsed_secs / self.config.time_budget_secs) * 100) if self.config.time_budget_secs else 0,
+            "token_pct": min(100.0, (self.state.tokens_used / self.config.token_budget) * 100)
+            if self.config.token_budget
+            else 0,
+            "cost_pct": min(100.0, (self.state.cost_used / self.config.cost_budget_usd) * 100)
+            if self.config.cost_budget_usd
+            else 0,
+            "time_pct": min(100.0, (self.state.elapsed_secs / self.config.time_budget_secs) * 100)
+            if self.config.time_budget_secs
+            else 0,
         }
 
     def status_report(self) -> dict:

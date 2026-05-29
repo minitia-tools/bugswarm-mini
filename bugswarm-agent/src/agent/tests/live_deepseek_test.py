@@ -49,9 +49,9 @@ async def main():
     result = await agent.run()
     elapsed = time.time() - start
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"RESULTS")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Duration: {elapsed:.0f}s")
     print(f"Findings: {len(result.get('findings', []))}")
     print(f"Verified: {result.get('verified_findings', 0)}")
@@ -60,9 +60,9 @@ async def main():
 
     findings = result.get("findings", [])
     for i, f in enumerate(findings[:5]):
-        print(f"\n  Finding {i+1}: {f.get('claim','?')[:100]}")
+        print(f"\n  Finding {i + 1}: {f.get('claim', '?')[:100]}")
         if f.get("verified"):
-            print(f"    ✓ VERIFIED | severity={f.get('severity_estimate','?')}")
+            print(f"    ✓ VERIFIED | severity={f.get('severity_estimate', '?')}")
 
     # Save report
     with open("/tmp/phase4_live_report.json", "w") as f:

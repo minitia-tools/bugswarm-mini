@@ -8,10 +8,15 @@ import time
 import structlog
 
 from ..types import (
-    ChatRequest, ChatResponse, ChatMessage, MessageRole,
-    ProviderConfig, ProviderType, TokenUsage,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    MessageRole,
+    ProviderConfig,
+    ProviderType,
+    TokenUsage,
 )
-from .base import BaseProviderAdapter, RetryableError, FatalError
+from .base import BaseProviderAdapter, FatalError, RetryableError
 
 logger = structlog.get_logger(__name__)
 
@@ -26,6 +31,7 @@ class GoogleAdapter(BaseProviderAdapter):
     def _get_client(self):
         if self._client is None:
             from google import genai
+
             self._client = genai.Client(
                 api_key=self.config.api_key,
                 http_options={"timeout": int(self.config.timeout_secs * 1000)},
@@ -47,6 +53,7 @@ class GoogleAdapter(BaseProviderAdapter):
 
         try:
             from google.genai.types import GenerateContentConfig
+
             config = GenerateContentConfig(
                 temperature=request.temperature,
                 top_p=request.top_p,
@@ -87,8 +94,13 @@ class GoogleAdapter(BaseProviderAdapter):
         cost = self.estimate_cost(usage.input_tokens, usage.output_tokens)
 
         return ChatResponse(
-            content=content, model=model, provider=ProviderType.GOOGLE,
-            usage=usage, cost=cost, finish_reason="stop", latency_ms=elapsed,
+            content=content,
+            model=model,
+            provider=ProviderType.GOOGLE,
+            usage=usage,
+            cost=cost,
+            finish_reason="stop",
+            latency_ms=elapsed,
         )
 
     def _convert_messages(self, messages: list[ChatMessage]) -> list[dict]:

@@ -8,26 +8,23 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import time
 from collections import defaultdict
 from pathlib import Path
 
 import structlog
-from gateway.types import ProviderType
-from gateway.client import LLMClient
-
-from agent.loop import IEPEngine, IEPConfig
-from agent.tools import ToolRegistry, ToolDefinition
-from agent.parser import OutputParser
 from agent.cpg_client import CPGClient
-from agent.sandbox_client import SandboxClient
+from agent.loop import IEPConfig, IEPEngine
+from agent.parser import OutputParser
 from agent.persistence import PersistenceManager
 from agent.prompts import Persona as AgentPersona
+from agent.sandbox_client import SandboxClient
 from agent.scanner import UnifiedScanner
+from agent.tools import ToolDefinition, ToolRegistry
+from gateway.client import LLMClient
 
-from .types import AgentSlot, AgentStatus, Persona, SwarmConfig, assign_personas
-from .routing import mmr_critique_routing, text_similarity
 from .monitor import PerformanceMonitor
+from .routing import mmr_critique_routing, text_similarity
+from .types import AgentSlot, AgentStatus, Persona, SwarmConfig, assign_personas
 
 logger = structlog.get_logger(__name__)
 
@@ -55,11 +52,11 @@ class SwarmOrchestrator:
     def initialize_agents(self) -> None:
         personas = assign_personas(self.config.num_agents)
         for i in range(self.config.num_agents):
-            aid = f"A{i+1}"
+            aid = f"A{i + 1}"
             self.agents[aid] = AgentSlot(id=aid, persona=personas[i], status=AgentStatus.IDLE)
 
         for i in range(self.config.spare_pool_size):
-            sid = f"S{i+1}"
+            sid = f"S{i + 1}"
             self.spare_pool.append(sid)
             self.agents[sid] = AgentSlot(id=sid, persona=Persona.CAUSAL, status=AgentStatus.IDLE)
 
@@ -77,180 +74,297 @@ class SwarmOrchestrator:
             nonlocal evidence
             if evidence is None:
                 from agent.evidence_client import EvidenceClient
+
                 evidence = EvidenceClient()
             return evidence
 
         tools = ToolRegistry()
-        tools.register(ToolDefinition(
-            name="read_file", description="Read lines from a file",
-            parameters={"type": "object", "properties": {
-                "path": {"type": "string"}, "start_line": {"type": "integer"},
-                "end_line": {"type": "integer"}},
-                "required": ["path"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_read_file(repo_path, scanner, args)),
-            timeout_secs=10.0, cache_ttl_secs=30.0,
-        ))
-        tools.register(ToolDefinition(
-            name="query_cpg", description="Query the Code Property Graph",
-            parameters={"type": "object", "properties": {
-                "name": {"type": "string"}, "kind": {"type": "string"}},
-                "required": []},
-            handler=lambda args: asyncio.ensure_future(self._tool_query_cpg(cpg, repo_path, args)),
-            timeout_secs=30.0, cache_ttl_secs=10.0,
-        ))
-        tools.register(ToolDefinition(
-            name="exec_sandbox", description="Execute PoC in isolated sandbox",
-            parameters={"type": "object", "properties": {
-                "poc_code": {"type": "string"}},
-                "required": ["poc_code"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_exec_sandbox(sandbox, scanner, args)),
-            timeout_secs=130.0, max_retries=1, cache_ttl_secs=0.0,
-        ))
-        tools.register(ToolDefinition(
-            name="list_dir", description="List directory contents",
-            parameters={"type": "object", "properties": {
-                "path": {"type": "string"}},
-                "required": []},
-            handler=lambda args: asyncio.ensure_future(self._tool_list_dir(repo_path, args)),
-            timeout_secs=5.0, cache_ttl_secs=30.0,
-        ))
-        tools.register(ToolDefinition(
-            name="trace_dependency", description="Trace call dependencies",
-            parameters={"type": "object", "properties": {
-                "function_name": {"type": "string"}, "radius": {"type": "integer"}},
-                "required": ["function_name"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_trace(cpg, repo_path, args)),
-            timeout_secs=30.0, cache_ttl_secs=15.0,
-        ))
+        tools.register(
+            ToolDefinition(
+                name="read_file",
+                description="Read lines from a file",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "start_line": {"type": "integer"},
+                        "end_line": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_read_file(repo_path, scanner, args)),
+                timeout_secs=10.0,
+                cache_ttl_secs=30.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="query_cpg",
+                description="Query the Code Property Graph",
+                parameters={
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}, "kind": {"type": "string"}},
+                    "required": [],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_query_cpg(cpg, repo_path, args)),
+                timeout_secs=30.0,
+                cache_ttl_secs=10.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="exec_sandbox",
+                description="Execute PoC in isolated sandbox",
+                parameters={"type": "object", "properties": {"poc_code": {"type": "string"}}, "required": ["poc_code"]},
+                handler=lambda args: asyncio.ensure_future(self._tool_exec_sandbox(sandbox, scanner, args)),
+                timeout_secs=130.0,
+                max_retries=1,
+                cache_ttl_secs=0.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="list_dir",
+                description="List directory contents",
+                parameters={"type": "object", "properties": {"path": {"type": "string"}}, "required": []},
+                handler=lambda args: asyncio.ensure_future(self._tool_list_dir(repo_path, args)),
+                timeout_secs=5.0,
+                cache_ttl_secs=30.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="trace_dependency",
+                description="Trace call dependencies",
+                parameters={
+                    "type": "object",
+                    "properties": {"function_name": {"type": "string"}, "radius": {"type": "integer"}},
+                    "required": ["function_name"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_trace(cpg, repo_path, args)),
+                timeout_secs=30.0,
+                cache_ttl_secs=15.0,
+            )
+        )
 
         # Phase 23: Trigger Matrix tools
-        tools.register(ToolDefinition(
-            name="describe_trigger",
-            description="Document a trigger condition for a confirmed bug. Records input, environment, timing, data state, concurrency, configuration, dependency version, or OS/arch triggers.",
-            parameters={"type": "object", "properties": {
-                "bug_id": {"type": "string", "description": "The bug identifier"},
-                "dimension": {"type": "string", "description": "Trigger dimension: Input, Environment, Timing, DataState, Concurrency, Configuration, DependencyVersion, OsArch"},
-                "description": {"type": "string", "description": "Human-readable description of the trigger condition"},
-            }, "required": ["bug_id", "dimension", "description"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_describe_trigger(args)),
-            timeout_secs=10.0,
-            cache_ttl_secs=0.0,
-        ))
-        tools.register(ToolDefinition(
-            name="get_trigger_matrix",
-            description="Retrieve the complete trigger matrix for a confirmed bug with all documented trigger conditions.",
-            parameters={"type": "object", "properties": {
-                "bug_id": {"type": "string", "description": "The bug identifier"},
-            }, "required": ["bug_id"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_get_trigger_matrix(args)),
-            timeout_secs=10.0,
-            cache_ttl_secs=30.0,
-        ))
+        tools.register(
+            ToolDefinition(
+                name="describe_trigger",
+                description="Document a trigger condition for a confirmed bug. Records input, environment, timing, data state, concurrency, configuration, dependency version, or OS/arch triggers.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "bug_id": {"type": "string", "description": "The bug identifier"},
+                        "dimension": {
+                            "type": "string",
+                            "description": "Trigger dimension: Input, Environment, Timing, DataState, Concurrency, Configuration, DependencyVersion, OsArch",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Human-readable description of the trigger condition",
+                        },
+                    },
+                    "required": ["bug_id", "dimension", "description"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_describe_trigger(args)),
+                timeout_secs=10.0,
+                cache_ttl_secs=0.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="get_trigger_matrix",
+                description="Retrieve the complete trigger matrix for a confirmed bug with all documented trigger conditions.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "bug_id": {"type": "string", "description": "The bug identifier"},
+                    },
+                    "required": ["bug_id"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_get_trigger_matrix(args)),
+                timeout_secs=10.0,
+                cache_ttl_secs=30.0,
+            )
+        )
 
         # Batch 3B: Additional sandbox and evidence tools
-        tools.register(ToolDefinition(
-            name="delta_debug",
-            description="Minimize a crashing input using delta debugging (ddmin algorithm).",
-            parameters={"type": "object", "properties": {
-                "input_bytes_b64": {"type": "string", "description": "Base64-encoded crashing input bytes"},
-                "max_iterations": {"type": "integer"},
-                "timeout_secs": {"type": "integer"},
-            }, "required": ["input_bytes_b64"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_delta_debug(sandbox, args)),
-            timeout_secs=120.0, max_retries=1, cache_ttl_secs=0.0,
-        ))
-        tools.register(ToolDefinition(
-            name="diff_execute",
-            description="Compare two outputs using differential analysis.",
-            parameters={"type": "object", "properties": {
-                "output_a": {"type": "string"},
-                "output_b": {"type": "string"},
-                "normalizer": {"type": "string", "description": "Text, Json, Xml, Dict, or Binary"},
-            }, "required": ["output_a", "output_b"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_diff_execute(sandbox, args)),
-            timeout_secs=120.0, cache_ttl_secs=10.0,
-        ))
-        tools.register(ToolDefinition(
-            name="mine_invariants",
-            description="Mine invariants from function execution traces.",
-            parameters={"type": "object", "properties": {
-                "function_name": {"type": "string"},
-                "param_types": {"type": "array", "items": {"type": "string"}},
-                "count": {"type": "integer"},
-            }, "required": ["function_name"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_mine_invariants(sandbox, args)),
-            timeout_secs=60.0, cache_ttl_secs=30.0,
-        ))
-        tools.register(ToolDefinition(
-            name="run_mutations",
-            description="Run mutation testing against source code.",
-            parameters={"type": "object", "properties": {
-                "source_code": {"type": "string"},
-                "file_path": {"type": "string"},
-                "operators": {"type": "array", "items": {"type": "string"}},
-            }, "required": ["source_code"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_run_mutations(sandbox, args)),
-            timeout_secs=60.0, cache_ttl_secs=0.0,
-        ))
-        tools.register(ToolDefinition(
-            name="solve_reachability",
-            description="Solve for the exact input that reaches a target code location.",
-            parameters={"type": "object", "properties": {
-                "target_location": {"type": "string"},
-                "path_conditions": {"type": "array", "items": {
-                    "type": "object", "properties": {
-                        "line": {"type": "integer"}, "condition": {"type": "string"},
-                    }, "required": ["line", "condition"]}},
-            }, "required": ["target_location"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_solve_reachability(sandbox, args)),
-            timeout_secs=60.0, cache_ttl_secs=30.0,
-        ))
-        tools.register(ToolDefinition(
-            name="explore_paths",
-            description="Systematically explore all code paths using concolic execution.",
-            parameters={"type": "object", "properties": {
-                "target_location": {"type": "string"},
-                "path_conditions": {"type": "array", "items": {
-                    "type": "object", "properties": {
-                        "line": {"type": "integer"}, "condition": {"type": "string"},
-                    }, "required": ["line", "condition"]}},
-                "max_queries": {"type": "integer"},
-            }, "required": ["target_location"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_explore_paths(sandbox, args)),
-            timeout_secs=120.0, cache_ttl_secs=60.0,
-        ))
-        tools.register(ToolDefinition(
-            name="suggest_chain",
-            description="Analyze bugs and discover exploit chains with severity escalations.",
-            parameters={"type": "object", "properties": {
-                "bug_ids": {"type": "array", "items": {"type": "string"}},
-                "max_hops": {"type": "integer"},
-            }, "required": ["bug_ids"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_suggest_chain(get_evidence, args)),
-            timeout_secs=30.0, cache_ttl_secs=60.0,
-        ))
-        tools.register(ToolDefinition(
-            name="predict_fix_impact",
-            description="Predict whether a proposed fix will introduce new bugs.",
-            parameters={"type": "object", "properties": {
-                "bug_id": {"type": "string"},
-                "function_name": {"type": "string"},
-                "file_path": {"type": "string"},
-                "original_line": {"type": "string"},
-                "replacement_line": {"type": "string"},
-                "line_number": {"type": "integer"},
-                "language": {"type": "string"},
-                "description": {"type": "string"},
-            }, "required": ["bug_id", "function_name"]},
-            handler=lambda args: asyncio.ensure_future(self._tool_predict_fix_impact(get_evidence, args)),
-            timeout_secs=30.0, cache_ttl_secs=60.0,
-        ))
+        tools.register(
+            ToolDefinition(
+                name="delta_debug",
+                description="Minimize a crashing input using delta debugging (ddmin algorithm).",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "input_bytes_b64": {"type": "string", "description": "Base64-encoded crashing input bytes"},
+                        "max_iterations": {"type": "integer"},
+                        "timeout_secs": {"type": "integer"},
+                    },
+                    "required": ["input_bytes_b64"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_delta_debug(sandbox, args)),
+                timeout_secs=120.0,
+                max_retries=1,
+                cache_ttl_secs=0.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="diff_execute",
+                description="Compare two outputs using differential analysis.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "output_a": {"type": "string"},
+                        "output_b": {"type": "string"},
+                        "normalizer": {"type": "string", "description": "Text, Json, Xml, Dict, or Binary"},
+                    },
+                    "required": ["output_a", "output_b"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_diff_execute(sandbox, args)),
+                timeout_secs=120.0,
+                cache_ttl_secs=10.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="mine_invariants",
+                description="Mine invariants from function execution traces.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "function_name": {"type": "string"},
+                        "param_types": {"type": "array", "items": {"type": "string"}},
+                        "count": {"type": "integer"},
+                    },
+                    "required": ["function_name"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_mine_invariants(sandbox, args)),
+                timeout_secs=60.0,
+                cache_ttl_secs=30.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="run_mutations",
+                description="Run mutation testing against source code.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "source_code": {"type": "string"},
+                        "file_path": {"type": "string"},
+                        "operators": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["source_code"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_run_mutations(sandbox, args)),
+                timeout_secs=60.0,
+                cache_ttl_secs=0.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="solve_reachability",
+                description="Solve for the exact input that reaches a target code location.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "target_location": {"type": "string"},
+                        "path_conditions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "line": {"type": "integer"},
+                                    "condition": {"type": "string"},
+                                },
+                                "required": ["line", "condition"],
+                            },
+                        },
+                    },
+                    "required": ["target_location"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_solve_reachability(sandbox, args)),
+                timeout_secs=60.0,
+                cache_ttl_secs=30.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="explore_paths",
+                description="Systematically explore all code paths using concolic execution.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "target_location": {"type": "string"},
+                        "path_conditions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "line": {"type": "integer"},
+                                    "condition": {"type": "string"},
+                                },
+                                "required": ["line", "condition"],
+                            },
+                        },
+                        "max_queries": {"type": "integer"},
+                    },
+                    "required": ["target_location"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_explore_paths(sandbox, args)),
+                timeout_secs=120.0,
+                cache_ttl_secs=60.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="suggest_chain",
+                description="Analyze bugs and discover exploit chains with severity escalations.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "bug_ids": {"type": "array", "items": {"type": "string"}},
+                        "max_hops": {"type": "integer"},
+                    },
+                    "required": ["bug_ids"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_suggest_chain(get_evidence, args)),
+                timeout_secs=30.0,
+                cache_ttl_secs=60.0,
+            )
+        )
+        tools.register(
+            ToolDefinition(
+                name="predict_fix_impact",
+                description="Predict whether a proposed fix will introduce new bugs.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "bug_id": {"type": "string"},
+                        "function_name": {"type": "string"},
+                        "file_path": {"type": "string"},
+                        "original_line": {"type": "string"},
+                        "replacement_line": {"type": "string"},
+                        "line_number": {"type": "integer"},
+                        "language": {"type": "string"},
+                        "description": {"type": "string"},
+                    },
+                    "required": ["bug_id", "function_name"],
+                },
+                handler=lambda args: asyncio.ensure_future(self._tool_predict_fix_impact(get_evidence, args)),
+                timeout_secs=30.0,
+                cache_ttl_secs=60.0,
+            )
+        )
 
         self._tools = tools
         return tools
 
-    async def _tool_read_file(self, repo: Path, scanner: UnifiedScanner, args: dict) -> "ToolResult":
+    async def _tool_read_file(self, repo: Path, scanner: UnifiedScanner, args: dict) -> ToolResult:
         from agent.tools import ToolResult
+
         try:
             path = args.get("path", "")
             start = int(args.get("start_line", 1))
@@ -273,29 +387,35 @@ class SwarmOrchestrator:
                 return ToolResult(False, f"File not found: {path}")
 
             lines = full.read_text().splitlines()
-            result_lines = [f"{i+1}: {lines[i]}" for i in range(max(0, start-1), min(len(lines), end))]
+            result_lines = [f"{i + 1}: {lines[i]}" for i in range(max(0, start - 1), min(len(lines), end))]
             content = "\n".join(result_lines)
             redacted, count = scanner.redact(content)
             return ToolResult(True, redacted, {"lines": f"{start}-{end}", "total": len(lines)})
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_query_cpg(self, cpg: CPGClient, repo: Path, args: dict) -> "ToolResult":
+    async def _tool_query_cpg(self, cpg: CPGClient, repo: Path, args: dict) -> ToolResult:
         from agent.tools import ToolResult
+
         try:
             stats = await cpg.stats(repo)
             data = {
-                "files": stats.total_files, "functions": stats.total_functions,
-                "sources": stats.sources, "sinks": stats.sinks,
-                "taint_paths": stats.taint_paths, "languages": stats.by_language,
+                "files": stats.total_files,
+                "functions": stats.total_functions,
+                "sources": stats.sources,
+                "sinks": stats.sinks,
+                "taint_paths": stats.taint_paths,
+                "languages": stats.by_language,
             }
             import json
+
             return ToolResult(True, json.dumps(data, indent=2), {"source": "cpg"})
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_exec_sandbox(self, sandbox: SandboxClient, scanner: UnifiedScanner, args: dict) -> "ToolResult":
+    async def _tool_exec_sandbox(self, sandbox: SandboxClient, scanner: UnifiedScanner, args: dict) -> ToolResult:
         from agent.tools import ToolResult
+
         poc_code = args.get("poc_code", "")
         if not poc_code:
             return ToolResult(False, "No PoC code provided")
@@ -304,60 +424,75 @@ class SwarmOrchestrator:
             return ToolResult(False, "PoC contains sandbox escape patterns — REJECTED")
         receipt = await sandbox.execute(poc_code)
         import json
-        return ToolResult(True, json.dumps(receipt.to_summary()), {
-            "exit_code": receipt.exit_code, "status": receipt.status,
-        })
 
-    async def _tool_list_dir(self, repo: Path, args: dict) -> "ToolResult":
+        return ToolResult(
+            True,
+            json.dumps(receipt.to_summary()),
+            {
+                "exit_code": receipt.exit_code,
+                "status": receipt.status,
+            },
+        )
+
+    async def _tool_list_dir(self, repo: Path, args: dict) -> ToolResult:
         from agent.tools import ToolResult
+
         try:
             path = args.get("path", ".")
             target = repo / path if path != "." else repo
-            entries = [f"  [{'DIR' if e.is_dir() else 'FILE'}] {e.name}"
-                       for e in sorted(target.iterdir())]
+            entries = [f"  [{'DIR' if e.is_dir() else 'FILE'}] {e.name}" for e in sorted(target.iterdir())]
             return ToolResult(True, f"Contents of {target}:\n" + "\n".join(entries))
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_trace(self, cpg: CPGClient, repo: Path, args: dict) -> "ToolResult":
+    async def _tool_trace(self, cpg: CPGClient, repo: Path, args: dict) -> ToolResult:
         from agent.tools import ToolResult
+
         try:
             paths = await cpg.taint_paths(repo)
-            lines = [f"Path: {p.source} -> {p.sink} (len={p.length}, san={p.sanitized})"
-                      for p in paths[:10]]
+            lines = [f"Path: {p.source} -> {p.sink} (len={p.length}, san={p.sanitized})" for p in paths[:10]]
             return ToolResult(True, "\n".join(lines) or "No taint paths found")
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_describe_trigger(self, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_describe_trigger(self, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             bug_id = args.get("bug_id", "unknown")
             dimension = args.get("dimension", "Input")
             description = args.get("description", "")
             from agent.evidence_client import EvidenceClient
+
             ev = EvidenceClient()
             result = await ev.add_trigger_condition(bug_id, dimension, description, "agent")
             return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_get_trigger_matrix(self, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_get_trigger_matrix(self, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             bug_id = args.get("bug_id", "unknown")
             from agent.evidence_client import EvidenceClient
+
             ev = EvidenceClient()
             result = await ev.get_trigger_matrix(bug_id)
             return ToolResult(True, json.dumps(result, indent=2), {"bug_id": bug_id})
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_delta_debug(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
+    async def _tool_delta_debug(self, sandbox: SandboxClient, args: dict) -> ToolResult:
+        import base64
+        import json
+
         from agent.tools import ToolResult
-        import base64, json
+
         try:
             input_b64 = args.get("input_bytes_b64", "")
             input_bytes = base64.b64decode(input_b64)
@@ -368,9 +503,11 @@ class SwarmOrchestrator:
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_diff_execute(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_diff_execute(self, sandbox: SandboxClient, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             output_a = args.get("output_a", "")
             output_b = args.get("output_b", "")
@@ -380,9 +517,11 @@ class SwarmOrchestrator:
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_mine_invariants(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_mine_invariants(self, sandbox: SandboxClient, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             function_name = args.get("function_name", "")
             param_types = args.get("param_types", [])
@@ -392,9 +531,11 @@ class SwarmOrchestrator:
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_run_mutations(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_run_mutations(self, sandbox: SandboxClient, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             source_code = args.get("source_code", "")
             file_path = args.get("file_path", "unknown")
@@ -404,9 +545,11 @@ class SwarmOrchestrator:
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_solve_reachability(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_solve_reachability(self, sandbox: SandboxClient, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             target_location = args.get("target_location", "")
             path_conditions = args.get("path_conditions", [])
@@ -415,9 +558,11 @@ class SwarmOrchestrator:
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_explore_paths(self, sandbox: SandboxClient, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_explore_paths(self, sandbox: SandboxClient, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             target_location = args.get("target_location", "")
             path_conditions = args.get("path_conditions", [])
@@ -427,9 +572,11 @@ class SwarmOrchestrator:
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_suggest_chain(self, get_evidence, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_suggest_chain(self, get_evidence, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             bug_ids = args.get("bug_ids", [])
             max_hops = int(args.get("max_hops", 10))
@@ -439,9 +586,11 @@ class SwarmOrchestrator:
         except Exception as e:
             return ToolResult(False, str(e))
 
-    async def _tool_predict_fix_impact(self, get_evidence, args: dict) -> "ToolResult":
-        from agent.tools import ToolResult
+    async def _tool_predict_fix_impact(self, get_evidence, args: dict) -> ToolResult:
         import json
+
+        from agent.tools import ToolResult
+
         try:
             bug_id = args.get("bug_id", "")
             function_name = args.get("function_name", "")
@@ -453,9 +602,14 @@ class SwarmOrchestrator:
             description = args.get("description", "")
             ev = get_evidence()
             result = await ev.predict_fix_impact(
-                bug_id, function_name, file_path,
-                original_line, replacement_line, line_number,
-                language, description,
+                bug_id,
+                function_name,
+                file_path,
+                original_line,
+                replacement_line,
+                line_number,
+                language,
+                description,
             )
             return ToolResult(True, json.dumps(result, indent=2))
         except Exception as e:
@@ -499,8 +653,10 @@ class SwarmOrchestrator:
                 iep_config = IEPConfig(
                     repo_path=self.config.repo_path,
                     run_id=f"{slot.id}-r1",
-                    max_rounds=1, max_turns_per_round=3,
-                    persona=persona, model=self.config.model,
+                    max_rounds=1,
+                    max_turns_per_round=3,
+                    persona=persona,
+                    model=self.config.model,
                     provider=self.config.provider,
                 )
                 engine = IEPEngine(iep_config, tools, self._parser, self.gateway, self._persistence)
@@ -513,7 +669,7 @@ class SwarmOrchestrator:
                     hypothesis = findings[0].claim
                 else:
                     hypothesis = f"Agent {slot.id} ({persona.value}) investigates {self.config.repo_path}"
-                
+
                 slot.round_hypotheses[1] = hypothesis
                 hypotheses[slot.id] = hypothesis
                 self.monitor.record_message(slot.id, hypothesis)
@@ -549,8 +705,10 @@ class SwarmOrchestrator:
                     iep_config = IEPConfig(
                         repo_path=self.config.repo_path,
                         run_id=f"{slot.id}-r{round_num}",
-                        max_rounds=1, max_turns_per_round=2,
-                        persona=persona, model=self.config.model,
+                        max_rounds=1,
+                        max_turns_per_round=2,
+                        persona=persona,
+                        model=self.config.model,
                         provider=self.config.provider,
                     )
                     engine = IEPEngine(iep_config, tools, self._parser, self.gateway, self._persistence)
@@ -596,6 +754,7 @@ class SwarmOrchestrator:
         """Phase 19: Trigger ML model retraining after accumulating enough new bugs."""
         try:
             from swarm.probability import BugProbabilityModel
+
             model = BugProbabilityModel()
             confirmed = pdb.get_all_confirmed()
             # CPG function extraction deferred — model trains with confirmed bug data only
@@ -604,8 +763,7 @@ class SwarmOrchestrator:
             result = model.train(confirmed, all_funcs, hotspot_tracker=ht)
             if result.get("status") == "trained":
                 pdb.reset_training_counter()
-                logger.info("model_retrained_triggered", samples=result.get("samples", 0),
-                             auc=result.get("auc", 0))
+                logger.info("model_retrained_triggered", samples=result.get("samples", 0), auc=result.get("auc", 0))
             else:
                 logger.info("model_retrain_skipped", reason=result.get("reason", "unknown"))
         except Exception as e:
@@ -669,7 +827,8 @@ class SwarmOrchestrator:
 
         # G2: Push verified findings to PatternDB for persistent learning (Phase 18.5)
         try:
-            from swarm.pattern_db import BugPatternDB, HotspotTracker, AgentHistory
+            from swarm.pattern_db import AgentHistory, BugPatternDB, HotspotTracker
+
             pdb = BugPatternDB()
             ht = HotspotTracker()
             ah = AgentHistory()
@@ -687,22 +846,30 @@ class SwarmOrchestrator:
                     )
                     ht.record_bug(file_path, severity)
             for aid, s in scores.items():
-                ah.record_run(aid, s.get("persona", ""), self.config.model,
-                               s.get("contributions", 0), 0,
-                               self.gateway.registry.total_tokens.total_tokens,
-                               sum(1 for f in all_findings if f.get("verified") and f.get("agent") == aid))
+                ah.record_run(
+                    aid,
+                    s.get("persona", ""),
+                    self.config.model,
+                    s.get("contributions", 0),
+                    0,
+                    self.gateway.registry.total_tokens.total_tokens,
+                    sum(1 for f in all_findings if f.get("verified") and f.get("agent") == aid),
+                )
             logger.info("learning_persisted", patterns=pdb.count, hotspots=len(ht.entries), agents=len(ah.records))
 
             # Also push trigger conditions to Rust evidence daemon
             try:
                 from agent.evidence_client import EvidenceClient
+
                 ev_client = EvidenceClient()
                 for finding in all_findings:
                     if finding.get("verified"):
                         bug_id = finding.get("id", hashlib.sha256(finding.get("claim", "").encode()).hexdigest()[:12])
-                        asyncio.ensure_future(ev_client.add_trigger_condition(
-                            bug_id, "Input", f"Agent: {finding.get('claim', '')[:200]}", "agent"
-                        ))
+                        asyncio.ensure_future(
+                            ev_client.add_trigger_condition(
+                                bug_id, "Input", f"Agent: {finding.get('claim', '')[:200]}", "agent"
+                            )
+                        )
             except Exception:
                 pass
 
@@ -715,33 +882,35 @@ class SwarmOrchestrator:
         # Phase 23: Contribute trigger conditions for verified findings
         for finding in all_findings:
             if finding.get("verified"):
-                bug_id = hashlib.sha256(
-                    finding.get("claim", "unknown").encode()
-                ).hexdigest()[:12]
+                bug_id = hashlib.sha256(finding.get("claim", "unknown").encode()).hexdigest()[:12]
                 loc = finding.get("location", "unknown:0")
                 claim = finding.get("claim", "")
                 mechanism = finding.get("mechanism", "")
-                
+
                 # Input dimension: the location where the bug was found
                 desc = f"Code location: {loc}"
                 if claim:
                     desc += f". Claim: {claim[:200]}"
                 asyncio.ensure_future(
-                    self._tool_describe_trigger({
-                        "bug_id": bug_id,
-                        "dimension": "Input",
-                        "description": desc,
-                    })
+                    self._tool_describe_trigger(
+                        {
+                            "bug_id": bug_id,
+                            "dimension": "Input",
+                            "description": desc,
+                        }
+                    )
                 )
-                
+
                 # DataState: if mechanism mentions state conditions
                 if mechanism and any(kw in mechanism.lower() for kw in ["null", "none", "empty", "state", "missing"]):
                     asyncio.ensure_future(
-                        self._tool_describe_trigger({
-                            "bug_id": bug_id,
-                            "dimension": "DataState",
-                            "description": f"State condition: {mechanism[:200]}",
-                        })
+                        self._tool_describe_trigger(
+                            {
+                                "bug_id": bug_id,
+                                "dimension": "DataState",
+                                "description": f"State condition: {mechanism[:200]}",
+                            }
+                        )
                     )
 
         return {

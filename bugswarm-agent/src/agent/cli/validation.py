@@ -9,6 +9,7 @@ import structlog
 
 from agent.cpg_client import CPGClient
 from agent.sandbox_client import SandboxClient
+
 from .config import CLIConfig
 
 logger = structlog.get_logger(__name__)

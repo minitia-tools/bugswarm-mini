@@ -26,6 +26,7 @@ import pytest
 # Check ML availability
 try:
     import xgboost as xgb  # noqa: F811
+
     _XGB = True
 except ImportError:
     _XGB = False
@@ -33,6 +34,7 @@ except ImportError:
 try:
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import roc_auc_score
+
     _SKL = True
 except ImportError:
     _SKL = False
@@ -44,8 +46,11 @@ pytestmark = [
 ]
 
 from swarm.probability import (
-    BugProbabilityModel, PredictionResult, RepoPrediction,
-    FunctionFeatures, FeatureExtractor,
+    BugProbabilityModel,
+    PredictionResult,
+    RepoPrediction,
+    FunctionFeatures,
+    FeatureExtractor,
 )
 
 
@@ -53,20 +58,29 @@ from swarm.probability import (
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _make_features(name="test_func", file="test.py", **overrides) -> FunctionFeatures:
     defaults = {
-        "function_name": name, "file_path": file,
-        "cyclomatic_complexity": 5, "nesting_depth": 3, "parameter_count": 2,
-        "lines_of_code": 50, "taint_source_count": 1, "taint_sink_count": 2,
-        "external_call_count": 3, "author_count": 2, "commit_frequency": 1.5,
+        "function_name": name,
+        "file_path": file,
+        "cyclomatic_complexity": 5,
+        "nesting_depth": 3,
+        "parameter_count": 2,
+        "lines_of_code": 50,
+        "taint_source_count": 1,
+        "taint_sink_count": 2,
+        "external_call_count": 3,
+        "author_count": 2,
+        "commit_frequency": 1.5,
         "bug_density_historical": 0.5,
     }
     defaults.update(overrides)
     return FunctionFeatures(**defaults)
 
 
-def _make_bug_dict(location="test.py:test_func", complexity=5, taint_src=1,
-                   taint_sink=2, nesting=3, loc_count=50, ext_calls=3) -> dict:
+def _make_bug_dict(
+    location="test.py:test_func", complexity=5, taint_src=1, taint_sink=2, nesting=3, loc_count=50, ext_calls=3
+) -> dict:
     return {
         "location": location,
         "claim": "SQL injection via tainted input",
@@ -83,14 +97,23 @@ def _make_bug_dict(location="test.py:test_func", complexity=5, taint_src=1,
 
 
 def _make_func_dict(file="test.py", name="test_func", complexity=5) -> dict:
-    return {"name": name, "file": file, "cyclomatic_complexity": complexity,
-            "nesting_depth": 3, "parameter_count": 2, "lines_of_code": 50,
-            "taint_source_count": 1, "taint_sink_count": 2, "external_call_count": 3}
+    return {
+        "name": name,
+        "file": file,
+        "cyclomatic_complexity": complexity,
+        "nesting_depth": 3,
+        "parameter_count": 2,
+        "lines_of_code": 50,
+        "taint_source_count": 1,
+        "taint_sink_count": 2,
+        "external_call_count": 3,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # D1: 15 Unit Tests
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestUnitTrainPredict:
     """D1.1 Test basic train/predict cycle."""
@@ -100,30 +123,43 @@ class TestUnitTrainPredict:
         model_path = str(tmp_path / "model.json")
         model = BugProbabilityModel(model_path=model_path)
 
-        bugs = [_make_bug_dict(location=f"file:{i}.py:func{i}",
-                               complexity=random.randint(8, 20),
-                               taint_src=random.randint(2, 5),
-                               taint_sink=random.randint(2, 5),
-                               nesting=random.randint(3, 7),
-                               loc_count=random.randint(50, 300),
-                               ext_calls=random.randint(2, 8))
-                for i in range(50)]
+        bugs = [
+            _make_bug_dict(
+                location=f"file:{i}.py:func{i}",
+                complexity=random.randint(8, 20),
+                taint_src=random.randint(2, 5),
+                taint_sink=random.randint(2, 5),
+                nesting=random.randint(3, 7),
+                loc_count=random.randint(50, 300),
+                ext_calls=random.randint(2, 8),
+            )
+            for i in range(50)
+        ]
 
-        all_funcs = [_make_func_dict(
-            file=f"file:{i}.py", name=f"func{i}",
-            complexity=random.randint(0, 5),
-        ) for i in range(200)]
+        all_funcs = [
+            _make_func_dict(
+                file=f"file:{i}.py",
+                name=f"func{i}",
+                complexity=random.randint(0, 5),
+            )
+            for i in range(200)
+        ]
 
         result = model.train(bugs, all_funcs)
         assert result["status"] == "trained", f"Training failed: {result}"
         assert result["auc"] > 0.65, f"AUC too low: {result['auc']}"
 
         # Predict on 20 held-out functions
-        test_funcs = [_make_features(f"test_func_{i}", f"test{i}.py",
-                                      cyclomatic_complexity=random.randint(0, 10),
-                                      taint_source_count=random.randint(0, 2),
-                                      taint_sink_count=random.randint(0, 2))
-                       for i in range(20)]
+        test_funcs = [
+            _make_features(
+                f"test_func_{i}",
+                f"test{i}.py",
+                cyclomatic_complexity=random.randint(0, 10),
+                taint_source_count=random.randint(0, 2),
+                taint_sink_count=random.randint(0, 2),
+            )
+            for i in range(20)
+        ]
         predictions = model.predict_all(test_funcs)
         assert predictions.total_functions == 20
         assert predictions.predictions[0].probability >= predictions.predictions[-1].probability
@@ -131,10 +167,17 @@ class TestUnitTrainPredict:
     def test_feature_extraction_all_fields(self):
         """All 10 features non-null, non-negative."""
         feat = FunctionFeatures(
-            function_name="login", file_path="auth/login.py",
-            cyclomatic_complexity=8, nesting_depth=4, parameter_count=3,
-            lines_of_code=120, taint_source_count=2, taint_sink_count=3,
-            external_call_count=5, author_count=4, commit_frequency=2.3,
+            function_name="login",
+            file_path="auth/login.py",
+            cyclomatic_complexity=8,
+            nesting_depth=4,
+            parameter_count=3,
+            lines_of_code=120,
+            taint_source_count=2,
+            taint_sink_count=3,
+            external_call_count=5,
+            author_count=4,
+            commit_frequency=2.3,
             bug_density_historical=1.5,
         )
         arr = feat.to_array()
@@ -147,10 +190,17 @@ class TestUnitTrainPredict:
     def test_feature_extraction_empty_function(self):
         """AGGRESSIVE: 0-line function, no body."""
         feat = FunctionFeatures(
-            function_name="empty_func", file_path="empty.py",
-            cyclomatic_complexity=0, nesting_depth=0, parameter_count=0,
-            lines_of_code=0, taint_source_count=0, taint_sink_count=0,
-            external_call_count=0, author_count=0, commit_frequency=0.0,
+            function_name="empty_func",
+            file_path="empty.py",
+            cyclomatic_complexity=0,
+            nesting_depth=0,
+            parameter_count=0,
+            lines_of_code=0,
+            taint_source_count=0,
+            taint_sink_count=0,
+            external_call_count=0,
+            author_count=0,
+            commit_frequency=0.0,
             bug_density_historical=0.0,
         )
         arr = feat.to_array()
@@ -159,12 +209,18 @@ class TestUnitTrainPredict:
     def test_feature_extraction_max_values(self):
         """AGGRESSIVE: Complexity=999999, lines=999999. No overflow."""
         feat = FunctionFeatures(
-            function_name="max_func", file_path="max.py",
-            cyclomatic_complexity=999999, nesting_depth=999999,
-            parameter_count=999999, lines_of_code=999999,
-            taint_source_count=999999, taint_sink_count=999999,
-            external_call_count=999999, author_count=999999,
-            commit_frequency=999999.99, bug_density_historical=999999.99,
+            function_name="max_func",
+            file_path="max.py",
+            cyclomatic_complexity=999999,
+            nesting_depth=999999,
+            parameter_count=999999,
+            lines_of_code=999999,
+            taint_source_count=999999,
+            taint_sink_count=999999,
+            external_call_count=999999,
+            author_count=999999,
+            commit_frequency=999999.99,
+            bug_density_historical=999999.99,
         )
         arr = feat.to_array()
         assert all(isinstance(v, float) for v in arr)
@@ -175,30 +231,28 @@ class TestUnitTrainPredict:
 
         model1 = BugProbabilityModel(model_path=model_path)
         bugs = [_make_bug_dict(location=f"test{i}.py:func{i}") for i in range(30)]
-        funcs = [_make_func_dict(file="dep{i}.py", name=f"dep{i}",
-                                  complexity=random.randint(0, 15))
-                  for i in range(100)]
+        funcs = [
+            _make_func_dict(file="dep{i}.py", name=f"dep{i}", complexity=random.randint(0, 15)) for i in range(100)
+        ]
         model1.train(bugs, funcs)
 
         # Predict with model1
-        test = _make_features("target", "target.py", cyclomatic_complexity=8,
-                               taint_source_count=2, taint_sink_count=2)
+        test = _make_features("target", "target.py", cyclomatic_complexity=8, taint_source_count=2, taint_sink_count=2)
         pred1 = model1.predict(test)
 
         # Load new model from disk
         model2 = BugProbabilityModel(model_path=model_path)
         pred2 = model2.predict(test)
 
-        assert abs(pred1.probability - pred2.probability) < 0.0001, \
+        assert abs(pred1.probability - pred2.probability) < 0.0001, (
             f"Serialization changed prediction: {pred1.probability} vs {pred2.probability}"
+        )
 
     def test_model_feature_importance(self, tmp_path):
         """All 10 features have importance scores. Sum ~1.0."""
         model = BugProbabilityModel(model_path=str(tmp_path / "imp.json"))
         bugs = [_make_bug_dict(location=f"f{i}.py:g{i}") for i in range(30)]
-        funcs = [_make_func_dict(file=f"f{i}.py", name=f"g{i}",
-                                  complexity=random.randint(0, 15))
-                  for i in range(120)]
+        funcs = [_make_func_dict(file=f"f{i}.py", name=f"g{i}", complexity=random.randint(0, 15)) for i in range(120)]
         model.train(bugs, funcs)
         imp = model.get_feature_importance()
         assert len(imp) == 10
@@ -225,14 +279,18 @@ class TestUnitTrainPredict:
         model = BugProbabilityModel(model_path=str(tmp_path / "rank.json"))
 
         # Train with high-complexity bugs
-        bugs = [_make_bug_dict(location=f"file{i}.py:func{i}",
-                               complexity=random.randint(8, 15),
-                               taint_src=random.randint(1, 3),
-                               taint_sink=random.randint(1, 3))
-                for i in range(40)]
-        funcs = [_make_func_dict(file=f"dep{i}.py", name=f"dep{i}",
-                                  complexity=random.randint(0, 10))
-                  for i in range(150)]
+        bugs = [
+            _make_bug_dict(
+                location=f"file{i}.py:func{i}",
+                complexity=random.randint(8, 15),
+                taint_src=random.randint(1, 3),
+                taint_sink=random.randint(1, 3),
+            )
+            for i in range(40)
+        ]
+        funcs = [
+            _make_func_dict(file=f"dep{i}.py", name=f"dep{i}", complexity=random.randint(0, 10)) for i in range(150)
+        ]
         model.train(bugs, funcs)
 
         # Test functions: two with high-complexity (buggy profile)
@@ -251,8 +309,7 @@ class TestUnitTrainPredict:
 
         repo = model.predict_all(test_funcs)
         top5 = {p.function_name for p in repo.get_top(5)}
-        assert "bug1" in top5 or "bug2" in top5, \
-            f"Expected bug1 or bug2 in top-5, got {top5}"
+        assert "bug1" in top5 or "bug2" in top5, f"Expected bug1 or bug2 in top-5, got {top5}"
 
     def test_prediction_without_model(self):
         """AGGRESSIVE: Predict before any training. All predictions 0.0."""
@@ -264,6 +321,7 @@ class TestUnitTrainPredict:
     def test_incremental_retrain_trigger(self):
         """AGGRESSIVE: Counter threshold enforced. 49 -> no trigger, 50 -> triggers."""
         from swarm.pattern_db import BugPatternDB
+
         # Skip if chromadb not working
         try:
             import chromadb  # noqa: F401
@@ -285,30 +343,39 @@ class TestUnitTrainPredict:
         model = BugProbabilityModel(model_path=str(tmp_path / "incr.json"))
 
         # Base training on 500 samples
-        bugs_base = [_make_bug_dict(location=f"f{i}.py:g{i}",
-                                     complexity=random.randint(8, 20),
-                                     taint_src=random.randint(1, 5),
-                                     taint_sink=random.randint(1, 5))
-                      for i in range(50)]
-        funcs_base = [_make_func_dict(file=f"f{i}.py", name=f"g{i}",
-                                       complexity=random.randint(0, 5))
-                       for i in range(250)]
+        bugs_base = [
+            _make_bug_dict(
+                location=f"f{i}.py:g{i}",
+                complexity=random.randint(8, 20),
+                taint_src=random.randint(1, 5),
+                taint_sink=random.randint(1, 5),
+            )
+            for i in range(50)
+        ]
+        funcs_base = [
+            _make_func_dict(file=f"f{i}.py", name=f"g{i}", complexity=random.randint(0, 5)) for i in range(250)
+        ]
         result = model.train(bugs_base, funcs_base)
         base_auc = result["auc"]
         assert result["status"] == "trained"
 
         # Incremental: add 5 batches of 10 more bugs
         for batch in range(5):
-            new_bugs = [_make_bug_dict(location=f"batch{batch}_{i}.py:func{i}",
-                                        complexity=random.randint(8, 20),
-                                        taint_src=random.randint(1, 5),
-                                        taint_sink=random.randint(1, 5))
-                         for i in range(10)]
-            new_funcs = [_make_func_dict(file=f"batch{batch}_{i}.py", name=f"func{i}",
-                                          complexity=random.randint(0, 5))
-                          for i in range(50)]
+            new_bugs = [
+                _make_bug_dict(
+                    location=f"batch{batch}_{i}.py:func{i}",
+                    complexity=random.randint(8, 20),
+                    taint_src=random.randint(1, 5),
+                    taint_sink=random.randint(1, 5),
+                )
+                for i in range(10)
+            ]
+            new_funcs = [
+                _make_func_dict(file=f"batch{batch}_{i}.py", name=f"func{i}", complexity=random.randint(0, 5))
+                for i in range(50)
+            ]
             result_inc = model.train(new_bugs, new_funcs, incremental=True)
-            assert result_inc["status"] == "trained", f"Batch {batch}: {result_inc.get('reason','')}"
+            assert result_inc["status"] == "trained", f"Batch {batch}: {result_inc.get('reason', '')}"
             assert result_inc["auc"] > 0.0, f"Batch {batch} AUC is zero"
 
     def test_corrupted_model_recovery(self, tmp_path):
@@ -343,10 +410,14 @@ class TestUnitTrainPredict:
 
     def test_stratified_sampling_coverage(self, tmp_path):
         """AGGRESSIVE: 1000 functions, 5 strata, 100 samples. All 5 strata represented."""
-        funcs = [_make_func_dict(
-            file=f"f{i}.py", name=f"g{i}",
-            complexity=random.randint(0, 30),
-        ) for i in range(1000)]
+        funcs = [
+            _make_func_dict(
+                file=f"f{i}.py",
+                name=f"g{i}",
+                complexity=random.randint(0, 30),
+            )
+            for i in range(1000)
+        ]
 
         model = BugProbabilityModel(model_path=str(tmp_path / "strat.json"))
         strata = model._stratify_by_complexity_quantiles(funcs, n_strata=5)
@@ -366,6 +437,7 @@ class TestUnitTrainPredict:
 # D2: 5 Integration Tests
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestIntegrationWiring:
     """D2 Tests - end-to-end wiring validation."""
 
@@ -374,21 +446,22 @@ class TestIntegrationWiring:
         model_path = str(tmp_path / "scout_feed.json")
         model = BugProbabilityModel(model_path=model_path)
 
-        bugs = [_make_bug_dict(location=f"high_{i}.py:func{i}",
-                               complexity=random.randint(8, 15))
-                for i in range(40)]
-        funcs = [_make_func_dict(file=f"dep_{i}.py", name=f"func{i}",
-                                  complexity=random.randint(0, 10))
-                  for i in range(150)]
+        bugs = [_make_bug_dict(location=f"high_{i}.py:func{i}", complexity=random.randint(8, 15)) for i in range(40)]
+        funcs = [
+            _make_func_dict(file=f"dep_{i}.py", name=f"func{i}", complexity=random.randint(0, 10)) for i in range(150)
+        ]
         model.train(bugs, funcs)
 
         test_funcs = [
-            _make_features("login", "auth/login.py", cyclomatic_complexity=12,
-                            taint_source_count=3, taint_sink_count=2),
-            _make_features("validate", "auth/validate.py", cyclomatic_complexity=8,
-                            taint_source_count=2, taint_sink_count=1),
-            _make_features("format_date", "utils/date.py", cyclomatic_complexity=1,
-                            taint_source_count=0, taint_sink_count=0),
+            _make_features(
+                "login", "auth/login.py", cyclomatic_complexity=12, taint_source_count=3, taint_sink_count=2
+            ),
+            _make_features(
+                "validate", "auth/validate.py", cyclomatic_complexity=8, taint_source_count=2, taint_sink_count=1
+            ),
+            _make_features(
+                "format_date", "utils/date.py", cyclomatic_complexity=1, taint_source_count=0, taint_sink_count=0
+            ),
         ]
         prediction = model.predict_all(test_funcs)
         prompt = prediction.to_prompt(top_n=20, threshold=0.5)
@@ -403,9 +476,7 @@ class TestIntegrationWiring:
 
         mock_pdb = MagicMock(spec=BugPatternDB)
         mock_pdb.count_since_last_train = 55
-        mock_pdb.get_all_confirmed.return_value = [
-            _make_bug_dict(location=f"f{i}.py:g{i}") for i in range(10)
-        ]
+        mock_pdb.get_all_confirmed.return_value = [_make_bug_dict(location=f"f{i}.py:g{i}") for i in range(10)]
         mock_ht = MagicMock()
 
         SwarmOrchestrator._maybe_retrain_model(mock_pdb, mock_ht)
@@ -418,16 +489,17 @@ class TestIntegrationWiring:
         model = BugProbabilityModel(model_path="/tmp/perf_test_19_noload.json")
         # Train with minimal data so model exists
         bugs = [_make_bug_dict(location=f"bug{i}.py:func{i}") for i in range(30)]
-        funcs = [_make_func_dict(file=f"clean{i}.py", name=f"func{i}",
-                                  complexity=random.randint(0, 10))
-                  for i in range(100)]
+        funcs = [
+            _make_func_dict(file=f"clean{i}.py", name=f"func{i}", complexity=random.randint(0, 10)) for i in range(100)
+        ]
         model.train(bugs, funcs)
 
         # Generate 10K synthetic functions
         np.random.seed(42)
         large_set = [
             _make_features(
-                f"func_{i}", f"file_{i%100}.py",
+                f"func_{i}",
+                f"file_{i % 100}.py",
                 cyclomatic_complexity=int(np.random.exponential(5)),
                 nesting_depth=int(np.random.exponential(2)),
                 parameter_count=int(np.random.poisson(3)),
@@ -435,7 +507,8 @@ class TestIntegrationWiring:
                 taint_source_count=int(np.random.poisson(0.5)),
                 taint_sink_count=int(np.random.poisson(0.5)),
                 external_call_count=int(np.random.poisson(2)),
-            ) for i in range(10000)
+            )
+            for i in range(10000)
         ]
 
         t0 = time.perf_counter()
@@ -452,13 +525,10 @@ class TestIntegrationWiring:
 
         m1 = BugProbabilityModel(model_path=model_path)
         bugs = [_make_bug_dict(location=f"f{i}.py:g{i}") for i in range(30)]
-        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}",
-                                  complexity=random.randint(0, 12))
-                  for i in range(120)]
+        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}", complexity=random.randint(0, 12)) for i in range(120)]
         m1.train(bugs, funcs)
 
-        feat = _make_features("target", "target.py", cyclomatic_complexity=10,
-                               taint_source_count=2, taint_sink_count=3)
+        feat = _make_features("target", "target.py", cyclomatic_complexity=10, taint_source_count=2, taint_sink_count=3)
         pred1 = m1.predict(feat)
 
         # Simulate restart
@@ -473,6 +543,7 @@ class TestIntegrationWiring:
 # D3: Prediction Gauntlet — 8 Attack Vectors
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestPredictionGauntlet:
     """MANDATORY gate — all 8 attack vectors must pass."""
 
@@ -485,31 +556,37 @@ class TestPredictionGauntlet:
 
         for i in range(n_bugs):
             is_complex = i < n_bugs // 2  # Half simple, half complex
-            bugs.append(_make_features(
-                f"bug_{i}", f"bug_file_{i}.py",
-                cyclomatic_complexity=np.random.randint(10, 20) if is_complex else np.random.randint(1, 4),
-                taint_source_count=np.random.randint(1, 4) if is_complex else np.random.randint(0, 2),
-                taint_sink_count=np.random.randint(1, 4) if is_complex else np.random.randint(0, 2),
-                nesting_depth=np.random.randint(3, 7) if is_complex else np.random.randint(1, 3),
-                lines_of_code=np.random.randint(80, 300) if is_complex else np.random.randint(10, 50),
-                external_call_count=np.random.randint(3, 8) if is_complex else np.random.randint(0, 2),
-                author_count=np.random.randint(2, 6),
-                commit_frequency=round(float(np.random.uniform(0.5, 5.0)), 1),
-            ))
+            bugs.append(
+                _make_features(
+                    f"bug_{i}",
+                    f"bug_file_{i}.py",
+                    cyclomatic_complexity=np.random.randint(10, 20) if is_complex else np.random.randint(1, 4),
+                    taint_source_count=np.random.randint(1, 4) if is_complex else np.random.randint(0, 2),
+                    taint_sink_count=np.random.randint(1, 4) if is_complex else np.random.randint(0, 2),
+                    nesting_depth=np.random.randint(3, 7) if is_complex else np.random.randint(1, 3),
+                    lines_of_code=np.random.randint(80, 300) if is_complex else np.random.randint(10, 50),
+                    external_call_count=np.random.randint(3, 8) if is_complex else np.random.randint(0, 2),
+                    author_count=np.random.randint(2, 6),
+                    commit_frequency=round(float(np.random.uniform(0.5, 5.0)), 1),
+                )
+            )
 
         for i in range(n_clean):
             is_complex = i < n_clean // 3  # Third of clean are complex
-            bugs.append(_make_features(
-                f"clean_{i}", f"clean_file_{i}.py",
-                cyclomatic_complexity=np.random.randint(10, 20) if is_complex else np.random.randint(1, 5),
-                taint_source_count=np.random.randint(2, 5) if is_complex else np.random.randint(0, 1),
-                taint_sink_count=np.random.randint(2, 5) if is_complex else np.random.randint(0, 1),
-                nesting_depth=np.random.randint(3, 7) if is_complex else np.random.randint(1, 3),
-                lines_of_code=np.random.randint(100, 500) if is_complex else np.random.randint(5, 60),
-                external_call_count=np.random.randint(3, 10) if is_complex else np.random.randint(0, 2),
-                author_count=np.random.randint(1, 4),
-                commit_frequency=round(float(np.random.uniform(0.1, 3.0)), 1),
-            ))
+            bugs.append(
+                _make_features(
+                    f"clean_{i}",
+                    f"clean_file_{i}.py",
+                    cyclomatic_complexity=np.random.randint(10, 20) if is_complex else np.random.randint(1, 5),
+                    taint_source_count=np.random.randint(2, 5) if is_complex else np.random.randint(0, 1),
+                    taint_sink_count=np.random.randint(2, 5) if is_complex else np.random.randint(0, 1),
+                    nesting_depth=np.random.randint(3, 7) if is_complex else np.random.randint(1, 3),
+                    lines_of_code=np.random.randint(100, 500) if is_complex else np.random.randint(5, 60),
+                    external_call_count=np.random.randint(3, 10) if is_complex else np.random.randint(0, 2),
+                    author_count=np.random.randint(1, 4),
+                    commit_frequency=round(float(np.random.uniform(0.1, 3.0)), 1),
+                )
+            )
 
         return bugs, clean
 
@@ -519,18 +596,23 @@ class TestPredictionGauntlet:
         bug_funcs, clean_funcs = self._make_dataset(40, 160)
 
         # Build training data
-        bugs_training = [_make_bug_dict(location=f"{f.file_path}:{f.function_name}",
-                                         complexity=f.cyclomatic_complexity,
-                                         taint_src=f.taint_source_count,
-                                         taint_sink=f.taint_sink_count,
-                                         nesting=f.nesting_depth,
-                                         loc_count=f.lines_of_code,
-                                         ext_calls=f.external_call_count)
-                         for f in bug_funcs]
+        bugs_training = [
+            _make_bug_dict(
+                location=f"{f.file_path}:{f.function_name}",
+                complexity=f.cyclomatic_complexity,
+                taint_src=f.taint_source_count,
+                taint_sink=f.taint_sink_count,
+                nesting=f.nesting_depth,
+                loc_count=f.lines_of_code,
+                ext_calls=f.external_call_count,
+            )
+            for f in bug_funcs
+        ]
 
-        all_funcs = [_make_func_dict(file=f.file_path, name=f.function_name,
-                                      complexity=f.cyclomatic_complexity)
-                     for f in (bug_funcs + clean_funcs)]
+        all_funcs = [
+            _make_func_dict(file=f.file_path, name=f.function_name, complexity=f.cyclomatic_complexity)
+            for f in (bug_funcs + clean_funcs)
+        ]
 
         model.train(bugs_training, all_funcs)
 
@@ -541,7 +623,9 @@ class TestPredictionGauntlet:
         top_names = {p.function_name for p in top_pred}
         bugs_found = sum(1 for b in bug_funcs if b.function_name in top_names)
 
-        print(f"  AV1: {bugs_found}/{len(bug_funcs)} bugs in top-{top_10pct} ({bugs_found/len(bug_funcs)*100:.0f}%)")
+        print(
+            f"  AV1: {bugs_found}/{len(bug_funcs)} bugs in top-{top_10pct} ({bugs_found / len(bug_funcs) * 100:.0f}%)"
+        )
         assert bugs_found >= 14, f"Recall too low: {bugs_found}/{len(bug_funcs)}"
 
     def test_av2_precision_verification(self, tmp_path):
@@ -549,14 +633,19 @@ class TestPredictionGauntlet:
         model = BugProbabilityModel(model_path=str(tmp_path / "av2.json"))
         bug_funcs, clean_funcs = self._make_dataset(40, 160)
 
-        bugs_training = [_make_bug_dict(location=f"{f.file_path}:{f.function_name}",
-                                         complexity=f.cyclomatic_complexity,
-                                         taint_src=f.taint_source_count,
-                                         taint_sink=f.taint_sink_count)
-                         for f in bug_funcs]
-        all_funcs = [_make_func_dict(file=f.file_path, name=f.function_name,
-                                      complexity=f.cyclomatic_complexity)
-                     for f in (bug_funcs + clean_funcs)]
+        bugs_training = [
+            _make_bug_dict(
+                location=f"{f.file_path}:{f.function_name}",
+                complexity=f.cyclomatic_complexity,
+                taint_src=f.taint_source_count,
+                taint_sink=f.taint_sink_count,
+            )
+            for f in bug_funcs
+        ]
+        all_funcs = [
+            _make_func_dict(file=f.file_path, name=f.function_name, complexity=f.cyclomatic_complexity)
+            for f in (bug_funcs + clean_funcs)
+        ]
         model.train(bugs_training, all_funcs)
 
         predictions = model.predict_all(bug_funcs + clean_funcs)
@@ -574,24 +663,32 @@ class TestPredictionGauntlet:
 
         # Create heavily imbalanced dataset: 90% simple, 10% complex
         simple_bugs = [
-            _make_bug_dict(location=f"sbug{i}.py:func{i}", complexity=random.randint(0, 3),
-                            taint_src=random.randint(0, 1), taint_sink=random.randint(0, 1))
+            _make_bug_dict(
+                location=f"sbug{i}.py:func{i}",
+                complexity=random.randint(0, 3),
+                taint_src=random.randint(0, 1),
+                taint_sink=random.randint(0, 1),
+            )
             for i in range(20)
         ]
         complex_bugs = [
-            _make_bug_dict(location=f"cbug{i}.py:func{i}", complexity=random.randint(8, 20),
-                            taint_src=random.randint(2, 5), taint_sink=random.randint(2, 5))
+            _make_bug_dict(
+                location=f"cbug{i}.py:func{i}",
+                complexity=random.randint(8, 20),
+                taint_src=random.randint(2, 5),
+                taint_sink=random.randint(2, 5),
+            )
             for i in range(5)
         ]
         all_bugs_list = simple_bugs + complex_bugs
 
         # Mostly simple functions in the repo
-        simple_funcs = [_make_func_dict(file=f"s{i}.py", name=f"func{i}",
-                                         complexity=random.randint(0, 3))
-                         for i in range(80)]
-        complex_funcs = [_make_func_dict(file=f"c{i}.py", name=f"func{i}",
-                                          complexity=random.randint(8, 20))
-                          for i in range(20)]
+        simple_funcs = [
+            _make_func_dict(file=f"s{i}.py", name=f"func{i}", complexity=random.randint(0, 3)) for i in range(80)
+        ]
+        complex_funcs = [
+            _make_func_dict(file=f"c{i}.py", name=f"func{i}", complexity=random.randint(8, 20)) for i in range(20)
+        ]
         funcs_for_training = simple_funcs + complex_funcs
 
         model.train(all_bugs_list, funcs_for_training)
@@ -603,14 +700,18 @@ class TestPredictionGauntlet:
         model_path = str(tmp_path / "av4.json")
         model = BugProbabilityModel(model_path=model_path)
 
-        bugs_full = [_make_bug_dict(location=f"f{i}.py:g{i}",
-                                     complexity=random.randint(8, 20),
-                                     taint_src=random.randint(1, 5),
-                                     taint_sink=random.randint(1, 5))
-                      for i in range(60)]
-        funcs_full = [_make_func_dict(file=f"d{i}.py", name=f"d{i}",
-                                       complexity=random.randint(0, 5))
-                       for i in range(300)]
+        bugs_full = [
+            _make_bug_dict(
+                location=f"f{i}.py:g{i}",
+                complexity=random.randint(8, 20),
+                taint_src=random.randint(1, 5),
+                taint_sink=random.randint(1, 5),
+            )
+            for i in range(60)
+        ]
+        funcs_full = [
+            _make_func_dict(file=f"d{i}.py", name=f"d{i}", complexity=random.randint(0, 5)) for i in range(300)
+        ]
 
         # Full train on all
         result_full = model.train(bugs_full, funcs_full)
@@ -652,18 +753,13 @@ class TestPredictionGauntlet:
         model_path = str(tmp_path / "av6.json")
         model = BugProbabilityModel(model_path=model_path)
 
-        bugs = [_make_bug_dict(location=f"f{i}.py:g{i}",
-                                complexity=random.randint(3, 15))
-                 for i in range(40)]
-        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}",
-                                  complexity=random.randint(0, 12))
-                  for i in range(150)]
+        bugs = [_make_bug_dict(location=f"f{i}.py:g{i}", complexity=random.randint(3, 15)) for i in range(40)]
+        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}", complexity=random.randint(0, 12)) for i in range(150)]
         result = model.train(bugs, funcs)
         full_auc = result["auc"]
 
         # Predict without git features
-        zero_git = _make_features("test", "test.py",
-                                    author_count=0, commit_frequency=0.0)
+        zero_git = _make_features("test", "test.py", author_count=0, commit_frequency=0.0)
         pred = model.predict(zero_git)
         # Just verify it works — model should still produce valid prediction
         assert 0.0 <= pred.probability <= 1.0
@@ -677,9 +773,10 @@ class TestPredictionGauntlet:
         model.train(bugs, funcs)
 
         np.random.seed(99)
-        large = [_make_features(f"f_{i}", f"file_{i%100}.py",
-                                 cyclomatic_complexity=int(np.random.exponential(5)))
-                  for i in range(10000)]
+        large = [
+            _make_features(f"f_{i}", f"file_{i % 100}.py", cyclomatic_complexity=int(np.random.exponential(5)))
+            for i in range(10000)
+        ]
 
         t0 = time.perf_counter()
         result = model.predict_all(large)
@@ -702,6 +799,7 @@ class TestPredictionGauntlet:
 # D4: Probability Regression Test
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestProbabilityRegression:
     """Regression tests to ensure model doesn't silently degrade."""
 
@@ -715,10 +813,17 @@ class TestProbabilityRegression:
     def test_to_array_consistent(self):
         """to_array() must match feature_names() order."""
         feat = FunctionFeatures(
-            function_name="test", file_path="test.py",
-            cyclomatic_complexity=1, nesting_depth=2, parameter_count=3,
-            lines_of_code=4, taint_source_count=5, taint_sink_count=6,
-            external_call_count=7, author_count=8, commit_frequency=9.0,
+            function_name="test",
+            file_path="test.py",
+            cyclomatic_complexity=1,
+            nesting_depth=2,
+            parameter_count=3,
+            lines_of_code=4,
+            taint_source_count=5,
+            taint_sink_count=6,
+            external_call_count=7,
+            author_count=8,
+            commit_frequency=9.0,
             bug_density_historical=10.0,
         )
         arr = feat.to_array()
@@ -727,20 +832,23 @@ class TestProbabilityRegression:
     def test_prediction_distribution(self, tmp_path):
         """>90% of predictions within ±0.05 of each other would signal non-discriminating model."""
         model = BugProbabilityModel(model_path=str(tmp_path / "dist.json"))
-        bugs = [_make_bug_dict(location=f"f{i}.py:g{i}",
-                                complexity=random.randint(2, 18),
-                                taint_src=random.randint(0, 3))
-                 for i in range(30)]
-        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}",
-                                  complexity=random.randint(0, 15))
-                  for i in range(120)]
+        bugs = [
+            _make_bug_dict(location=f"f{i}.py:g{i}", complexity=random.randint(2, 18), taint_src=random.randint(0, 3))
+            for i in range(30)
+        ]
+        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}", complexity=random.randint(0, 15)) for i in range(120)]
         model.train(bugs, funcs)
 
-        test_set = [_make_features(f"t{i}", f"t{i}.py",
-                                    cyclomatic_complexity=random.randint(0, 20),
-                                    taint_source_count=random.randint(0, 4),
-                                    taint_sink_count=random.randint(0, 4))
-                     for i in range(100)]
+        test_set = [
+            _make_features(
+                f"t{i}",
+                f"t{i}.py",
+                cyclomatic_complexity=random.randint(0, 20),
+                taint_source_count=random.randint(0, 4),
+                taint_sink_count=random.randint(0, 4),
+            )
+            for i in range(100)
+        ]
         repo = model.predict_all(test_set)
         probs = [p.probability for p in repo.predictions]
         spread = max(probs) - min(probs) if probs else 0.0
@@ -751,18 +859,14 @@ class TestProbabilityRegression:
     def test_prediction_monotonic_rank(self, tmp_path):
         """Higher probability functions should outrank lower ones."""
         model = BugProbabilityModel(model_path=str(tmp_path / "mono.json"))
-        bugs = [_make_bug_dict(location=f"f{i}.py:g{i}",
-                                complexity=random.randint(5, 15))
-                 for i in range(30)]
-        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}",
-                                  complexity=random.randint(0, 10))
-                  for i in range(120)]
+        bugs = [_make_bug_dict(location=f"f{i}.py:g{i}", complexity=random.randint(5, 15)) for i in range(30)]
+        funcs = [_make_func_dict(file=f"d{i}.py", name=f"d{i}", complexity=random.randint(0, 10)) for i in range(120)]
         model.train(bugs, funcs)
 
-        test = [_make_features(f"t{i}", f"t{i}.py",
-                                cyclomatic_complexity=i,
-                                taint_source_count=i//2)
-                 for i in range(1, 11)]
+        test = [
+            _make_features(f"t{i}", f"t{i}.py", cyclomatic_complexity=i, taint_source_count=i // 2)
+            for i in range(1, 11)
+        ]
         repo = model.predict_all(test)
         for i in range(len(repo.predictions) - 1):
             assert repo.predictions[i].probability >= repo.predictions[i + 1].probability - 0.001

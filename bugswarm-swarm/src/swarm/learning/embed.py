@@ -44,6 +44,7 @@ class CodeEmbedder:
     def _init_model(self):
         try:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer("all-MiniLM-L6-v2")
             self._model_available = True
         except Exception:

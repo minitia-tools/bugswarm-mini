@@ -9,15 +9,15 @@ from __future__ import annotations
 import math
 from collections import Counter
 
-
 # ═══════════════════════════════════════════════════════════════
 # Text Similarity (trigram BoW — NOT SHA-256)
 # ═══════════════════════════════════════════════════════════════
 
+
 def text_to_trigrams(text: str) -> Counter:
     """Convert text to character trigram frequencies."""
     clean = text.lower()
-    return Counter(clean[i:i+3] for i in range(len(clean) - 2))
+    return Counter(clean[i : i + 3] for i in range(len(clean) - 2))
 
 
 def trigram_similarity(a: str, b: str) -> float:
@@ -36,6 +36,7 @@ def trigram_similarity(a: str, b: str) -> float:
 # ═══════════════════════════════════════════════════════════════
 # ROUGE-L — Longest Common Subsequence F1
 # ═══════════════════════════════════════════════════════════════
+
 
 def rouge_l(reference: str, candidate: str) -> float:
     """ROUGE-L: longest common subsequence based F1 score."""
@@ -64,6 +65,7 @@ def rouge_l(reference: str, candidate: str) -> float:
 # ═══════════════════════════════════════════════════════════════
 # BERTScore Approximation (trigram BoW, not SHA-256)
 # ═══════════════════════════════════════════════════════════════
+
 
 def bertscore_approx(reference: str, candidate: str) -> float:
     """Approximate BERTScore using trigram overlap, not SHA-256 word embeddings."""
@@ -99,6 +101,7 @@ def bertscore_approx(reference: str, candidate: str) -> float:
 # ═══════════════════════════════════════════════════════════════
 # Fidelity Computation
 # ═══════════════════════════════════════════════════════════════
+
 
 def compute_fidelity(original: str, summary: str) -> dict[str, float]:
     """Compute fidelity scores for a summary against its original."""

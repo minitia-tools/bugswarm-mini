@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .types import AgentSlot, AgentStatus, SwarmConfig
 from .routing import text_similarity
+from .types import AgentSlot, SwarmConfig
 
 
 class PerformanceMonitor:
@@ -96,9 +96,6 @@ class PerformanceMonitor:
 
     def evaluate_ejection(self, agent: AgentSlot, last_findings: list[dict]) -> bool:
         """Post-ejection review: were the agent's contributions valuable?"""
-        valuable = any(
-            f.get("verified") or (f.get("severity_estimate", 0) >= 7)
-            for f in last_findings
-        )
+        valuable = any(f.get("verified") or (f.get("severity_estimate", 0) >= 7) for f in last_findings)
         agent.ejection_reviewed = True
         return valuable

@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -23,7 +21,9 @@ logger = structlog.get_logger(__name__)
 # ═══════════════════════════════════════════════════════════════
 
 MIGRATIONS: list[tuple[int, str]] = [
-    (1, """
+    (
+        1,
+        """
         CREATE TABLE IF NOT EXISTS agent_state (
             id INTEGER PRIMARY KEY,
             run_id TEXT NOT NULL UNIQUE,
@@ -75,17 +75,29 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_messages_run_round ON messages(run_id, round);
         CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id);
         CREATE INDEX IF NOT EXISTS idx_checkpoints_run ON checkpoints(run_id, round);
-    """),
-    (2, """
+    """,
+    ),
+    (
+        2,
+        """
         ALTER TABLE agent_state ADD COLUMN prompt_version TEXT DEFAULT '';
-    """),
-    (3, """
+    """,
+    ),
+    (
+        3,
+        """
         ALTER TABLE findings ADD COLUMN sandbox_receipt_id TEXT;
-    """),
-    (4, """
+    """,
+    ),
+    (
+        4,
+        """
         ALTER TABLE findings ADD COLUMN false_positive INTEGER DEFAULT 0;
-    """),
-    (5, """
+    """,
+    ),
+    (
+        5,
+        """
         CREATE TABLE IF NOT EXISTS cost_tracking (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id TEXT NOT NULL,
@@ -99,7 +111,8 @@ MIGRATIONS: list[tuple[int, str]] = [
             created_at TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_cost_run ON cost_tracking(run_id);
-    """),
+    """,
+    ),
 ]
 
 
@@ -142,6 +155,7 @@ class MigrationManager:
 # Persistence Manager
 # ═══════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RunState:
     run_id: str
@@ -159,10 +173,16 @@ class RunState:
     @classmethod
     def from_row(cls, row: tuple) -> RunState:
         return cls(
-            run_id=row[1], round_number=row[2], turn_number=row[3],
-            status=row[4], persona=row[5], prompt_version=row[6],
-            trust_score=row[7], tokens_consumed=row[8],
-            findings_count=row[9], verified_findings=row[10],
+            run_id=row[1],
+            round_number=row[2],
+            turn_number=row[3],
+            status=row[4],
+            persona=row[5],
+            prompt_version=row[6],
+            trust_score=row[7],
+            tokens_consumed=row[8],
+            findings_count=row[9],
+            verified_findings=row[10],
             hallucination_rate=row[11],
         )
 
@@ -217,8 +237,7 @@ class PersistenceManager:
         # Apply migrations
         mgr = MigrationManager(conn)
         version = mgr.migrate()
-        logger.info("persistence_initialized", path=str(self.db_path),
-                     schema_version=version)
+        logger.info("persistence_initialized", path=str(self.db_path), schema_version=version)
 
         self._connections.append(conn)
         return conn
@@ -231,8 +250,7 @@ class PersistenceManager:
 
     # ─── Run Repository ───
 
-    def create_run(self, run_id: str, persona: str = "causal",
-                   prompt_version: str = "") -> RunState:
+    def create_run(self, run_id: str, persona: str = "causal", prompt_version: str = "") -> RunState:
         self.conn.execute(
             "INSERT INTO agent_state (run_id, persona, prompt_version, status) VALUES (?,?,?,'active')",
             (run_id, persona, prompt_version),
@@ -260,8 +278,7 @@ class PersistenceManager:
 
     # ─── Message Repository ───
 
-    def log_message(self, run_id: str, round_num: int, turn: int,
-                    role: str, content: str, tokens: int = 0) -> None:
+    def log_message(self, run_id: str, round_num: int, turn: int, role: str, content: str, tokens: int = 0) -> None:
         self.conn.execute(
             "INSERT INTO messages (run_id, round, turn, role, content, token_count) VALUES (?,?,?,?,?,?)",
             (run_id, round_num, turn, role, content, tokens),
@@ -281,9 +298,9 @@ class PersistenceManager:
 
     # ─── Finding Repository ───
 
-    def log_finding(self, run_id: str, claim: str, location: str,
-                    mechanism: str = "", severity: int = 5,
-                    verified: bool = False) -> None:
+    def log_finding(
+        self, run_id: str, claim: str, location: str, mechanism: str = "", severity: int = 5, verified: bool = False
+    ) -> None:
         self.conn.execute(
             "INSERT INTO findings (run_id, claim, location, mechanism, severity, verified) VALUES (?,?,?,?,?,?)",
             (run_id, claim, location, mechanism, severity, int(verified)),
@@ -294,8 +311,9 @@ class PersistenceManager:
         )
         self.conn.commit()
 
-    def update_finding_verification(self, finding_id: int, receipt_id: str,
-                                    verified: bool = True, false_positive: bool = False) -> None:
+    def update_finding_verification(
+        self, finding_id: int, receipt_id: str, verified: bool = True, false_positive: bool = False
+    ) -> None:
         self.conn.execute(
             "UPDATE findings SET sandbox_receipt_id=?, verified=?, false_positive=? WHERE id=?",
             (receipt_id, int(verified), int(false_positive), finding_id),
@@ -331,9 +349,17 @@ class PersistenceManager:
 
     # ─── Cost Tracking ───
 
-    def log_cost(self, run_id: str, round_num: int, turn: int,
-                 input_tokens: int, output_tokens: int,
-                 cost_usd: float, provider: str = "", model: str = "") -> None:
+    def log_cost(
+        self,
+        run_id: str,
+        round_num: int,
+        turn: int,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
         self.conn.execute(
             "INSERT INTO cost_tracking (run_id, round, turn, input_tokens, output_tokens, cost_usd, provider, model) VALUES (?,?,?,?,?,?,?,?)",
             (run_id, round_num, turn, input_tokens, output_tokens, cost_usd, provider, model),

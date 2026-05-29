@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import structlog
 from anthropic import AsyncAnthropic
 
 from ..types import (
-    ChatRequest, ChatResponse, ChatMessage, MessageRole,
-    ProviderConfig, ProviderType, TokenUsage,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    MessageRole,
+    ProviderConfig,
+    ProviderType,
+    TokenUsage,
 )
-from .base import BaseProviderAdapter, RetryableError, FatalError
+from .base import BaseProviderAdapter, FatalError, RetryableError
 
 logger = structlog.get_logger(__name__)
 
@@ -62,15 +67,21 @@ class AnthropicAdapter(BaseProviderAdapter):
             input_tokens=response.usage.input_tokens if response.usage else 0,
             output_tokens=response.usage.output_tokens if response.usage else 0,
             total_tokens=((response.usage.input_tokens or 0) + (response.usage.output_tokens or 0))
-                         if response.usage else 0,
+            if response.usage
+            else 0,
         )
 
         cost = self.estimate_cost(usage.input_tokens, usage.output_tokens)
 
         return ChatResponse(
-            content=content, model=response.model, provider=ProviderType.ANTHROPIC,
-            usage=usage, cost=cost, finish_reason=response.stop_reason or "stop",
-            request_id=response.id, latency_ms=elapsed,
+            content=content,
+            model=response.model,
+            provider=ProviderType.ANTHROPIC,
+            usage=usage,
+            cost=cost,
+            finish_reason=response.stop_reason or "stop",
+            request_id=response.id,
+            latency_ms=elapsed,
         )
 
     async def chat_stream(self, request: ChatRequest) -> AsyncIterator[str]:
@@ -78,8 +89,10 @@ class AnthropicAdapter(BaseProviderAdapter):
         model = request.model or self.config.default_model
 
         kwargs: dict = {
-            "model": model, "messages": user_messages,
-            "max_tokens": request.max_tokens, "stream": True,
+            "model": model,
+            "messages": user_messages,
+            "max_tokens": request.max_tokens,
+            "stream": True,
         }
         if system_prompt:
             kwargs["system"] = system_prompt
@@ -109,6 +122,7 @@ class AnthropicAdapter(BaseProviderAdapter):
         """Approximate Claude token count using cl100k_base."""
         try:
             import tiktoken
+
             enc = tiktoken.get_encoding("cl100k_base")
             return sum(len(enc.encode(m.content)) for m in messages)
         except Exception:

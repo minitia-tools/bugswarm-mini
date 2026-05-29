@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
 
 import httpx
-
 
 DEFAULT_TIMEOUT = 30.0
 
@@ -22,12 +19,14 @@ class ModelCapabilities:
     max_output_tokens: int = 4_096
 
     def is_empty(self) -> bool:
-        return not any([
-            self.supports_tools,
-            self.supports_json_mode,
-            self.supports_thinking,
-            self.supports_streaming,
-        ])
+        return not any(
+            [
+                self.supports_tools,
+                self.supports_json_mode,
+                self.supports_thinking,
+                self.supports_streaming,
+            ]
+        )
 
 
 @dataclass
@@ -101,11 +100,13 @@ class ChatRequest:
             for t in self.tools:
                 if t.get("type") == "function":
                     fn = t.get("function", {})
-                    anthropic_tools.append({
-                        "name": fn.get("name", ""),
-                        "description": fn.get("description", ""),
-                        "input_schema": fn.get("parameters", {}),
-                    })
+                    anthropic_tools.append(
+                        {
+                            "name": fn.get("name", ""),
+                            "description": fn.get("description", ""),
+                            "input_schema": fn.get("parameters", {}),
+                        }
+                    )
             body["tools"] = anthropic_tools
         if self.json_mode:
             body["extra_headers"] = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"}
@@ -115,10 +116,12 @@ class ChatRequest:
         contents = []
         for msg in self.messages:
             role = "model" if msg["role"] == "assistant" else "user"
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}],
-            })
+            contents.append(
+                {
+                    "role": role,
+                    "parts": [{"text": msg["content"]}],
+                }
+            )
         body: dict = {
             "contents": contents,
             "generationConfig": {
@@ -127,14 +130,19 @@ class ChatRequest:
             },
         }
         if self.tools:
-            body["tools"] = [{"functionDeclarations": [
+            body["tools"] = [
                 {
-                    "name": t.get("function", {}).get("name", ""),
-                    "description": t.get("function", {}).get("description", ""),
-                    "parameters": t.get("function", {}).get("parameters", {}),
+                    "functionDeclarations": [
+                        {
+                            "name": t.get("function", {}).get("name", ""),
+                            "description": t.get("function", {}).get("description", ""),
+                            "parameters": t.get("function", {}).get("parameters", {}),
+                        }
+                        for t in self.tools
+                        if t.get("type") == "function"
+                    ]
                 }
-                for t in self.tools if t.get("type") == "function"
-            ]}]
+            ]
         return body
 
     def to_ollama_dict(self) -> dict:
@@ -154,7 +162,8 @@ class ChatRequest:
                         "parameters": t.get("function", {}).get("parameters", {}),
                     },
                 }
-                for t in self.tools if t.get("type") == "function"
+                for t in self.tools
+                if t.get("type") == "function"
             ]
         if self.json_mode:
             body["format"] = "json"
@@ -191,19 +200,16 @@ class ProtocolAdapter(ABC):
             self._client = None
 
     @abstractmethod
-    async def chat(self, request: ChatRequest) -> ChatResponse:
-        ...
+    async def chat(self, request: ChatRequest) -> ChatResponse: ...
 
-    async def chat_with_retry(
-        self, request: ChatRequest, max_retries: int = 3
-    ) -> ChatResponse:
+    async def chat_with_retry(self, request: ChatRequest, max_retries: int = 3) -> ChatResponse:
         last_error: Exception | None = None
         for attempt in range(max_retries):
             try:
                 return await self.chat(request)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (429, 502, 503, 504) and attempt < max_retries - 1:
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     await asyncio.sleep(wait)
                     last_error = e
                     continue
@@ -211,7 +217,7 @@ class ProtocolAdapter(ABC):
             except Exception as e:
                 last_error = e
                 if attempt < max_retries - 1:
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     await asyncio.sleep(wait)
                     continue
                 raise
@@ -320,11 +326,13 @@ class AnthropicAdapter(ProtocolAdapter):
             for t in request.tools:
                 if t.get("type") == "function":
                     fn = t.get("function", {})
-                    anthropic_tools.append({
-                        "name": fn.get("name", ""),
-                        "description": fn.get("description", ""),
-                        "input_schema": fn.get("parameters", {}),
-                    })
+                    anthropic_tools.append(
+                        {
+                            "name": fn.get("name", ""),
+                            "description": fn.get("description", ""),
+                            "input_schema": fn.get("parameters", {}),
+                        }
+                    )
             body["tools"] = anthropic_tools
         if request.json_mode:
             body["extra_headers"] = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"}
@@ -337,11 +345,7 @@ class AnthropicAdapter(ProtocolAdapter):
         resp.raise_for_status()
         duration = (time.monotonic() - start) * 1000
         data = resp.json()
-        content = "".join(
-            b.get("text", "")
-            for b in data.get("content", [])
-            if b.get("type") == "text"
-        )
+        content = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         usage = data.get("usage", {})
         return ChatResponse(
             content=content,
@@ -366,10 +370,12 @@ class GoogleAdapter(ProtocolAdapter):
         contents = []
         for msg in request.messages:
             role = "model" if msg["role"] == "assistant" else "user"
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}],
-            })
+            contents.append(
+                {
+                    "role": role,
+                    "parts": [{"text": msg["content"]}],
+                }
+            )
 
         body: dict = {
             "contents": contents,
@@ -379,14 +385,19 @@ class GoogleAdapter(ProtocolAdapter):
             },
         }
         if request.tools:
-            body["tools"] = [{"functionDeclarations": [
+            body["tools"] = [
                 {
-                    "name": t.get("function", {}).get("name", ""),
-                    "description": t.get("function", {}).get("description", ""),
-                    "parameters": t.get("function", {}).get("parameters", {}),
+                    "functionDeclarations": [
+                        {
+                            "name": t.get("function", {}).get("name", ""),
+                            "description": t.get("function", {}).get("description", ""),
+                            "parameters": t.get("function", {}).get("parameters", {}),
+                        }
+                        for t in request.tools
+                        if t.get("type") == "function"
+                    ]
                 }
-                for t in request.tools if t.get("type") == "function"
-            ]}]
+            ]
 
         url = f"{self.base_url}/models/{request.model}:generateContent?key={self.api_key}"
         resp = await client.post(url, headers=self.get_headers(), json=body)
@@ -394,10 +405,7 @@ class GoogleAdapter(ProtocolAdapter):
         duration = (time.monotonic() - start) * 1000
         data = resp.json()
         candidate = data.get("candidates", [{}])[0]
-        content = "".join(
-            p.get("text", "")
-            for p in candidate.get("content", {}).get("parts", [])
-        )
+        content = "".join(p.get("text", "") for p in candidate.get("content", {}).get("parts", []))
         usage = data.get("usageMetadata", {})
         return ChatResponse(
             content=content,
@@ -413,8 +421,7 @@ class GoogleAdapter(ProtocolAdapter):
         resp = await client.get(url, headers=self.get_headers())
         resp.raise_for_status()
         return [
-            m for m in resp.json().get("models", [])
-            if "generateContent" in m.get("supportedGenerationMethods", [])
+            m for m in resp.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])
         ]
 
 
@@ -445,7 +452,8 @@ class OllamaAdapter(ProtocolAdapter):
                         "parameters": t.get("function", {}).get("parameters", {}),
                     },
                 }
-                for t in request.tools if t.get("type") == "function"
+                for t in request.tools
+                if t.get("type") == "function"
             ]
         if request.json_mode:
             body["format"] = "json"
@@ -470,10 +478,7 @@ class OllamaAdapter(ProtocolAdapter):
         client = await self._get_client()
         resp = await client.get(f"{self.base_url}/api/tags")
         resp.raise_for_status()
-        return [
-            {"id": m["name"], "provider": "Ollama"}
-            for m in resp.json().get("models", [])
-        ]
+        return [{"id": m["name"], "provider": "Ollama"} for m in resp.json().get("models", [])]
 
 
 PROVIDER_PROTOCOLS: dict[str, tuple[str, str]] = {
@@ -499,10 +504,7 @@ def create_adapter(
     base_url_override: str | None = None,
 ) -> ProtocolAdapter:
     if provider not in PROVIDER_PROTOCOLS:
-        raise ValueError(
-            f"Unknown provider '{provider}'. "
-            f"Available: {', '.join(sorted(PROVIDER_PROTOCOLS.keys()))}"
-        )
+        raise ValueError(f"Unknown provider '{provider}'. Available: {', '.join(sorted(PROVIDER_PROTOCOLS.keys()))}")
     proto, url = PROVIDER_PROTOCOLS[provider]
     base_url = base_url_override or url
 

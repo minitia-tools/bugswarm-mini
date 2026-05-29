@@ -5,9 +5,9 @@ import sys
 
 import click
 
-from .gateway.config import load_config
 from .cli.configure import cmd_configure, cmd_show_config
 from .cli.usage import cmd_usage
+from .gateway.config import load_config
 
 
 @click.group()
@@ -39,9 +39,7 @@ def run(repo: str, budget: str | None, unlimited: bool, json_output: bool):
     """Hunt bugs in REPO."""
     config = load_config()
     if not config.is_configured:
-        click.echo(
-            "Not configured. Run 'bugswarm configure' first.", err=True
-        )
+        click.echo("Not configured. Run 'bugswarm configure' first.", err=True)
         sys.exit(1)
 
     click.echo(f"[dim]BugSwarm v0.1.0 — hunting bugs in {repo}[/]")
@@ -60,6 +58,7 @@ def usage(json_output: bool):
 def version():
     """Show version information."""
     from . import __version__
+
     click.echo(f"BugSwarm v{__version__}")
 
 

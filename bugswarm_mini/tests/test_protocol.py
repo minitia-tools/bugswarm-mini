@@ -102,7 +102,12 @@ class TestChatRequest:
         req = ChatRequest(
             model="claude-3",
             messages=[{"role": "user", "content": "Hi"}],
-            tools=[{"type": "function", "function": {"name": "test", "description": "A test", "parameters": {"type": "object"}}}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {"name": "test", "description": "A test", "parameters": {"type": "object"}},
+                }
+            ],
         )
         d = req.to_anthropic_dict()
         assert d["tools"] == [{"name": "test", "description": "A test", "input_schema": {"type": "object"}}]

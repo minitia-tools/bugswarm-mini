@@ -1,5 +1,5 @@
 """H12: Path traversal prevention regression tests."""
-import pytest
+
 from pathlib import Path
 
 REPO = Path("/tmp/bugswarm-test-repo")

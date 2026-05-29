@@ -10,7 +10,6 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -85,7 +84,7 @@ class CPGClient:
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout)
             return stdout.decode(), stderr.decode(), proc.returncode or 0
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             raise
@@ -99,9 +98,9 @@ class CPGClient:
             raise RuntimeError(f"CPG stats failed: {stderr[:200]}")
         return CPGStats.from_json(json.loads(stdout))
 
-    async def taint_paths(self, repo_path: Path,
-                           source: str | None = None,
-                           sink: str | None = None) -> list[TaintPathInfo]:
+    async def taint_paths(
+        self, repo_path: Path, source: str | None = None, sink: str | None = None
+    ) -> list[TaintPathInfo]:
         """Query taint paths from sources to sinks."""
         args = ["taint", "--repo", str(repo_path)]
         if source:
@@ -113,12 +112,16 @@ class CPGClient:
             logger.warning("cpg_taint_warning", stderr=stderr[:200])
         return self._parse_taint_paths(stdout)
 
-    async def call_paths(self, repo_path: Path,
-                         from_func: str, to_func: str) -> list[CallPathInfo]:
+    async def call_paths(self, repo_path: Path, from_func: str, to_func: str) -> list[CallPathInfo]:
         """Find call paths between two functions."""
         stdout, stderr, rc = await self._run(
-            "call-path", "--repo", str(repo_path),
-            "--from", from_func, "--to", to_func,
+            "call-path",
+            "--repo",
+            str(repo_path),
+            "--from",
+            from_func,
+            "--to",
+            to_func,
         )
         if rc != 0:
             return []
@@ -141,7 +144,11 @@ class CPGClient:
         Each entry is {address: str, danger_score: float}.
         """
         stdout, stderr, rc = await self._run(
-            "danger-map", "--repo", str(repo_path), "--decay", str(decay),
+            "danger-map",
+            "--repo",
+            str(repo_path),
+            "--decay",
+            str(decay),
         )
         if rc != 0:
             raise RuntimeError(f"CPG danger_map failed: {stderr[:200]}")
@@ -170,7 +177,7 @@ class CPGClient:
     def _parse_taint_paths(output: str) -> list[TaintPathInfo]:
         paths = []
         current = None
-        for line in output.split('\n'):
+        for line in output.split("\n"):
             line = line.strip()
             if line.startswith("Path "):
                 if current:
@@ -203,7 +210,7 @@ class CPGClient:
     @staticmethod
     def _parse_call_paths(output: str) -> list[CallPathInfo]:
         paths = []
-        for line in output.split('\n'):
+        for line in output.split("\n"):
             if "Path " in line and "length=" in line:
                 try:
                     length = int(line.split("length=")[1].split(")")[0])

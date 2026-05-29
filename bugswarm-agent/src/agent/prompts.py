@@ -6,7 +6,7 @@ Rule: Every prompt change requires a version bump. Prompt performance is tracked
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import ClassVar
 
@@ -37,7 +37,7 @@ class PromptTemplate:
     content: str
     model_family: ModelFamily
     persona: Persona
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     performance_score: float = 0.5
     active: bool = True
 
@@ -77,7 +77,6 @@ TOOL PREFERENCES:
 - trace_dependency(radius=5): trace deep call chains
 - read_file: examine the actual code at each hop
 - exec_sandbox: test with edge-case inputs at the boundary""",
-
         Persona.ADVERSARIAL: """
 ADVERSARIAL ANALYSIS DIRECTIVE:
 COGNITIVE FRAMING: Assume this code was written by a junior developer at 4:55 PM
@@ -102,7 +101,6 @@ TOOL PREFERENCES:
 - query_cpg: search for known sink patterns (exec, eval, system, execute, query)
 - read_file: examine the 20 lines around every sink
 - exec_sandbox: craft attack payloads and verify they work""",
-
         Persona.DEFENSIVE: """
 DEFENSIVE ANALYSIS DIRECTIVE:
 COGNITIVE FRAMING: Assume the environment is hostile. Network failures, disk full,
@@ -128,7 +126,6 @@ TOOL PREFERENCES:
 - read_file: search for try/except, with statements, lock acquisitions
 - trace_dependency: find functions called without error handling
 - exec_sandbox: simulate failure conditions (kill dependencies, exhaust resources)""",
-
         Persona.SEMANTIC: """
 SEMANTIC ANALYSIS DIRECTIVE:
 COGNITIVE FRAMING: Think in terms of contracts. Every function has implicit preconditions,
@@ -156,8 +153,7 @@ TOOL PREFERENCES:
     }
 
     @classmethod
-    def build(cls, persona: Persona, repo_path: str = "",
-              tool_schema: list[dict] | None = None) -> str:
+    def build(cls, persona: Persona, repo_path: str = "", tool_schema: list[dict] | None = None) -> str:
         """Build the full system prompt for a persona."""
         expansion = cls.PERSONA_EXPANSIONS.get(persona, "")
 

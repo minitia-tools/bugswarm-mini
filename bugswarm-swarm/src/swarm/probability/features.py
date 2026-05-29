@@ -6,9 +6,8 @@ C6.2 PEAK: Static (7 CPG features) + Historical (2 git features) + Cross-run (1 
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -53,9 +52,15 @@ class FunctionFeatures:
     @classmethod
     def feature_names(cls) -> list[str]:
         return [
-            "cyclomatic_complexity", "nesting_depth", "parameter_count",
-            "lines_of_code", "taint_source_count", "taint_sink_count",
-            "external_call_count", "author_count", "commit_frequency",
+            "cyclomatic_complexity",
+            "nesting_depth",
+            "parameter_count",
+            "lines_of_code",
+            "taint_source_count",
+            "taint_sink_count",
+            "external_call_count",
+            "author_count",
+            "commit_frequency",
             "bug_density_historical",
         ]
 
@@ -88,9 +93,10 @@ class FeatureExtractor:
         try:
             # Author count
             result = subprocess.run(
-                ["git", "-C", str(repo_root), "log", "--follow", "--format=%an",
-                 "--", file_path],
-                capture_output=True, text=True, timeout=5,
+                ["git", "-C", str(repo_root), "log", "--follow", "--format=%an", "--", file_path],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 authors = set(result.stdout.strip().split("\n"))
@@ -100,9 +106,20 @@ class FeatureExtractor:
 
             # Commit frequency (per week over last 90 days)
             result2 = subprocess.run(
-                ["git", "-C", str(repo_root), "log", "--follow", "--format=%ct",
-                 "--since=90.days.ago", "--", file_path],
-                capture_output=True, text=True, timeout=5,
+                [
+                    "git",
+                    "-C",
+                    str(repo_root),
+                    "log",
+                    "--follow",
+                    "--format=%ct",
+                    "--since=90.days.ago",
+                    "--",
+                    file_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result2.returncode == 0 and result2.stdout.strip():
                 commit_count = len(result2.stdout.strip().split("\n"))
@@ -122,13 +139,10 @@ class FeatureExtractor:
         return round(hotspot_tracker.get_score(file_path), 2)
 
     @classmethod
-    def enrich(cls, features: FunctionFeatures, repo_root: Path,
-               hotspot_tracker=None) -> FunctionFeatures:
+    def enrich(cls, features: FunctionFeatures, repo_root: Path, hotspot_tracker=None) -> FunctionFeatures:
         """Enrich features with git + historical data."""
         authors, freq = cls.extract_from_git(features.file_path, repo_root)
         features.author_count = authors
         features.commit_frequency = freq
-        features.bug_density_historical = cls.extract_bug_density(
-            features.file_path, hotspot_tracker
-        )
+        features.bug_density_historical = cls.extract_bug_density(features.file_path, hotspot_tracker)
         return features

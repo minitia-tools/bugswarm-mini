@@ -1,8 +1,8 @@
 """Provider adapters for the LLM Gateway."""
 
-from .openai import OpenAIAdapter
 from .anthropic import AnthropicAdapter
 from .google import GoogleAdapter
 from .ollama import OllamaAdapter
+from .openai import OpenAIAdapter
 
-__all__ = ["OpenAIAdapter", "AnthropicAdapter", "GoogleAdapter", "OllamaAdapter"]
+__all__ = ["AnthropicAdapter", "GoogleAdapter", "OllamaAdapter", "OpenAIAdapter"]

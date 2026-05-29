@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
-from pathlib import Path
 
 from .client import LLMClient
 from .types import ChatMessage, ChatRequest, GatewayConfig, MessageRole, ProviderType
@@ -21,7 +19,9 @@ async def async_main() -> None:
     chat_p = sub.add_parser("chat", help="Send a chat request")
     chat_p.add_argument("--message", "-m", required=True, help="User message")
     chat_p.add_argument("--system", "-s", help="System prompt")
-    chat_p.add_argument("--provider", "-p", default="openai", choices=["openai", "anthropic", "google", "ollama", "deepseek"])
+    chat_p.add_argument(
+        "--provider", "-p", default="openai", choices=["openai", "anthropic", "google", "ollama", "deepseek"]
+    )
     chat_p.add_argument("--model", help="Model override")
     chat_p.add_argument("--temperature", type=float, default=0.7)
     chat_p.add_argument("--max-tokens", type=int, default=1024)
@@ -57,7 +57,7 @@ async def async_main() -> None:
 
     if args.command == "chat":
         messages = []
-        if hasattr(args, 'system') and args.system:
+        if hasattr(args, "system") and args.system:
             messages.append(ChatMessage(role=MessageRole.SYSTEM, content=args.system))
         messages.append(ChatMessage(role=MessageRole.USER, content=args.message))
 
@@ -94,6 +94,7 @@ async def async_main() -> None:
 
     elif args.command == "test":
         from .tests.phase3_gate import run_phase3_gate
+
         await run_phase3_gate(client)
 
 

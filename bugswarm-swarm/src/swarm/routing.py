@@ -18,7 +18,7 @@ def text_to_bow(text: str) -> dict[str, int]:
     trigrams = []
     clean = text.lower()
     for i in range(len(clean) - 2):
-        trigrams.append(clean[i:i+3])
+        trigrams.append(clean[i : i + 3])
     return Counter(trigrams)
 
 
@@ -109,7 +109,8 @@ def mmr_critique_routing(
             pairings.append((author, best_reviewer))
             used_hypotheses.add(author)
             used_reviewers.add(best_reviewer)
-            pair_history[tuple(sorted((author, best_reviewer)))] = \
+            pair_history[tuple(sorted((author, best_reviewer)))] = (
                 pair_history.get(tuple(sorted((author, best_reviewer))), 0) + 1
+            )
 
     return pairings
